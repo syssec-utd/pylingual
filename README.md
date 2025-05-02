@@ -26,7 +26,7 @@ git clone https://github.com/syssec-utd/pylingual
 cd pylingual
 python -m venv venv
 source venv/bin/activate
-pip install poetry
+pip install poetry==2.1.1
 poetry install
 ```
 
