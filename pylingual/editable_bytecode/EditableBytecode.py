@@ -1,6 +1,7 @@
 import copy as copy_module
 import logging
 import pprint
+import itertools
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -83,6 +84,10 @@ class EditableBytecode:
         # Prepare "deep analysis" structures - cycle detection and annotation
         self._preprocess_jumps()
 
+        # make function argvals in python 3.13 are determined by a subsequent bytecode instruction
+        if self.version >= (3, 13):
+            self.fix_make_function_argval()
+
         low_information_instruction_blacklist = ["RESUME", "EXTENDED_ARG", "CACHE", "PRECALL", "MAKE_CELL"]
         self.remove_instructions({inst for inst in self.instructions if inst.opname in low_information_instruction_blacklist})
 
@@ -99,6 +104,16 @@ class EditableBytecode:
                 self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self)
                 self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
                 self.bytecode_lookup[const.co_name] = self.co_consts[i]
+
+    def fix_make_function_argval(self):
+        """In Python 3.13 the argval for MAKE_FUNCTION is determined by an optional subsequent SET_FUNCTION_ATTRIBUTE instruction"""
+
+        for inst, next_inst in itertools.pairwise(self.instructions):
+            if inst.opname == "MAKE_FUNCTION":
+                if next_inst.opname == "SET_FUNCTION_ATTRIBUTE":
+                    inst.argval = next_inst.argval
+                else:
+                    inst.argval = 0
 
     def get_recursive_length(self):
         """Returns the recursive length of this bytecode and all its descendents"""
