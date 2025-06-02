@@ -207,8 +207,8 @@ def compare_pyc(pyc_a: PYCFile | Path, pyc_b: PYCFile | Path) -> list[TestResult
             continue
         cfg_a = bytecode_to_control_flow_graph(bytecode_a)
         cfg_b = bytecode_to_control_flow_graph(bytecode_b)
-        block_graph_a = CFG.from_graph(cfg_a, bytecode_a)
-        block_graph_b = CFG.from_graph(cfg_b, bytecode_b)
+        block_graph_a = CFG.from_graph(cfg_a, bytecode_a, False)
+        block_graph_b = CFG.from_graph(cfg_b, bytecode_b, False)
         if not is_control_flow_equivalent(block_graph_a, block_graph_b):
             test_result = TestResult(False, "Different control flow", bytecode_a, bytecode_b)
             results.append(test_result)

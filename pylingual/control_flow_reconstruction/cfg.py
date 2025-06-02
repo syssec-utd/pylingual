@@ -34,7 +34,7 @@ class CFG(DiGraph_CFT):
         CFG.graph_format = fmt
 
     @staticmethod
-    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode) -> CFG:
+    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode, iterate=True) -> CFG:
         self = CFG(cfg)
 
         self.bytecode = bytecode
@@ -55,6 +55,8 @@ class CFG(DiGraph_CFT):
         self.add_edges_from((node, self.end, EdgeKind.Meta.prop()) for node in self.nodes if isinstance(node, InstTemplate) and self.out_degree(node) == 0)
 
         BlockTemplate.match_all(self)
+        if iterate:
+            self.iterate()
 
         return self
 

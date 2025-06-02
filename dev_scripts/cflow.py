@@ -81,12 +81,12 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         result = compare_pyc(in_pyc, out_pyc)
         if print:
             print_result(f"Equivalance results for {file}", result)
-        return Result.Success if all(x.success for x in result) else Result.Failure, file
+        return Result.Success if all(x.success for x in result) else Result.Failure, file, out_dir
     except (CompileError, SyntaxError):
-        return Result.CompileError, file
+        return Result.CompileError, file, out_dir
     except Exception:
         rich.get_console().print_exception()
-        return Result.Error, file
+        return Result.Error, file, out_dir
 
 
 class NoPool:
@@ -94,12 +94,21 @@ class NoPool:
 
 
 def print_diff(a: Path, b: Path):
-    a_lines = a.read_text().split("\n")
-    b_lines = b.read_text().split("\n")
+    a_text = a.read_text()
+    b_text = b.read_text()
+    a_lines = a_text.split("\n")
+    b_lines = b_text.split("\n")
     console = rich.console.Console(highlight=False)
+    print(a_text)
+    print("=" * 40)
+    print(b_text)
+    print("=" * 40)
+    line = None
     for line in difflib.unified_diff(a_lines, b_lines, str(a), str(b)):
         style = "red" if line[0] == "-" else "green" if line[0] == "+" else "blue" if line[0] == "@" else ""
         console.print(line, style=style)
+    if line is None:
+        print("equal")
 
 
 def get_unused(a: Path, _=True):
@@ -138,10 +147,10 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, pr
             if results in [Result.CompileError, Result.Error]:
                 print(results)
             else:
-                print_diff(o / input.name / "a.py", o / input.name / "b.py")
+                print_diff(o / input.stem / "a.py", o / input.stem / "b.py")
     else:
         if not output:
-            out_dir = get_unused(prefix / input.stem)
+            out_dir = get_unused(prefix / str(version) / input.stem)
         else:
             out_dir = prefix / output
         print(f"Saving results to {out_dir}")
@@ -156,16 +165,18 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, pr
             pool = multiprocessing.Pool(processes=processes)
         else:
             pool = contextlib.nullcontext(NoPool)
+        dir_map = {}
         with pool as p:
-            for result, input in track(p.imap_unordered(f, files), total=len(files)):
+            for result, input, od in track(p.imap_unordered(f, files), total=len(files)):
                 results[result].append(input)
+                dir_map[str(input)] = str(od)
 
         for res in Result:
             print(f"{res}: {len(results[res])}")
         total = sum(len(x) for x in results.values())
         if total:
             print(f"{len(results[Result.Success])} / {total} succeeded ({len(results[Result.Success]) / total:.3%})")
-        res = json.dumps({k.value: list(map(str, v)) for k, v in results.items()})
+        res = json.dumps({k.value: list(map(str, v)) for k, v in results.items()} | {'map': dir_map})
         (out_dir / "results.json").write_text(res)
 
 

@@ -57,7 +57,6 @@ class BlockTemplate(ControlFlowTemplate):
                 continue
             BlockTemplate.try_match(cfg, node)
         cfg.iterate = it
-        cfg.iterate()
 
     @override
     @classmethod
