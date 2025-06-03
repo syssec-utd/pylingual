@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 
 import click
 import rich
-from rich.progress import track
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, MofNCompleteColumn
 
 from pylingual.control_flow_reconstruction.cfg import CFG
 from pylingual.control_flow_reconstruction.structure import bc_to_cft
@@ -134,6 +134,18 @@ def get_unused(a: Path, _=True):
 def main(input: Path, output: str, version: PythonVersion, graph: str | None, prefix: Path, processes: int, graph_format: str):
     warnings.filterwarnings("ignore")
     print = rich.get_console().print
+    progress_columns = [
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("<"),
+        TimeRemainingColumn(),
+        TextColumn("• [green]:{task.fields[success]}/{task.fields[processed]}"),  # success rate
+        TextColumn("• [green]Success Rate:{task.fields[srate]:>3.2f}%"),  # success rate
+    ]
     if graph:
         CFG.enable_graphing(prefix / graph, graph_format)
     if input.is_file() and input.suffix == ".py":
@@ -167,16 +179,25 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, pr
             pool = contextlib.nullcontext(NoPool)
         dir_map = {}
         with pool as p:
-            for result, input, od in track(p.imap_unordered(f, files), total=len(files)):
-                results[result].append(input)
-                dir_map[str(input)] = str(od)
+            with Progress(*progress_columns, console=rich.get_console(), transient=False) as progress_bar:
+                task_id = progress_bar.add_task("Evaluating Control Flow", total=len(files), success=0, processed=0, srate=0.0)
+                succs = 0
+                processed = 0
+
+                for result, input, od in p.imap_unordered(f, files):
+                    results[result].append(input)
+                    processed += 1
+                    dir_map[str(input)] = str(od)
+                    if result == Result.Success:
+                        succs += 1
+                    progress_bar.update(task_id, advance=1, success=succs, processed=processed, srate=(succs / processed * 100))
 
         for res in Result:
             print(f"{res}: {len(results[res])}")
         total = sum(len(x) for x in results.values())
         if total:
             print(f"{len(results[Result.Success])} / {total} succeeded ({len(results[Result.Success]) / total:.3%})")
-        res = json.dumps({k.value: list(map(str, v)) for k, v in results.items()} | {'map': dir_map})
+        res = json.dumps({k.value: list(map(str, v)) for k, v in results.items()} | {"map": dir_map})
         (out_dir / "results.json").write_text(res)
 
 
