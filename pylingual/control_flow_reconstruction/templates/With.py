@@ -40,10 +40,10 @@ class With3_12(ControlFlowTemplate):
             {with_body}
         """
 
-class WithCleanup3_10(ControlFlowTemplate):
+class WithCleanup3_9(ControlFlowTemplate):
     template = T(
         start=~N("reraise", "poptop").with_cond(
-            starting_instructions("WITH_EXCEPT_START"),  # 3.10
+            starting_instructions("WITH_EXCEPT_START"),  # 3.9 & 3.10
         ),
         reraise=+N().with_cond(exact_instructions("RERAISE")).with_in_deg(1),
         poptop=~N("tail.", None).with_cond(starting_instructions("POP_TOP")).with_in_deg(1),
@@ -58,12 +58,12 @@ class WithCleanup3_10(ControlFlowTemplate):
         {poptop}
         """
 
-@register_template(0, 10, *versions_from(3, 10))
-class With3_10(ControlFlowTemplate):
+@register_template(0, 10, (3, 9), (3, 10))
+class With3_9(ControlFlowTemplate):
     template = T(
         setup_with=~N("with_body", None),
         with_body=N("normal_cleanup.", None, "exc_cleanup").with_in_deg(1),
-        exc_cleanup=N.tail().of_subtemplate(WithCleanup3_10).with_in_deg(1),
+        exc_cleanup=N.tail().of_subtemplate(WithCleanup3_9).with_in_deg(1),
         normal_cleanup=~N.tail(),
     )
 
@@ -75,4 +75,22 @@ class With3_10(ControlFlowTemplate):
         {setup_with}
             {with_body}
         {exc_cleanup}
+        """
+
+@register_template(0, 10, (3, 8))
+class With3_8(ControlFlowTemplate):
+    template = T(
+        setup_with=~N("with_body", None),
+        with_body=N("begin_finally.", None, "normal_cleanup").with_in_deg(1),
+        begin_finally=~N("normal_cleanup.", None).with_in_deg(1),
+        normal_cleanup=~N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "normal_cleanup"}, "setup_with", "with_body", "begin_finally")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {setup_with}
+            {with_body}
         """
