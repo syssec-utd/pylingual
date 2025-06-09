@@ -1,0 +1,14 @@
+DATE_FORMAT = 'Y. \\g\\a\\d\\a j. F'
+TIME_FORMAT = 'H:i'
+DATETIME_FORMAT = 'Y. \\g\\a\\d\\a j. F, H:i'
+YEAR_MONTH_FORMAT = 'Y. \\g. F'
+MONTH_DAY_FORMAT = 'j. F'
+SHORT_DATE_FORMAT = 'j.m.Y'
+SHORT_DATETIME_FORMAT = 'j.m.Y H:i'
+FIRST_DAY_OF_WEEK = 1
+DATE_INPUT_FORMATS = ['%Y-%m-%d', '%d.%m.%Y', '%d.%m.%y']
+TIME_INPUT_FORMATS = ['%H:%M:%S', '%H:%M:%S.%f', '%H:%M', '%H.%M.%S', '%H.%M.%S.%f', '%H.%M']
+DATETIME_INPUT_FORMATS = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M', '%d.%m.%Y %H:%M:%S', '%d.%m.%Y %H:%M:%S.%f', '%d.%m.%Y %H:%M', '%d.%m.%y %H:%M:%S', '%d.%m.%y %H:%M:%S.%f', '%d.%m.%y %H:%M', '%d.%m.%y %H.%M.%S', '%d.%m.%y %H.%M.%S.%f', '%d.%m.%y %H.%M']
+DECIMAL_SEPARATOR = ','
+THOUSAND_SEPARATOR = '\xa0'
+NUMBER_GROUPING = 3

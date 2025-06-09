@@ -1,0 +1,8 @@
+logger.info('Loading 6 objects to table isip_exampolicy...')
+loader.save(create_isip_exampolicy(1, date(2014, 5, 22), time(9, 0, 0), None, None, ['Monatlich', 'Mensuel', 'Every month'], u'M', 1, True, True, True, True, True, False, False, None, 5))
+loader.save(create_isip_exampolicy(2, date(2014, 5, 22), time(9, 0, 0), None, None, ['Alle 2 Monate', 'Bimensuel', 'Every 2 months'], u'M', 2, True, True, True, True, True, False, False, None, 5))
+loader.save(create_isip_exampolicy(3, date(2014, 5, 22), None, None, None, ['Alle 3 Monate', 'Tous les 3 mois', 'Every 3 months'], u'M', 3, True, True, True, True, True, False, False, None, 5))
+loader.save(create_isip_exampolicy(4, date(2014, 5, 22), time(9, 0, 0), None, None, ['Alle 2 Wochen', 'Tous les 14 jours', 'Every 2 weeks'], u'W', 2, True, True, True, True, True, False, False, None, 5))
+loader.save(create_isip_exampolicy(5, date(2014, 5, 22), time(9, 0, 0), None, None, ['Einmal nach 10 Tagen', 'Une fois après 10 jours', 'Once after 10 days'], u'D', 10, True, True, True, True, True, False, False, 1, 5))
+loader.save(create_isip_exampolicy(6, date(2014, 5, 22), None, None, None, ['Sonstige', 'Autre', 'Other'], u'M', 1, False, False, False, False, False, False, False, None, None))
+loader.flush_deferred_objects()

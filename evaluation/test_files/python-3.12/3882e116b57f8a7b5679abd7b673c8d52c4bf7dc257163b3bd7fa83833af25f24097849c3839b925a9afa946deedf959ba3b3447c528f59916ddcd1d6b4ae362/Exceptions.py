@@ -1,0 +1,82 @@
+import pickle
+import github
+from . import Framework
+
+class Exceptions(Framework.TestCase):
+
+    def testInvalidInput(self):
+        with self.assertRaises(github.GithubException) as raisedexp:
+            self.g.get_user().create_key('Bad key', 'xxx')
+        self.assertEqual(raisedexp.exception.status, 422)
+        self.assertEqual(raisedexp.exception.data, {'errors': [{'code': 'custom', 'field': 'key', 'message': "key is invalid. It must begin with 'ssh-rsa' or 'ssh-dss'. Check that you're copying the public half of the key", 'resource': 'PublicKey'}], 'message': 'Validation Failed'})
+
+    def testNonJsonDataReturnedByGithub(self):
+        with self.assertRaises(github.GithubException) as raisedexp:
+            self.g.get_user('jacquev6')
+        self.assertEqual(raisedexp.exception.status, 503)
+        self.assertEqual(raisedexp.exception.data, {'data': '<html><body><h1>503 Service Unavailable</h1>No server is available to handle this request.</body></html>'})
+
+    def testUnknownObject(self):
+        with self.assertRaises(github.GithubException) as raisedexp:
+            self.g.get_user().get_repo('Xxx')
+        self.assertEqual(raisedexp.exception.status, 404)
+        self.assertEqual(raisedexp.exception.data, {'message': 'Not Found'})
+        self.assertEqual(str(raisedexp.exception), '404 {"message": "Not Found"}')
+
+    def testUnknownUser(self):
+        with self.assertRaises(github.GithubException) as raisedexp:
+            self.g.get_user('ThisUserShouldReallyNotExist')
+        self.assertEqual(raisedexp.exception.status, 404)
+        self.assertEqual(raisedexp.exception.data, {'message': 'Not Found'})
+        self.assertEqual(str(raisedexp.exception), '404 {"message": "Not Found"}')
+
+    def testBadAuthentication(self):
+        with self.assertRaises(github.GithubException) as raisedexp:
+            github.Github('BadUser', 'BadPassword').get_user().login
+        self.assertEqual(raisedexp.exception.status, 401)
+        self.assertEqual(raisedexp.exception.data, {'message': 'Bad credentials'})
+        self.assertEqual(str(raisedexp.exception), '401 {"message": "Bad credentials"}')
+
+    def testExceptionPickling(self):
+        pickle.loads(pickle.dumps(github.GithubException('foo', 'bar', None)))
+
+    def testJSONParseError(self):
+        with self.assertRaises(ValueError):
+            self.g.get_user('jacquev6')
+
+class SpecificExceptions(Framework.TestCase):
+
+    def testBadCredentials(self):
+        self.assertRaises(github.BadCredentialsException, lambda: github.Github('BadUser', 'BadPassword').get_user().login)
+
+    def test2FARequired(self):
+        self.assertRaises(github.TwoFactorException, lambda: github.Github('2fauser', 'password').get_user().login)
+
+    def testUnknownObject(self):
+        self.assertRaises(github.UnknownObjectException, lambda: self.g.get_user().get_repo('Xxx'))
+
+    def testBadUserAgent(self):
+        self.assertRaises(github.BadUserAgentException, lambda: github.Github(self.login, self.password, user_agent='').get_user().name)
+
+    def testRateLimitExceeded(self):
+        g = github.Github()
+
+        def exceed():
+            for i in range(100):
+                g.get_user('jacquev6')
+        self.assertRaises(github.RateLimitExceededException, exceed)
+
+    def testAuthenticatedRateLimitExceeded(self):
+
+        def exceed():
+            for i in range(100):
+                res = self.g.search_code('jacquev6')
+                res.get_page(0)
+        with self.assertRaises(github.RateLimitExceededException) as raised:
+            exceed()
+        self.assertEqual(raised.exception.headers.get('retry-after'), '60')
+
+    def testIncompletableObject(self):
+        github.UserKey.UserKey.setCheckAfterInitFlag(False)
+        obj = github.UserKey.UserKey(None, {}, {}, False)
+        self.assertRaises(github.IncompletableObject, obj._completeIfNeeded)

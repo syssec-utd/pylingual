@@ -1,0 +1,3 @@
+def __var_find_to_py_ast(var_name: str, ns_name: str, py_var_ctx: ast.AST) -> GeneratedPyAST:
+    """Generate Var.find calls for the named symbol."""
+    return GeneratedPyAST(node=ast.Attribute(value=ast.Call(func=_FIND_VAR_FN_NAME, args=[ast.Call(func=_NEW_SYM_FN_NAME, args=[ast.Str(var_name)], keywords=[ast.keyword(arg='ns', value=ast.Str(ns_name))])], keywords=[]), attr='value', ctx=py_var_ctx))

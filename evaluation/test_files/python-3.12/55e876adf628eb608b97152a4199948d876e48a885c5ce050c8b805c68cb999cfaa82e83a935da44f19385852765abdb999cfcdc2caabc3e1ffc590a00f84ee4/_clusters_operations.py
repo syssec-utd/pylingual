@@ -1,0 +1,1521 @@
+from typing import Any, AsyncIterable, Callable, Dict, IO, Optional, TypeVar, Union, cast, overload
+from urllib.parse import parse_qs, urljoin, urlparse
+from azure.core.async_paging import AsyncItemPaged, AsyncList
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ResourceExistsError, ResourceNotFoundError, ResourceNotModifiedError, map_error
+from azure.core.pipeline import PipelineResponse
+from azure.core.pipeline.transport import AsyncHttpResponse
+from azure.core.polling import AsyncLROPoller, AsyncNoPolling, AsyncPollingMethod
+from azure.core.rest import HttpRequest
+from azure.core.tracing.decorator import distributed_trace
+from azure.core.tracing.decorator_async import distributed_trace_async
+from azure.core.utils import case_insensitive_dict
+from azure.mgmt.core.exceptions import ARMErrorFormat
+from azure.mgmt.core.polling.async_arm_polling import AsyncARMPolling
+from ... import models as _models
+from ..._vendor import _convert_request
+from ...operations._clusters_operations import build_add_language_extensions_request, build_check_name_availability_request, build_create_or_update_request, build_delete_request, build_detach_follower_databases_request, build_diagnose_virtual_network_request, build_get_request, build_list_by_resource_group_request, build_list_follower_databases_request, build_list_language_extensions_request, build_list_outbound_network_dependencies_endpoints_request, build_list_request, build_list_skus_by_resource_request, build_list_skus_request, build_remove_language_extensions_request, build_start_request, build_stop_request, build_update_request
+T = TypeVar('T')
+ClsType = Optional[Callable[[PipelineResponse[HttpRequest, AsyncHttpResponse], T, Dict[str, Any]], Any]]
+
+class ClustersOperations:
+    """
+    .. warning::
+        **DO NOT** instantiate this class directly.
+
+        Instead, you should access the following operations through
+        :class:`~azure.mgmt.kusto.aio.KustoManagementClient`'s
+        :attr:`clusters` attribute.
+    """
+    models = _models
+
+    def __init__(self, *args, **kwargs) -> None:
+        input_args = list(args)
+        self._client = input_args.pop(0) if input_args else kwargs.pop('client')
+        self._config = input_args.pop(0) if input_args else kwargs.pop('config')
+        self._serialize = input_args.pop(0) if input_args else kwargs.pop('serializer')
+        self._deserialize = input_args.pop(0) if input_args else kwargs.pop('deserializer')
+
+    @distributed_trace_async
+    async def get(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> _models.Cluster:
+        """Gets a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: Cluster or the result of cls(response)
+        :rtype: ~azure.mgmt.kusto.models.Cluster
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        request = build_get_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.get.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        deserialized = self._deserialize('Cluster', pipeline_response)
+        if cls:
+            return cls(pipeline_response, deserialized, {})
+        return deserialized
+    get.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    async def _create_or_update_initial(self, resource_group_name: str, cluster_name: str, parameters: Union[_models.Cluster, IO], if_match: Optional[str]=None, if_none_match: Optional[str]=None, **kwargs: Any) -> _models.Cluster:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(parameters, (IO, bytes)):
+            _content = parameters
+        else:
+            _json = self._serialize.body(parameters, 'Cluster')
+        request = build_create_or_update_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, if_match=if_match, if_none_match=if_none_match, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self._create_or_update_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 201]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if response.status_code == 200:
+            deserialized = self._deserialize('Cluster', pipeline_response)
+        if response.status_code == 201:
+            deserialized = self._deserialize('Cluster', pipeline_response)
+        if cls:
+            return cls(pipeline_response, deserialized, {})
+        return deserialized
+    _create_or_update_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    @overload
+    async def begin_create_or_update(self, resource_group_name: str, cluster_name: str, parameters: _models.Cluster, if_match: Optional[str]=None, if_none_match: Optional[str]=None, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Create or update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the CreateOrUpdate operation.
+         Required.
+        :type parameters: ~azure.mgmt.kusto.models.Cluster
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :param if_none_match: Set to '*' to allow a new cluster to be created, but to prevent updating
+         an existing cluster. Other values will result in a 412 Pre-condition Failed response. Default
+         value is None.
+        :type if_none_match: str
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def begin_create_or_update(self, resource_group_name: str, cluster_name: str, parameters: IO, if_match: Optional[str]=None, if_none_match: Optional[str]=None, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Create or update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the CreateOrUpdate operation.
+         Required.
+        :type parameters: IO
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :param if_none_match: Set to '*' to allow a new cluster to be created, but to prevent updating
+         an existing cluster. Other values will result in a 412 Pre-condition Failed response. Default
+         value is None.
+        :type if_none_match: str
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def begin_create_or_update(self, resource_group_name: str, cluster_name: str, parameters: Union[_models.Cluster, IO], if_match: Optional[str]=None, if_none_match: Optional[str]=None, **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Create or update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the CreateOrUpdate operation. Is
+         either a model type or a IO type. Required.
+        :type parameters: ~azure.mgmt.kusto.models.Cluster or IO
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :param if_none_match: Set to '*' to allow a new cluster to be created, but to prevent updating
+         an existing cluster. Other values will result in a 412 Pre-condition Failed response. Default
+         value is None.
+        :type if_none_match: str
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._create_or_update_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, parameters=parameters, if_match=if_match, if_none_match=if_none_match, api_version=api_version, content_type=content_type, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            deserialized = self._deserialize('Cluster', pipeline_response)
+            if cls:
+                return cls(pipeline_response, deserialized, {})
+            return deserialized
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_create_or_update.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    async def _update_initial(self, resource_group_name: str, cluster_name: str, parameters: Union[_models.ClusterUpdate, IO], if_match: Optional[str]=None, **kwargs: Any) -> _models.Cluster:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(parameters, (IO, bytes)):
+            _content = parameters
+        else:
+            _json = self._serialize.body(parameters, 'ClusterUpdate')
+        request = build_update_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, if_match=if_match, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self._update_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 201, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        response_headers = {}
+        if response.status_code == 200:
+            deserialized = self._deserialize('Cluster', pipeline_response)
+        if response.status_code == 201:
+            response_headers['Azure-AsyncOperation'] = self._deserialize('str', response.headers.get('Azure-AsyncOperation'))
+            deserialized = self._deserialize('Cluster', pipeline_response)
+        if response.status_code == 202:
+            response_headers['Azure-AsyncOperation'] = self._deserialize('str', response.headers.get('Azure-AsyncOperation'))
+            deserialized = self._deserialize('Cluster', pipeline_response)
+        if cls:
+            return cls(pipeline_response, deserialized, response_headers)
+        return deserialized
+    _update_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    @overload
+    async def begin_update(self, resource_group_name: str, cluster_name: str, parameters: _models.ClusterUpdate, if_match: Optional[str]=None, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the Update operation. Required.
+        :type parameters: ~azure.mgmt.kusto.models.ClusterUpdate
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def begin_update(self, resource_group_name: str, cluster_name: str, parameters: IO, if_match: Optional[str]=None, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the Update operation. Required.
+        :type parameters: IO
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def begin_update(self, resource_group_name: str, cluster_name: str, parameters: Union[_models.ClusterUpdate, IO], if_match: Optional[str]=None, **kwargs: Any) -> AsyncLROPoller[_models.Cluster]:
+        """Update a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param parameters: The Kusto cluster parameters supplied to the Update operation. Is either a
+         model type or a IO type. Required.
+        :type parameters: ~azure.mgmt.kusto.models.ClusterUpdate or IO
+        :param if_match: The ETag of the cluster. Omit this value to always overwrite the current
+         cluster. Specify the last-seen ETag value to prevent accidentally overwriting concurrent
+         changes. Default value is None.
+        :type if_match: str
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either Cluster or the result of
+         cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._update_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, parameters=parameters, if_match=if_match, api_version=api_version, content_type=content_type, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            deserialized = self._deserialize('Cluster', pipeline_response)
+            if cls:
+                return cls(pipeline_response, deserialized, {})
+            return deserialized
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_update.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    async def _delete_initial(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        request = build_delete_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self._delete_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202, 204]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _delete_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    @distributed_trace_async
+    async def begin_delete(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncLROPoller[None]:
+        """Deletes a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._delete_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, api_version=api_version, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_delete.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}'}
+
+    async def _stop_initial(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        request = build_stop_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self._stop_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _stop_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/stop'}
+
+    @distributed_trace_async
+    async def begin_stop(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncLROPoller[None]:
+        """Stops a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._stop_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, api_version=api_version, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_stop.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/stop'}
+
+    async def _start_initial(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        request = build_start_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self._start_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _start_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/start'}
+
+    @distributed_trace_async
+    async def begin_start(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncLROPoller[None]:
+        """Starts a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._start_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, api_version=api_version, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_start.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/start'}
+
+    @distributed_trace
+    def list_follower_databases(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncIterable['_models.FollowerDatabaseDefinition']:
+        """Returns a list of databases that are owned by this cluster and were followed by another
+        cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either FollowerDatabaseDefinition or the result of
+         cls(response)
+        :rtype:
+         ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.FollowerDatabaseDefinition]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_follower_databases_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_follower_databases.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('FollowerDatabaseListResult', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_follower_databases.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/listFollowerDatabases'}
+
+    async def _detach_follower_databases_initial(self, resource_group_name: str, cluster_name: str, follower_database_to_remove: Union[_models.FollowerDatabaseDefinition, IO], **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(follower_database_to_remove, (IO, bytes)):
+            _content = follower_database_to_remove
+        else:
+            _json = self._serialize.body(follower_database_to_remove, 'FollowerDatabaseDefinition')
+        request = build_detach_follower_databases_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self._detach_follower_databases_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _detach_follower_databases_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/detachFollowerDatabases'}
+
+    @overload
+    async def begin_detach_follower_databases(self, resource_group_name: str, cluster_name: str, follower_database_to_remove: _models.FollowerDatabaseDefinition, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Detaches all followers of a database owned by this cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param follower_database_to_remove: The follower databases properties to remove. Required.
+        :type follower_database_to_remove: ~azure.mgmt.kusto.models.FollowerDatabaseDefinition
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def begin_detach_follower_databases(self, resource_group_name: str, cluster_name: str, follower_database_to_remove: IO, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Detaches all followers of a database owned by this cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param follower_database_to_remove: The follower databases properties to remove. Required.
+        :type follower_database_to_remove: IO
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def begin_detach_follower_databases(self, resource_group_name: str, cluster_name: str, follower_database_to_remove: Union[_models.FollowerDatabaseDefinition, IO], **kwargs: Any) -> AsyncLROPoller[None]:
+        """Detaches all followers of a database owned by this cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param follower_database_to_remove: The follower databases properties to remove. Is either a
+         model type or a IO type. Required.
+        :type follower_database_to_remove: ~azure.mgmt.kusto.models.FollowerDatabaseDefinition or IO
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._detach_follower_databases_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, follower_database_to_remove=follower_database_to_remove, api_version=api_version, content_type=content_type, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_detach_follower_databases.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/detachFollowerDatabases'}
+
+    async def _diagnose_virtual_network_initial(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> Optional[_models.DiagnoseVirtualNetworkResult]:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        request = build_diagnose_virtual_network_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self._diagnose_virtual_network_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        deserialized = None
+        if response.status_code == 200:
+            deserialized = self._deserialize('DiagnoseVirtualNetworkResult', pipeline_response)
+        if cls:
+            return cls(pipeline_response, deserialized, {})
+        return deserialized
+    _diagnose_virtual_network_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/diagnoseVirtualNetwork'}
+
+    @distributed_trace_async
+    async def begin_diagnose_virtual_network(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncLROPoller[_models.DiagnoseVirtualNetworkResult]:
+        """Diagnoses network connectivity status for external resources on which the service is dependent
+        on.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either DiagnoseVirtualNetworkResult or the
+         result of cls(response)
+        :rtype:
+         ~azure.core.polling.AsyncLROPoller[~azure.mgmt.kusto.models.DiagnoseVirtualNetworkResult]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._diagnose_virtual_network_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, api_version=api_version, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            deserialized = self._deserialize('DiagnoseVirtualNetworkResult', pipeline_response)
+            if cls:
+                return cls(pipeline_response, deserialized, {})
+            return deserialized
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, lro_options={'final-state-via': 'location'}, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_diagnose_virtual_network.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/diagnoseVirtualNetwork'}
+
+    @distributed_trace
+    def list_by_resource_group(self, resource_group_name: str, **kwargs: Any) -> AsyncIterable['_models.Cluster']:
+        """Lists all Kusto clusters within a resource group.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either Cluster or the result of cls(response)
+        :rtype: ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_by_resource_group_request(resource_group_name=resource_group_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_by_resource_group.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('ClusterListResult', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_by_resource_group.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters'}
+
+    @distributed_trace
+    def list(self, **kwargs: Any) -> AsyncIterable['_models.Cluster']:
+        """Lists all Kusto clusters within a subscription.
+
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either Cluster or the result of cls(response)
+        :rtype: ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.Cluster]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_request(subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('ClusterListResult', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list.metadata = {'url': '/subscriptions/{subscriptionId}/providers/Microsoft.Kusto/clusters'}
+
+    @distributed_trace
+    def list_skus(self, **kwargs: Any) -> AsyncIterable['_models.SkuDescription']:
+        """Lists eligible SKUs for Kusto resource provider.
+
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either SkuDescription or the result of cls(response)
+        :rtype: ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.SkuDescription]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_skus_request(subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_skus.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('SkuDescriptionList', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_skus.metadata = {'url': '/subscriptions/{subscriptionId}/providers/Microsoft.Kusto/skus'}
+
+    @overload
+    async def check_name_availability(self, location: str, cluster_name: _models.ClusterCheckNameRequest, *, content_type: str='application/json', **kwargs: Any) -> _models.CheckNameResult:
+        """Checks that the cluster name is valid and is not already in use.
+
+        :param location: Azure location (region) name. Required.
+        :type location: str
+        :param cluster_name: The name of the cluster. Required.
+        :type cluster_name: ~azure.mgmt.kusto.models.ClusterCheckNameRequest
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: CheckNameResult or the result of cls(response)
+        :rtype: ~azure.mgmt.kusto.models.CheckNameResult
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def check_name_availability(self, location: str, cluster_name: IO, *, content_type: str='application/json', **kwargs: Any) -> _models.CheckNameResult:
+        """Checks that the cluster name is valid and is not already in use.
+
+        :param location: Azure location (region) name. Required.
+        :type location: str
+        :param cluster_name: The name of the cluster. Required.
+        :type cluster_name: IO
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: CheckNameResult or the result of cls(response)
+        :rtype: ~azure.mgmt.kusto.models.CheckNameResult
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def check_name_availability(self, location: str, cluster_name: Union[_models.ClusterCheckNameRequest, IO], **kwargs: Any) -> _models.CheckNameResult:
+        """Checks that the cluster name is valid and is not already in use.
+
+        :param location: Azure location (region) name. Required.
+        :type location: str
+        :param cluster_name: The name of the cluster. Is either a model type or a IO type. Required.
+        :type cluster_name: ~azure.mgmt.kusto.models.ClusterCheckNameRequest or IO
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: CheckNameResult or the result of cls(response)
+        :rtype: ~azure.mgmt.kusto.models.CheckNameResult
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(cluster_name, (IO, bytes)):
+            _content = cluster_name
+        else:
+            _json = self._serialize.body(cluster_name, 'ClusterCheckNameRequest')
+        request = build_check_name_availability_request(location=location, subscription_id=self._config.subscription_id, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self.check_name_availability.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        deserialized = self._deserialize('CheckNameResult', pipeline_response)
+        if cls:
+            return cls(pipeline_response, deserialized, {})
+        return deserialized
+    check_name_availability.metadata = {'url': '/subscriptions/{subscriptionId}/providers/Microsoft.Kusto/locations/{location}/checkNameAvailability'}
+
+    @distributed_trace
+    def list_skus_by_resource(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncIterable['_models.AzureResourceSku']:
+        """Returns the SKUs available for the provided resource.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either AzureResourceSku or the result of cls(response)
+        :rtype: ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.AzureResourceSku]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_skus_by_resource_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_skus_by_resource.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('ListResourceSkusResult', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_skus_by_resource.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/skus'}
+
+    @distributed_trace
+    def list_outbound_network_dependencies_endpoints(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncIterable['_models.OutboundNetworkDependenciesEndpoint']:
+        """Gets the network endpoints of all outbound dependencies of a Kusto cluster.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either OutboundNetworkDependenciesEndpoint or the result
+         of cls(response)
+        :rtype:
+         ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.OutboundNetworkDependenciesEndpoint]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_outbound_network_dependencies_endpoints_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_outbound_network_dependencies_endpoints.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('OutboundNetworkDependenciesEndpointListResult', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (deserialized.next_link or None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_outbound_network_dependencies_endpoints.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/outboundNetworkDependenciesEndpoints'}
+
+    @distributed_trace
+    def list_language_extensions(self, resource_group_name: str, cluster_name: str, **kwargs: Any) -> AsyncIterable['_models.LanguageExtension']:
+        """Returns a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :return: An iterator like instance of either LanguageExtension or the result of cls(response)
+        :rtype: ~azure.core.async_paging.AsyncItemPaged[~azure.mgmt.kusto.models.LanguageExtension]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = kwargs.pop('headers', {}) or {}
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        cls = kwargs.pop('cls', None)
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+
+        def prepare_request(next_link=None):
+            if not next_link:
+                request = build_list_language_extensions_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, template_url=self.list_language_extensions.metadata['url'], headers=_headers, params=_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+            else:
+                _parsed_next_link = urlparse(next_link)
+                _next_request_params = case_insensitive_dict(parse_qs(_parsed_next_link.query))
+                _next_request_params['api-version'] = self._config.api_version
+                request = HttpRequest('GET', urljoin(next_link, _parsed_next_link.path), params=_next_request_params)
+                request = _convert_request(request)
+                request.url = self._client.format_url(request.url)
+                request.method = 'GET'
+            return request
+
+        async def extract_data(pipeline_response):
+            deserialized = self._deserialize('LanguageExtensionsList', pipeline_response)
+            list_of_elem = deserialized.value
+            if cls:
+                list_of_elem = cls(list_of_elem)
+            return (None, AsyncList(list_of_elem))
+
+        async def get_next(next_link=None):
+            request = prepare_request(next_link)
+            pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+            response = pipeline_response.http_response
+            if response.status_code not in [200]:
+                map_error(status_code=response.status_code, response=response, error_map=error_map)
+                raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+            return pipeline_response
+        return AsyncItemPaged(get_next, extract_data)
+    list_language_extensions.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/listLanguageExtensions'}
+
+    async def _add_language_extensions_initial(self, resource_group_name: str, cluster_name: str, language_extensions_to_add: Union[_models.LanguageExtensionsList, IO], **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(language_extensions_to_add, (IO, bytes)):
+            _content = language_extensions_to_add
+        else:
+            _json = self._serialize.body(language_extensions_to_add, 'LanguageExtensionsList')
+        request = build_add_language_extensions_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self._add_language_extensions_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _add_language_extensions_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/addLanguageExtensions'}
+
+    @overload
+    async def begin_add_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_add: _models.LanguageExtensionsList, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Add a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_add: The language extensions to add. Required.
+        :type language_extensions_to_add: ~azure.mgmt.kusto.models.LanguageExtensionsList
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def begin_add_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_add: IO, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Add a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_add: The language extensions to add. Required.
+        :type language_extensions_to_add: IO
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def begin_add_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_add: Union[_models.LanguageExtensionsList, IO], **kwargs: Any) -> AsyncLROPoller[None]:
+        """Add a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_add: The language extensions to add. Is either a model type or a
+         IO type. Required.
+        :type language_extensions_to_add: ~azure.mgmt.kusto.models.LanguageExtensionsList or IO
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._add_language_extensions_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, language_extensions_to_add=language_extensions_to_add, api_version=api_version, content_type=content_type, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_add_language_extensions.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/addLanguageExtensions'}
+
+    async def _remove_language_extensions_initial(self, resource_group_name: str, cluster_name: str, language_extensions_to_remove: Union[_models.LanguageExtensionsList, IO], **kwargs: Any) -> None:
+        error_map = {401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, 304: ResourceNotModifiedError}
+        error_map.update(kwargs.pop('error_map', {}) or {})
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        content_type = content_type or 'application/json'
+        _json = None
+        _content = None
+        if isinstance(language_extensions_to_remove, (IO, bytes)):
+            _content = language_extensions_to_remove
+        else:
+            _json = self._serialize.body(language_extensions_to_remove, 'LanguageExtensionsList')
+        request = build_remove_language_extensions_request(resource_group_name=resource_group_name, cluster_name=cluster_name, subscription_id=self._config.subscription_id, api_version=api_version, content_type=content_type, json=_json, content=_content, template_url=self._remove_language_extensions_initial.metadata['url'], headers=_headers, params=_params)
+        request = _convert_request(request)
+        request.url = self._client.format_url(request.url)
+        pipeline_response = await self._client._pipeline.run(request, stream=False, **kwargs)
+        response = pipeline_response.http_response
+        if response.status_code not in [200, 202]:
+            map_error(status_code=response.status_code, response=response, error_map=error_map)
+            raise HttpResponseError(response=response, error_format=ARMErrorFormat)
+        if cls:
+            return cls(pipeline_response, None, {})
+    _remove_language_extensions_initial.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/removeLanguageExtensions'}
+
+    @overload
+    async def begin_remove_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_remove: _models.LanguageExtensionsList, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Remove a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_remove: The language extensions to remove. Required.
+        :type language_extensions_to_remove: ~azure.mgmt.kusto.models.LanguageExtensionsList
+        :keyword content_type: Body Parameter content-type. Content type parameter for JSON body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @overload
+    async def begin_remove_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_remove: IO, *, content_type: str='application/json', **kwargs: Any) -> AsyncLROPoller[None]:
+        """Remove a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_remove: The language extensions to remove. Required.
+        :type language_extensions_to_remove: IO
+        :keyword content_type: Body Parameter content-type. Content type parameter for binary body.
+         Default value is "application/json".
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+
+    @distributed_trace_async
+    async def begin_remove_language_extensions(self, resource_group_name: str, cluster_name: str, language_extensions_to_remove: Union[_models.LanguageExtensionsList, IO], **kwargs: Any) -> AsyncLROPoller[None]:
+        """Remove a list of language extensions that can run within KQL queries.
+
+        :param resource_group_name: The name of the resource group containing the Kusto cluster.
+         Required.
+        :type resource_group_name: str
+        :param cluster_name: The name of the Kusto cluster. Required.
+        :type cluster_name: str
+        :param language_extensions_to_remove: The language extensions to remove. Is either a model type
+         or a IO type. Required.
+        :type language_extensions_to_remove: ~azure.mgmt.kusto.models.LanguageExtensionsList or IO
+        :keyword content_type: Body Parameter content-type. Known values are: 'application/json'.
+         Default value is None.
+        :paramtype content_type: str
+        :keyword callable cls: A custom type or function that will be passed the direct response
+        :keyword str continuation_token: A continuation token to restart a poller from a saved state.
+        :keyword polling: By default, your polling method will be AsyncARMPolling. Pass in False for
+         this operation to not poll, or pass in your own initialized polling object for a personal
+         polling strategy.
+        :paramtype polling: bool or ~azure.core.polling.AsyncPollingMethod
+        :keyword int polling_interval: Default waiting time between two polls for LRO operations if no
+         Retry-After header is present.
+        :return: An instance of AsyncLROPoller that returns either None or the result of cls(response)
+        :rtype: ~azure.core.polling.AsyncLROPoller[None]
+        :raises ~azure.core.exceptions.HttpResponseError:
+        """
+        _headers = case_insensitive_dict(kwargs.pop('headers', {}) or {})
+        _params = case_insensitive_dict(kwargs.pop('params', {}) or {})
+        api_version = kwargs.pop('api_version', _params.pop('api-version', self._config.api_version))
+        content_type = kwargs.pop('content_type', _headers.pop('Content-Type', None))
+        cls = kwargs.pop('cls', None)
+        polling = kwargs.pop('polling', True)
+        lro_delay = kwargs.pop('polling_interval', self._config.polling_interval)
+        cont_token = kwargs.pop('continuation_token', None)
+        if cont_token is None:
+            raw_result = await self._remove_language_extensions_initial(resource_group_name=resource_group_name, cluster_name=cluster_name, language_extensions_to_remove=language_extensions_to_remove, api_version=api_version, content_type=content_type, cls=lambda x, y, z: x, headers=_headers, params=_params, **kwargs)
+        kwargs.pop('error_map', None)
+
+        def get_long_running_output(pipeline_response):
+            if cls:
+                return cls(pipeline_response, None, {})
+        if polling is True:
+            polling_method = cast(AsyncPollingMethod, AsyncARMPolling(lro_delay, **kwargs))
+        elif polling is False:
+            polling_method = cast(AsyncPollingMethod, AsyncNoPolling())
+        else:
+            polling_method = polling
+        if cont_token:
+            return AsyncLROPoller.from_continuation_token(polling_method=polling_method, continuation_token=cont_token, client=self._client, deserialization_callback=get_long_running_output)
+        return AsyncLROPoller(self._client, raw_result, get_long_running_output, polling_method)
+    begin_remove_language_extensions.metadata = {'url': '/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Kusto/clusters/{clusterName}/removeLanguageExtensions'}

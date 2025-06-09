@@ -1,0 +1,317 @@
+import gc
+import shutil
+from pathlib import Path
+import sys
+from typing import List
+import imageio
+import imageio as iio
+import numpy as np
+import pytest
+from imageio.core import Format, FormatManager, Request
+from pytest import raises
+from conftest import deprecated_test
+
+@pytest.fixture(scope='module', autouse=True)
+@deprecated_test
+def resort():
+    imageio.formats.sort()
+    yield
+    imageio.formats.sort()
+
+class MyFormat(Format):
+    """TEST DOCS"""
+    _closed: List[int] = []
+
+    def _can_read(self, request):
+        return request.filename.lower().endswith(self.extensions + ('.haha',))
+
+    def _can_write(self, request):
+        return request.filename.lower().endswith(self.extensions + ('.haha',))
+
+    class Reader(Format.Reader):
+        _failmode = False
+        _stream_mode = False
+
+        def _open(self):
+            self._read_frames = 0
+
+        def _close(self):
+            self.format._closed.append(id(self))
+
+        def _get_length(self):
+            if self._stream_mode:
+                return np.inf
+            return 3
+
+        def _get_data(self, index):
+            if self._failmode == 2:
+                raise IndexError()
+            elif self._failmode:
+                return ('not an array', {})
+            elif self._stream_mode and self._read_frames >= 5:
+                raise IndexError()
+            else:
+                self._read_frames += 1
+                return (np.ones((10, 10)) * index, self._get_meta_data(index))
+
+        def _get_meta_data(self, index):
+            if self._failmode:
+                return 'not a dict'
+            return {'index': index}
+
+    class Writer(Format.Writer):
+
+        def _open(self):
+            self._written_data = []
+            self._written_meta = []
+            self._meta = None
+
+        def _close(self):
+            self.format._closed.append(id(self))
+
+        def _append_data(self, im, meta):
+            self._written_data.append(im)
+            self._written_meta.append(meta)
+
+        def _set_meta_data(self, meta):
+            self._meta = meta
+
+@deprecated_test
+def test_format(test_images, tmp_path):
+    """Test the working of the Format class"""
+    filename1 = test_images / 'chelsea.png'
+    filename2 = tmp_path / 'chelsea.out'
+    F = Format('testname', 'test description', 'foo bar spam')
+    assert F.name == 'TESTNAME'
+    assert F.description == 'test description'
+    assert F.name in repr(F)
+    assert F.name in F.doc
+    assert str(F) == F.doc
+    assert set(F.extensions) == {'.foo', '.bar', '.spam'}
+    F1 = Format('test', '', 'foo bar spam')
+    F2 = Format('test', '', 'foo, bar,spam')
+    F3 = Format('test', '', ['foo', 'bar', 'spam'])
+    F4 = Format('test', '', '.foo .bar .spam')
+    for F in (F1, F2, F3, F4):
+        assert set(F.extensions) == {'.foo', '.bar', '.spam'}
+    raises(ValueError, Format, 'test', '', 3)
+    raises(ValueError, Format, 'test', '', '', 3)
+    raises(ValueError, Format, 'test', '', '', 'x')
+    F = MyFormat('test', '', modes='i')
+    assert 'TEST DOCS' in F.doc
+    R = F.get_reader(Request(filename1, 'ri'))
+    W = F.get_writer(Request(filename2, 'wi'))
+    assert isinstance(R, MyFormat.Reader)
+    assert isinstance(W, MyFormat.Writer)
+    assert R.format is F
+    assert W.format is F
+    assert Path(R.request.filename) == filename1
+    assert Path(W.request.filename) == filename2
+    raises(RuntimeError, F.get_reader, Request(filename1, 'rI'))
+    raises(RuntimeError, F.get_writer, Request(filename2, 'wI'))
+    with R:
+        pass
+    with W:
+        pass
+    assert R.closed
+    assert W.closed
+    raises(RuntimeError, R.__enter__)
+    raises(RuntimeError, W.__enter__)
+    raises(RuntimeError, R.get_data, 0)
+    raises(RuntimeError, W.append_data, np.zeros((10, 10)))
+    R = F.get_reader(Request(filename1, 'ri'))
+    W = F.get_writer(Request(filename2, 'wi'))
+    ids = (id(R), id(W))
+    F._closed[:] = []
+    del R
+    del W
+    gc.collect()
+    assert set(ids) == set(F._closed)
+
+@deprecated_test
+def test_reader_and_writer(test_images, tmp_path):
+    filename1 = test_images / 'chelsea.png'
+    filename2 = tmp_path / 'chelsea.out'
+    F = MyFormat('test', '', modes='i')
+    n = 3
+    R = F.get_reader(Request(filename1, 'ri'))
+    assert len(R) == n
+    ims = [im for im in R]
+    assert len(ims) == n
+    for i in range(3):
+        assert ims[i][0, 0] == i
+        assert ims[i].meta['index'] == i
+    for i in range(3):
+        assert R.get_meta_data(i)['index'] == i
+    assert R.get_data(0)[0, 0] == 0
+    assert R.get_next_data()[0, 0] == 1
+    assert R.get_next_data()[0, 0] == 2
+    R._failmode = 1
+    raises(ValueError, R.get_data, 0)
+    raises(ValueError, R.get_meta_data, 0)
+    R._failmode = 2
+    with raises(IndexError):
+        [im for im in R]
+    R = F.get_reader(Request(filename1, 'ri'))
+    R._stream_mode = True
+    assert R.get_length() == np.inf
+    ims = [im for im in R]
+    assert len(ims) == 5
+    im1 = np.zeros((10, 10))
+    im2 = imageio.core.Image(im1, {'foo': 1})
+    W = F.get_writer(Request(filename2, 'wi'))
+    W.append_data(im1)
+    W.append_data(im2)
+    W.append_data(im1, {'bar': 1})
+    W.append_data(im2, {'bar': 1})
+    assert len(W._written_data) == 4
+    for im in W._written_data:
+        assert (im == im1).all()
+    im1[2, 2] == 99
+    for im in W._written_data:
+        assert (im == im1).all()
+    assert W._written_meta[0] == {}
+    assert W._written_meta[1] == {'foo': 1}
+    assert W._written_meta[2] == {'bar': 1}
+    assert W._written_meta[3] == {'foo': 1, 'bar': 1}
+    W.set_meta_data({'spam': 1})
+    assert W._meta == {'spam': 1}
+    raises(ValueError, W.append_data, 'not an array')
+    raises(ValueError, W.append_data, im, 'not a dict')
+    raises(ValueError, W.set_meta_data, 'not a dict')
+
+@deprecated_test
+def test_default_can_read_and_can_write(tmp_path):
+    F = imageio.plugins.example.DummyFormat('test', '', 'foo bar', 'v')
+    filename1 = str(tmp_path / 'test')
+    open(filename1 + '.foo', 'wb')
+    open(filename1 + '.bar', 'wb')
+    open(filename1 + '.spam', 'wb')
+    assert F.can_read(Request(filename1 + '.foo', 'rv'))
+    assert F.can_read(Request(filename1 + '.bar', 'r?'))
+    assert not F.can_read(Request(filename1 + '.spam', 'r?'))
+    assert F.can_write(Request(filename1 + '.foo', 'wv'))
+    assert F.can_write(Request(filename1 + '.bar', 'w?'))
+    assert not F.can_write(Request(filename1 + '.spam', 'w?'))
+
+@deprecated_test
+def test_format_manager(test_images, tmp_path):
+    """Test working of the format manager"""
+    formats = imageio.formats
+    assert isinstance(formats, FormatManager)
+    assert len(formats) > 0
+    assert 'FormatManager' in repr(formats)
+    smalldocs = str(formats)
+    for format in formats:
+        assert isinstance(format, Format)
+        assert format.name in smalldocs
+    fname = test_images / 'chelsea.png'
+    fname2 = tmp_path / 'chelsea.noext'
+    shutil.copy(fname, fname2)
+    F1 = formats['PNG']
+    F2 = formats['.png']
+    F3 = formats[fname2.as_posix()]
+    assert type(F1) is type(F2)
+    assert type(F1) is type(F3)
+    F1 = formats['DICOM']
+    F2 = formats['.dcm']
+    F3 = formats['dcm']
+    assert type(F1) is type(F2)
+    assert type(F1) is type(F3)
+    raises(ValueError, formats.__getitem__, 678)
+    raises(IndexError, formats.__getitem__, '.nonexistentformat')
+    myformat = Format('test', 'test description', 'testext1 testext2')
+    formats.add_format(myformat)
+    assert type(myformat) in [type(f) for f in formats]
+    assert type(formats['testext1']) is type(myformat)
+    assert type(formats['testext2']) is type(myformat)
+    raises(ValueError, formats.add_format, 678)
+    raises(ValueError, formats.add_format, myformat)
+    myformat2 = Format('test', 'other description', 'foo bar')
+    raises(ValueError, formats.add_format, myformat2)
+    formats.add_format(myformat2, True)
+    assert formats['test'].name is not myformat.name
+    assert type(formats['test']) is type(myformat2)
+    formats.show()
+
+@deprecated_test
+def test_sorting_errors():
+    with raises(TypeError):
+        imageio.formats.sort(3)
+    with raises(ValueError):
+        imageio.formats.sort('foo,bar')
+    with raises(ValueError):
+        imageio.formats.sort('foo.png')
+
+@deprecated_test
+def test_default_order():
+    assert imageio.formats['.tiff'].name == 'TIFF'
+    assert imageio.formats['.png'].name == 'PNG-PIL'
+    assert imageio.formats['.pfm'].name == 'PFM-FI'
+
+@deprecated_test
+def test_preferring_fi():
+    imageio.formats.sort('-FI')
+    assert imageio.formats['.tiff'].name == 'TIFF-FI'
+    assert imageio.formats['.png'].name == 'PNG-FI'
+    assert imageio.formats['.pfm'].name == 'PFM-FI'
+    imageio.formats.sort('TIFF', '-FI')
+    assert imageio.formats['.tiff'].name == 'TIFF'
+    assert imageio.formats['.png'].name == 'PNG-FI'
+    assert imageio.formats['.pfm'].name == 'PFM-FI'
+
+@deprecated_test
+def test_preferring_arbitrary():
+    imageio.formats.sort()
+    names = [f.name for f in imageio.formats]
+    assert 'DICOM' not in names[:10]
+    assert 'FFMPEG' not in names[:10]
+    assert 'NPZ' not in names[:10]
+    imageio.formats.sort('DICOM', 'FFMPEG', 'NPZ')
+    names = [f.name for f in imageio.formats]
+    assert names[0] == 'DICOM'
+    assert names[1] == 'FFMPEG'
+    assert names[2] == 'NPZ'
+    imageio.formats.sort()
+    names = [f.name for f in imageio.formats]
+    assert 'DICOM' not in names[:10]
+    assert 'FFMPEG' not in names[:10]
+    assert 'NPZ' not in names[:10]
+
+@deprecated_test
+def test_bad_formats(tmp_path):
+    bogus_file = tmp_path / 'bogus.fil'
+    bogus_file.write_text('abcdefg')
+    with pytest.raises(IndexError):
+        iio.formats[str(bogus_file)]
+    with pytest.raises(ValueError):
+        iio.formats['']
+
+@deprecated_test
+def test_write_format_search_fail(tmp_path):
+    req = iio.core.Request(tmp_path / 'foo.bogus', 'w')
+    assert iio.formats.search_write_format(req) is None
+
+@deprecated_test
+def test_format_by_filename():
+    iio.formats['test.jpg']
+
+@pytest.fixture()
+def missing_ffmpeg():
+    old_ffmpeg = sys.modules.get('imageio_ffmpeg')
+    old_plugin = sys.modules.get('imageio.plugins.ffmpeg')
+    sys.modules['imageio_ffmpeg'] = None
+    sys.modules.pop('imageio.plugins.ffmpeg')
+    yield
+    sys.modules['imageio_ffmpeg'] = old_ffmpeg
+    sys.modules['imageio.plugins.ffmpeg'] = old_plugin
+
+def test_missing_format(missing_ffmpeg):
+    for format in imageio.formats:
+        assert format.name != 'FFMPEG'
+
+def test_touch_warnings(test_images, tmp_path):
+    with pytest.deprecated_call():
+        imageio.formats.search_read_format(Request(test_images / 'chelsea.png', 'r'))
+    with pytest.deprecated_call():
+        imageio.formats.search_write_format(Request(tmp_path / 'chelsea.png', 'w'))

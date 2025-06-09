@@ -1,0 +1,19 @@
+from __future__ import absolute_import, division, print_function
+__metaclass__ = type
+ANSIBLE_METADATA = {'metadata_version': '1.1', 'status': ['preview'], 'supported_by': 'community'}
+DOCUMENTATION = '\n---\nmodule: cp_mgmt_trusted_client_facts\nshort_description: Get trusted-client objects facts on Checkpoint over Web Services API\ndescription:\n  - Get trusted-client objects facts on Checkpoint devices.\n  - All operations are performed over Web Services API.\n  - This module handles both operations, get a specific object and get several objects,\n    For getting a specific object use the parameter \'name\'.\nversion_added: "2.1.0"\nauthor: "Or Soffer (@chkp-orso)"\noptions:\n  name:\n    description:\n      - Object name.\n        This parameter is relevant only for getting a specific object.\n    type: str\n  details_level:\n    description:\n      - The level of detail for some of the fields in the response can vary from showing only the UID value of the object to a fully detailed\n        representation of the object.\n    type: str\n    choices: [\'uid\', \'standard\', \'full\']\n  filter:\n    description:\n      - Search expression to filter objects by. The provided text should be exactly the same as it would be given in SmartConsole Object Explorer. The\n        logical operators in the expression (\'AND\', \'OR\') should be provided in capital letters. The search involves both a IP search and a textual search in\n        name, comment, tags etc.\n    type: str\n  limit:\n    description:\n      - The maximal number of returned results.\n        This parameter is relevant only for getting few objects.\n    type: int\n  offset:\n    description:\n      - Number of the results to initially skip.\n        This parameter is relevant only for getting few objects.\n    type: int\n  order:\n    description:\n      - Sorts the results by search criteria. Automatically sorts the results by Name, in the ascending order.\n        This parameter is relevant only for getting few objects.\n    type: list\n    elements: dict\n    suboptions:\n      ASC:\n        description:\n          - Sorts results by the given field in ascending order.\n        type: str\n        choices: [\'name\']\n      DESC:\n        description:\n          - Sorts results by the given field in descending order.\n        type: str\n        choices: [\'name\']\nextends_documentation_fragment: check_point.mgmt.checkpoint_facts\n'
+EXAMPLES = '\n- name: show-trusted-client\n  cp_mgmt_trusted_client_facts:\n    name: anyHost\n\n- name: show-trusted-clients\n  cp_mgmt_trusted_client_facts:\n    details_level: standard\n    limit: 50\n    offset: 0\n'
+RETURN = '\nansible_facts:\n  description: The checkpoint object facts.\n  returned: always.\n  type: dict\n'
+from ansible.module_utils.basic import AnsibleModule
+from ansible_collections.check_point.mgmt.plugins.module_utils.checkpoint import checkpoint_argument_spec_for_facts, api_call_facts
+
+def main():
+    argument_spec = dict(name=dict(type='str'), details_level=dict(type='str', choices=['uid', 'standard', 'full']), filter=dict(type='str'), limit=dict(type='int'), offset=dict(type='int'), order=dict(type='list', elements='dict', options=dict(ASC=dict(type='str', choices=['name']), DESC=dict(type='str', choices=['name']))))
+    argument_spec.update(checkpoint_argument_spec_for_facts)
+    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
+    api_call_object = 'trusted-client'
+    api_call_object_plural_version = 'trusted-clients'
+    result = api_call_facts(module, api_call_object, api_call_object_plural_version)
+    module.exit_json(ansible_facts=result)
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,34 @@
+import sys
+_b = sys.version_info[0] < 3 and (lambda x: x) or (lambda x: x.encode('latin1'))
+from google.protobuf import descriptor as _descriptor
+from google.protobuf import message as _message
+from google.protobuf import reflection as _reflection
+from google.protobuf import symbol_database as _symbol_database
+from google.protobuf import descriptor_pb2
+_sym_db = _symbol_database.Default()
+from mysqlx.protobuf import mysqlx_prepare_pb2 as mysqlx__prepare__pb2
+DESCRIPTOR = _descriptor.FileDescriptor(name='mysqlx_cursor.proto', package='Mysqlx.Cursor', syntax='proto2', serialized_pb=_b('\n\x13mysqlx_cursor.proto\x12\rMysqlx.Cursor\x1a\x14mysqlx_prepare.proto"ò\x01\n\x04Open\x12\x11\n\tcursor_id\x18\x01 \x02(\r\x12.\n\x04stmt\x18\x04 \x02(\x0b2 .Mysqlx.Cursor.Open.OneOfMessage\x12\x12\n\nfetch_rows\x18\x05 \x01(\x04\x1a\x92\x01\n\x0cOneOfMessage\x123\n\x04type\x18\x01 \x02(\x0e2%.Mysqlx.Cursor.Open.OneOfMessage.Type\x120\n\x0fprepare_execute\x18\x02 \x01(\x0b2\x17.Mysqlx.Prepare.Execute"\x1b\n\x04Type\x12\x13\n\x0fPREPARE_EXECUTE\x10\x00".\n\x05Fetch\x12\x11\n\tcursor_id\x18\x01 \x02(\r\x12\x12\n\nfetch_rows\x18\x05 \x01(\x04"\x1a\n\x05Close\x12\x11\n\tcursor_id\x18\x01 \x02(\rB\x1b\n\x17com.mysql.cj.x.protobufH\x03'), dependencies=[mysqlx__prepare__pb2.DESCRIPTOR])
+_sym_db.RegisterFileDescriptor(DESCRIPTOR)
+_OPEN_ONEOFMESSAGE_TYPE = _descriptor.EnumDescriptor(name='Type', full_name='Mysqlx.Cursor.Open.OneOfMessage.Type', filename=None, file=DESCRIPTOR, values=[_descriptor.EnumValueDescriptor(name='PREPARE_EXECUTE', index=0, number=0, options=None, type=None)], containing_type=None, options=None, serialized_start=276, serialized_end=303)
+_sym_db.RegisterEnumDescriptor(_OPEN_ONEOFMESSAGE_TYPE)
+_OPEN_ONEOFMESSAGE = _descriptor.Descriptor(name='OneOfMessage', full_name='Mysqlx.Cursor.Open.OneOfMessage', filename=None, file=DESCRIPTOR, containing_type=None, fields=[_descriptor.FieldDescriptor(name='type', full_name='Mysqlx.Cursor.Open.OneOfMessage.type', index=0, number=1, type=14, cpp_type=8, label=2, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None), _descriptor.FieldDescriptor(name='prepare_execute', full_name='Mysqlx.Cursor.Open.OneOfMessage.prepare_execute', index=1, number=2, type=11, cpp_type=10, label=1, has_default_value=False, default_value=None, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None)], extensions=[], nested_types=[], enum_types=[_OPEN_ONEOFMESSAGE_TYPE], options=None, is_extendable=False, syntax='proto2', extension_ranges=[], oneofs=[], serialized_start=157, serialized_end=303)
+_OPEN = _descriptor.Descriptor(name='Open', full_name='Mysqlx.Cursor.Open', filename=None, file=DESCRIPTOR, containing_type=None, fields=[_descriptor.FieldDescriptor(name='cursor_id', full_name='Mysqlx.Cursor.Open.cursor_id', index=0, number=1, type=13, cpp_type=3, label=2, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None), _descriptor.FieldDescriptor(name='stmt', full_name='Mysqlx.Cursor.Open.stmt', index=1, number=4, type=11, cpp_type=10, label=2, has_default_value=False, default_value=None, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None), _descriptor.FieldDescriptor(name='fetch_rows', full_name='Mysqlx.Cursor.Open.fetch_rows', index=2, number=5, type=4, cpp_type=4, label=1, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None)], extensions=[], nested_types=[_OPEN_ONEOFMESSAGE], enum_types=[], options=None, is_extendable=False, syntax='proto2', extension_ranges=[], oneofs=[], serialized_start=61, serialized_end=303)
+_FETCH = _descriptor.Descriptor(name='Fetch', full_name='Mysqlx.Cursor.Fetch', filename=None, file=DESCRIPTOR, containing_type=None, fields=[_descriptor.FieldDescriptor(name='cursor_id', full_name='Mysqlx.Cursor.Fetch.cursor_id', index=0, number=1, type=13, cpp_type=3, label=2, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None), _descriptor.FieldDescriptor(name='fetch_rows', full_name='Mysqlx.Cursor.Fetch.fetch_rows', index=1, number=5, type=4, cpp_type=4, label=1, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None)], extensions=[], nested_types=[], enum_types=[], options=None, is_extendable=False, syntax='proto2', extension_ranges=[], oneofs=[], serialized_start=305, serialized_end=351)
+_CLOSE = _descriptor.Descriptor(name='Close', full_name='Mysqlx.Cursor.Close', filename=None, file=DESCRIPTOR, containing_type=None, fields=[_descriptor.FieldDescriptor(name='cursor_id', full_name='Mysqlx.Cursor.Close.cursor_id', index=0, number=1, type=13, cpp_type=3, label=2, has_default_value=False, default_value=0, message_type=None, enum_type=None, containing_type=None, is_extension=False, extension_scope=None, options=None)], extensions=[], nested_types=[], enum_types=[], options=None, is_extendable=False, syntax='proto2', extension_ranges=[], oneofs=[], serialized_start=353, serialized_end=379)
+_OPEN_ONEOFMESSAGE.fields_by_name['type'].enum_type = _OPEN_ONEOFMESSAGE_TYPE
+_OPEN_ONEOFMESSAGE.fields_by_name['prepare_execute'].message_type = mysqlx__prepare__pb2._EXECUTE
+_OPEN_ONEOFMESSAGE.containing_type = _OPEN
+_OPEN_ONEOFMESSAGE_TYPE.containing_type = _OPEN_ONEOFMESSAGE
+_OPEN.fields_by_name['stmt'].message_type = _OPEN_ONEOFMESSAGE
+DESCRIPTOR.message_types_by_name['Open'] = _OPEN
+DESCRIPTOR.message_types_by_name['Fetch'] = _FETCH
+DESCRIPTOR.message_types_by_name['Close'] = _CLOSE
+Open = _reflection.GeneratedProtocolMessageType('Open', (_message.Message,), dict(OneOfMessage=_reflection.GeneratedProtocolMessageType('OneOfMessage', (_message.Message,), dict(DESCRIPTOR=_OPEN_ONEOFMESSAGE, __module__='mysqlx_cursor_pb2')), DESCRIPTOR=_OPEN, __module__='mysqlx_cursor_pb2'))
+_sym_db.RegisterMessage(Open)
+_sym_db.RegisterMessage(Open.OneOfMessage)
+Fetch = _reflection.GeneratedProtocolMessageType('Fetch', (_message.Message,), dict(DESCRIPTOR=_FETCH, __module__='mysqlx_cursor_pb2'))
+_sym_db.RegisterMessage(Fetch)
+Close = _reflection.GeneratedProtocolMessageType('Close', (_message.Message,), dict(DESCRIPTOR=_CLOSE, __module__='mysqlx_cursor_pb2'))
+_sym_db.RegisterMessage(Close)
+DESCRIPTOR.has_options = True
+DESCRIPTOR._options = _descriptor._ParseOptions(descriptor_pb2.FileOptions(), _b('\n\x17com.mysql.cj.x.protobufH\x03'))

@@ -1,0 +1,6 @@
+import django.db.models.deletion
+from django.db import migrations, models
+
+class Migration(migrations.Migration):
+    dependencies = [('core', '0028_auto_20220404_1058')]
+    operations = [migrations.AddField(model_name='historicallegalperson', name='primary_phonenumber', field=models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='core.phone')), migrations.AddField(model_name='historicalnaturalperson', name='primary_phonenumber', field=models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='core.phone')), migrations.AddField(model_name='historicalperson', name='primary_phonenumber', field=models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='core.phone')), migrations.AddField(model_name='historicalpersonassociation', name='primary_phonenumber', field=models.ForeignKey(blank=True, db_constraint=False, null=True, on_delete=django.db.models.deletion.DO_NOTHING, related_name='+', to='core.phone')), migrations.AddField(model_name='person', name='primary_phonenumber', field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='primary_phone_for', to='core.phone'))]

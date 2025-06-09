@@ -1,0 +1,1 @@
+{'name': 'Sale shipping info helper', 'version': '9.0.1.0.1', 'category': 'Sales', 'license': 'AGPL-3', 'summary': 'Add shipping amounts on sale order', 'depends': ['sale', 'delivery'], 'author': 'Akretion, Odoo Community Association (OCA)', 'website': 'https://github.com/OCA/sale-workflow', 'installable': True}

@@ -1,0 +1,13 @@
+DATE_FORMAT = 'j E \\d\\e Y'
+TIME_FORMAT = 'G:i'
+DATETIME_FORMAT = 'j E \\d\\e Y \\a \\l\\e\\s G:i'
+YEAR_MONTH_FORMAT = 'F \\d\\e\\l Y'
+MONTH_DAY_FORMAT = 'j E'
+SHORT_DATE_FORMAT = 'd/m/Y'
+SHORT_DATETIME_FORMAT = 'd/m/Y G:i'
+FIRST_DAY_OF_WEEK = 1
+DATE_INPUT_FORMATS = ['%d/%m/%Y', '%d/%m/%y']
+DATETIME_INPUT_FORMATS = ['%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S.%f', '%d/%m/%Y %H:%M', '%d/%m/%y %H:%M:%S', '%d/%m/%y %H:%M:%S.%f', '%d/%m/%y %H:%M']
+DECIMAL_SEPARATOR = ','
+THOUSAND_SEPARATOR = '.'
+NUMBER_GROUPING = 3
