@@ -52,7 +52,7 @@ class WithCleanup3_9(ControlFlowTemplate):
 
     try_match = make_try_match({EdgeKind.Fall: "tail"}, "start", "reraise", "poptop")
 
-    @override
+    @to_indented_source
     def to_indented_source(self, source):
         """
         {poptop}
