@@ -39,3 +39,40 @@ class With3_12(ControlFlowTemplate):
         {setup_with}
             {with_body}
         """
+
+class WithCleanup3_10(ControlFlowTemplate):
+    template = T(
+        start=~N("reraise", "poptop").with_cond(
+            starting_instructions("WITH_EXCEPT_START"),  # 3.10
+        ),
+        reraise=+N().with_cond(exact_instructions("RERAISE")).with_in_deg(1),
+        poptop=~N("tail.", None).with_cond(starting_instructions("POP_TOP")).with_in_deg(1),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "start", "reraise", "poptop")
+
+    @override
+    def to_indented_source(self, source):
+        """
+        {poptop}
+        """
+
+@register_template(0, 10, *versions_from(3, 10))
+class With3_10(ControlFlowTemplate):
+    template = T(
+        setup_with=~N("with_body", None),
+        with_body=N("normal_cleanup.", None, "exc_cleanup").with_in_deg(1),
+        exc_cleanup=N.tail().of_subtemplate(WithCleanup3_10).with_in_deg(1),
+        normal_cleanup=~N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "normal_cleanup"}, "setup_with", "with_body", "exc_cleanup")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {setup_with}
+            {with_body}
+        {exc_cleanup}
+        """
