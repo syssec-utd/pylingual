@@ -6,6 +6,7 @@ from ..utils import T, N, exact_instructions, starting_instructions, to_indented
 class WithCleanup3_12(ControlFlowTemplate):
     template = T(
         start=N("reraise", "poptop", "exc").with_cond(
+            exact_instructions("PUSH_EXC_INFO", "WITH_EXCEPT_START", "POP_JUMP_FORWARD_IF_TRUE"),  # 3.11
             exact_instructions("PUSH_EXC_INFO", "WITH_EXCEPT_START", "POP_JUMP_IF_TRUE"),  # 3.12
             exact_instructions("PUSH_EXC_INFO", "WITH_EXCEPT_START", "TO_BOOL", "POP_JUMP_IF_TRUE"),  # 3.13
         ),
@@ -22,7 +23,7 @@ class WithCleanup3_12(ControlFlowTemplate):
         return []
 
 
-@register_template(0, 10, *versions_from(3, 12))
+@register_template(0, 10, (3, 11), (3, 12), (3, 13))
 class With3_12(ControlFlowTemplate):
     template = T(
         setup_with=~N("with_body", None),
@@ -77,16 +78,16 @@ class With3_9(ControlFlowTemplate):
         {exc_cleanup}
         """
 
-@register_template(0, 10, (3, 8))
-class With3_8(ControlFlowTemplate):
+@register_template(0, 10, (3, 6), (3, 7), (3, 8))
+class With3_6(ControlFlowTemplate):
     template = T(
         setup_with=~N("with_body", None),
-        with_body=N("begin_finally.", None, "normal_cleanup").with_in_deg(1),
-        begin_finally=~N("normal_cleanup.", None).with_in_deg(1),
+        with_body=N("buffer_block.", None, "normal_cleanup").with_in_deg(1),
+        buffer_block=~N("normal_cleanup.", None).with_in_deg(1),
         normal_cleanup=~N.tail(),
     )
 
-    try_match = make_try_match({EdgeKind.Fall: "normal_cleanup"}, "setup_with", "with_body", "begin_finally")
+    try_match = make_try_match({EdgeKind.Fall: "normal_cleanup"}, "setup_with", "with_body", "buffer_block")
 
     @to_indented_source
     def to_indented_source():
