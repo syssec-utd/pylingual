@@ -147,7 +147,8 @@ def install_pyenv():
         logger.error("pyenv install failed, exiting...")
         return False
     os.environ["PATH"] = f"{os.environ.get('PYENV_ROOT', os.path.expanduser('~/.pyenv'))}/bin:{os.environ['PATH']}"
-    if shutil.which("pyenv") is None:
+    which_pyenv = shutil.which("pyenv")
+    if which_pyenv is None:
         logger.error("Could not find pyenv, exiting...")
         return False
     versions = click.prompt(
@@ -156,7 +157,7 @@ def install_pyenv():
         default=supported_versions,
         show_default=False,
     )
-    if subprocess.run(["pyenv", "install", *map(str, versions)]).returncode != 0:
+    if subprocess.run([which_pyenv, "install", *map(str, versions)]).returncode != 0:
         logger.error("Error installing Python versions, exiting...")
         return False
     return True
