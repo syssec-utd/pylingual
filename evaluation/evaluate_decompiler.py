@@ -13,7 +13,6 @@ from pylingual.decompiler import decompile
 @click.argument("pyc_list")
 @click.argument("out_dir")
 def main(pyc_list, out_dir):
-    
     start_time = datetime.now()
     
     def timeout_handler(signum, frame):
@@ -35,8 +34,9 @@ def main(pyc_list, out_dir):
     total_files_succeeded = 0
     total_files_attempted = 0 
     for pyc_file in (evaluation_progress := tqdm.tqdm(pyc_files)):
-        target_out_dir = out_dir / 'decompilation_results' / pyc_file.parent.name
-        target_out_dir.mkdir(parents=True, exist_ok=True)
+        decompiler_results_dir = out_dir / 'decompilation_results'
+        decompiler_results_dir.mkdir(parents=True, exist_ok=True)
+        target_out_dir =  decompiler_results_dir / pyc_file.parent.name
         identifier = str(pyc_file).split("/")[-2]
         # update progress bar
         if total_files_attempted > 0:
