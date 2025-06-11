@@ -377,7 +377,7 @@ class Decompiler:
         candidate_source_path = self.candidate_source_path
         candidate_pyc_path = self.candidate_pyc_path
         if write_source:
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".py")
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete_on_close=False)
             tmp.write(self.header + self.indented_source)
             candidate_source_path = Path(tmp.name)
             candidate_pyc_path = Path(tmp.name).with_suffix(".pyc")

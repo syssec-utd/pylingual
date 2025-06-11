@@ -136,9 +136,11 @@ def install_pyenv():
     if shutil.which("pyenv") is not None:
         logger.warning("pyenv seems to already be installed, ignoring --init-pyenv...")
         return True
-    if platform.system() not in ["Linux", "Darwin"] and not click.confirm("pyenv is probably not supported on your operating system. Continue?", default=False):
-        return False
     cmd = "curl -fsSL https://pyenv.run | bash"
+    if platform.system() == "Windows":
+        cmd = r'''powershell.exe -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile './install-pyenv-win.ps1'; &'./install-pyenv-win.ps1'"'''
+    elif platform.system() not in ["Linux", "Darwin"] and not click.confirm("pyenv is probably not supported on your operating system. Continue?", default=False):
+        return False
     if not click.confirm(f"pyenv will be installed with the following command:\n\n\t{cmd}\n\nContinue?", default=True):
         return False
     if subprocess.run(cmd, shell=True).returncode != 0:
