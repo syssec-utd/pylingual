@@ -72,7 +72,9 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         edit_pyc_lines(pyc, src_lines)
 
         cfts = {bc.codeobj: bc_to_cft(bc) for bc in pyc.iter_bytecodes()}
-        out_src = normalize_source(str(SourceContext(pyc, src_lines, cfts)))
+        out_src = (str(SourceContext(pyc, src_lines, cfts)))
+        try: out_src = normalize_source(out_src)
+        except: pass
 
         out_path = out_dir / "b.py"
         out_path.write_text(out_src, encoding="utf-8")
@@ -158,8 +160,7 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, pr
             results = run(input, o, version)[0]
             if results in [Result.CompileError, Result.Error]:
                 print(results)
-            else:
-                print_diff(o / input.stem / "a.py", o / input.stem / "b.py")
+            print_diff(o / input.stem / "a.py", o / input.stem / "b.py")
     else:
         if not output:
             out_dir = get_unused(prefix / str(version) / input.stem)

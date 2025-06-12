@@ -74,6 +74,12 @@ def without_instructions(*opnames: str):
 
     return check_instructions
 
+def with_instructions(*opnames: str):
+    def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        ops = {x.opname for x in node.get_instructions()}
+        return node is not None and all(opname in ops for opname in opnames)
+
+    return check_instructions
 
 def without_top_level_instructions(*opnames: str):
     from .templates.Block import BlockTemplate
