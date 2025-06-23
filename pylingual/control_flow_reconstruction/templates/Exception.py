@@ -4,9 +4,218 @@ from typing import override
 from .Block import BlockTemplate
 from .Conditional import IfElse, IfThen
 from ..cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, SourceLine, SourceContext, register_template
-from ..utils import E, N, T, condense_mapping, defer_source_to, ending_instructions, exact_instructions, no_back_edges, revert_on_fail, starting_instructions, to_indented_source, make_try_match, versions_from
+from ..utils import E, N, T, condense_mapping, defer_source_to, ending_instructions, exact_instructions, no_back_edges, revert_on_fail, starting_instructions, to_indented_source, make_try_match, versions_from, hook_template
 
 reraise = +N().with_cond(exact_instructions("COPY", "POP_EXCEPT", "RERAISE"))
+
+
+
+
+
+
+
+
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+
+class Except3_6(ControlFlowTemplate):
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+
+        if x := ExceptExc3_6.try_match(cfg, node):
+            return x
+        if x := EndFinallyBlock3_6.try_match(cfg, node):
+            return x
+        if x := BareExcept3_6.try_match(cfg, node):
+            return x
+
+        print("No match in Except3_6")
+        return None
+
+
+class EndFinallyBlock3_6(Except3_6):
+    template = T(
+        end=N("tail").with_cond(exact_instructions("END_FINALLY")),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+        },
+        "end",
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {end}
+        """
+
+
+@register_template(0, 0, *versions_from(3, 6))
+class Try3_6(ControlFlowTemplate):
+    template = T(
+        try_header=N("try_body"),
+        try_body=N("try_footer", None, "except_body").with_cond(ending_instructions("POP_BLOCK")),
+        try_footer=N("tail").with_cond(starting_instructions("JUMP_FORWARD")),
+        except_body=N("tail").with_in_deg(1).of_subtemplate(Except3_6),
+        tail=N.tail().with_cond(exact_instructions("LOAD_CONST", "RETURN_VALUE")),
+    )
+
+    try_match = revert_on_fail(
+        make_try_match(
+            {
+                EdgeKind.Fall: "tail",
+            },
+            "try_header",
+            "try_body",
+            "try_footer",
+            "except_body",
+        )
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {try_header}
+        try:
+            {try_body}
+        {except_body}
+        """
+
+
+class BareExcept3_6(Except3_6):
+    template = T(
+        except_body=N("tail"),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+        },
+        "except_body",
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        except:
+            {except_body}
+        """
+
+
+class ExcBody3_6(ControlFlowTemplate):
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if x := NamedExc3_6.try_match(cfg, node):
+            return x
+        return node
+
+
+class NamedExcTail3_6(ControlFlowTemplate):
+    template = T(
+        SWAP=N("tail", "end").with_cond(exact_instructions("SWAP")),
+        end=N(),
+        tail=N.tail(),
+    )
+
+    @classmethod
+    def _try_match(cls, cfg, node):
+        mapping = cls.template.try_match(cfg, node)
+        if mapping is None:
+            return None
+        return condense_mapping(cls, cfg, mapping, "SWAP", "tail", out_filter=[EdgeCategory.Exception])
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if x := cls._try_match(cfg, node):
+            return x
+        return node
+
+    to_indented_source = defer_source_to("tail")
+
+
+class NamedExc3_6(ExcBody3_6):
+    template = T(
+        STORE=N("body").with_cond(exact_instructions("STORE_FAST"), exact_instructions("STORE_NAME")),
+        body=N("tail.", "cleanup"),
+        cleanup=N(E.exc("end")).with_cond(exact_instructions("END_FINALLY")).optional(),
+        end=N().optional(),
+        tail=N.tail().of_subtemplate(NamedExcTail3_6),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "STORE", "body", "cleanup", "end")
+
+    to_indented_source = defer_source_to("body")
+
+
+class ExceptExc3_6(Except3_6):
+    template = T(
+        except_header=N("except_body", "no_match").with_cond(
+            ending_instructions("COMPARE_OP", "POP_JUMP_IF_FALSE"),
+            ending_instructions("COMPARE_OP", "POP_JUMP_FORWARD_IF_FALSE")
+        ),
+        except_body=N("tail.").of_subtemplate(ExcBody3_6).with_in_deg(1),
+        no_match=N("tail?").of_subtemplate(Except3_6).optional(),
+        tail=N.tail().with_cond(exact_instructions("LOAD_CONST", "RETURN_VALUE")).optional(),
+    )
+
+    try_match = revert_on_fail(
+        make_try_match(
+            {
+                EdgeKind.Fall: "tail",
+            },
+            "except_header",
+            "except_body",
+            "no_match",
+        )
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {except_header}
+            {except_body}
+        {no_match}
+        """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
 
 
 class Except3_11(ControlFlowTemplate):
@@ -51,6 +260,23 @@ class Try3_12(ControlFlowTemplate):
             {try_body}
         {except_body}
         """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 @register_template(0, 0, *versions_from(3, 12))
@@ -171,6 +397,7 @@ class ExceptExc3_11(Except3_11):
         reraise=reraise,
         tail=N.tail(),
     )
+
 
     try_match = revert_on_fail(
         make_try_match(
