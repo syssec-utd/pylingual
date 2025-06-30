@@ -38,20 +38,6 @@ class Except3_11(ControlFlowTemplate):
             return x
 
 
-class Except3_9(ControlFlowTemplate):
-    @classmethod
-    @override
-    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
-        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
-            return node
-        if x := ExceptExc3_9.try_match(cfg, node):
-            return x
-        if x := BareExcept3_9.try_match(cfg, node):
-            return x
-        if isinstance(node, Except3_9):
-            return node
-
-
 @register_template(0, 0, *versions_from(3, 11))
 class Try3_11(ControlFlowTemplate):
     template = T(
@@ -305,6 +291,20 @@ class TryFinally3_11(ControlFlowTemplate):
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
 
 
+class Except3_9(ControlFlowTemplate):
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
+            return node
+        if x := ExceptExc3_9.try_match(cfg, node):
+            return x
+        if x := BareExcept3_9.try_match(cfg, node):
+            return x
+        if isinstance(node, Except3_9):
+            return node
+        
+
 @register_template(0, 1, (3, 9), (3, 10))
 class Try3_9(ControlFlowTemplate):
     template = T(
@@ -385,7 +385,7 @@ class ExcBody3_9(ControlFlowTemplate):
 class NamedExc3_9(ExcBody3_9):
     template = T(
         header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST")),
-        body=N("normal_cleanup", None, "exception_cleanup"),
+        body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST")),
         exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST")),
         tail=N.tail(),
