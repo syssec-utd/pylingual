@@ -108,7 +108,7 @@ class TryElse3_11(ControlFlowTemplate):
 
 class BareExcept3_11(Except3_11):
     template = T(
-        except_body=N("except_footer", None, "reraise"),
+        except_body=N("except_footer.", None, "reraise").with_cond(without_top_level_instructions("RERAISE")),
         except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")),
         reraise=reraise,
         tail=N.tail(),
@@ -219,14 +219,14 @@ class TryFinally3_11(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N(E.exc("reraise")),
+        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE")),
         reraise=reraise,
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_body", None, "fail_body").of_type(Try3_11, TryElse3_11),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N(E.exc("reraise")),
+        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE")),
         reraise=reraise,
         tail=N.tail(),
     )
