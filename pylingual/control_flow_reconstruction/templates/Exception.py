@@ -340,12 +340,12 @@ class Try3_9(ControlFlowTemplate):
 @register_template(0, 0, (3, 9), (3, 10))
 class TryElse3_9(ControlFlowTemplate):
     template = T(
-        try_header=N("try_body"),
+        try_header=~N("try_body"),
         try_body=N("try_footer.", None, "except_body"),
-        try_footer=N("else_body").with_in_deg(1),
-        except_body=N("tail.").with_in_deg(1).of_subtemplate(Except3_9),
+        try_footer=~N("else_body").with_in_deg(1),
+        except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_9),
         else_body=~N("tail.").with_in_deg(1),
-        tail=N.tail(),
+        tail=~N.tail(),
     )
 
     try_match = revert_on_fail(
