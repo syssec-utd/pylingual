@@ -279,6 +279,10 @@ class TryFinally3_11(ControlFlowTemplate):
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
         header = source[self.try_header]
         body = source[self.try_body, 1]
+        if isinstance(self.try_header, (Try3_11, TryElse3_11)) and self.members['try_body'] is None:
+            s = header
+        else:
+            s = chain(header, self.line('try:'), body)
 
         if isinstance(self.finally_body, BlockTemplate):
             i = self.cutoff + 1
@@ -288,7 +292,7 @@ class TryFinally3_11(ControlFlowTemplate):
             in_finally = source[self.finally_body, 1]
             after = []
 
-        return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
+        return list(chain(s, self.line("finally:"), in_finally, after))
 
 
 class Except3_9(ControlFlowTemplate):
