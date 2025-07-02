@@ -583,7 +583,7 @@ class ExcBody3_6(ControlFlowTemplate):
 class NamedExc3_6(ExcBody3_6):
     template = T(
         header=N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST")),
-        body=N("normal_cleanup", None, "exception_cleanup"),
+        body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=N("exception_cleanup."),
         exception_cleanup=N.tail().with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
     )
