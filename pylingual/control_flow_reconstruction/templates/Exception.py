@@ -542,10 +542,10 @@ class Except3_6(ControlFlowTemplate):
 @register_template(0, 0, (3, 6), (3, 7), (3, 8))
 class Try3_6(ControlFlowTemplate):
     template = T(
-        try_header=N("try_body").with_cond(without_top_level_instructions("SETUP_WITH")),
+        try_header=~N("try_body").with_cond(without_top_level_instructions("SETUP_WITH")),
         try_body=N("try_footer", None, "except_body"),
-        try_footer=N("tail."),
-        except_body=N("tail.").with_in_deg(1).of_subtemplate(Except3_6),
+        try_footer=~N("tail."),
+        except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6),
         tail=N.tail(),
     )
 
@@ -662,8 +662,8 @@ class TryElse3_6(ControlFlowTemplate):
 
 class BareExcept3_6(Except3_6):
     template = T(
-        except_body=N("tail."),
-        tail=N.tail(),
+        except_body=~N("tail."),
+        tail=~N.tail(),
     )
 
     try_match = make_try_match(
