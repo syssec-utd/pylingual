@@ -585,7 +585,8 @@ class NamedExc3_6(ExcBody3_6):
         header=N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=N("exception_cleanup."),
-        exception_cleanup=N.tail().with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
+        exception_cleanup=N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
+        tail=N.tail()
     )
 
     try_match = make_try_match({EdgeKind.Fall: "tail"}, "exception_cleanup", "header", "body", "normal_cleanup")
@@ -600,7 +601,7 @@ class ExceptExc3_6(Except3_6):
             ending_instructions("COMPARE_OP", "POP_JUMP_FORWARD_IF_FALSE")
         ),
         except_body=N("tail.", None).of_subtemplate(ExcBody3_6).with_in_deg(1),
-        no_match=N("tail?", None).of_subtemplate(Except3_6),
+        no_match=N.tail().of_subtemplate(Except3_6),
         tail=N.tail(),
     )
 
