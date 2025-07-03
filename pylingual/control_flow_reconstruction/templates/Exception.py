@@ -388,10 +388,10 @@ class ExcBody3_9(ControlFlowTemplate):
 
 class NamedExc3_9(ExcBody3_9):
     template = T(
-        header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST")),
+        header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
-        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST")),
-        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST")),
+        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
+        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
         tail=N.tail(),
     )
 
@@ -582,10 +582,10 @@ class ExcBody3_6(ControlFlowTemplate):
 
 class NamedExc3_6(ExcBody3_6):
     template = T(
-        header=~N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST")),
+        header=~N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=~N("exception_cleanup."),
-        exception_cleanup=~N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
+        exception_cleanup=~N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST"), with_instructions("LOAD_CONST", "STORE_NAME")),
         tail=N.tail()
     )
 
