@@ -568,6 +568,10 @@ class EditableBytecode:
             jump.argval = jump.target.offset
             jump.argrepr = f"to {jump.argval}"
 
+        jump_targets = [inst.argval for inst in self.instructions if inst.is_jump]
+        for inst in self.instructions:
+            inst.is_jump_target = inst.offset in jump_targets
+
         # fix exception table offsets
         self.exception_table = {start.offset: (end.offset, target.offset) for start, (end, target) in temp_exception_table.items()}
         if temp_named_exception_table:
