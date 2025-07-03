@@ -582,10 +582,10 @@ class ExcBody3_6(ControlFlowTemplate):
 
 class NamedExc3_6(ExcBody3_6):
     template = T(
-        header=N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST")),
+        header=~N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
-        normal_cleanup=N("exception_cleanup."),
-        exception_cleanup=N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
+        normal_cleanup=~N("exception_cleanup."),
+        exception_cleanup=~N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST")),
         tail=N.tail()
     )
 
@@ -596,12 +596,12 @@ class NamedExc3_6(ExcBody3_6):
 
 class ExceptExc3_6(Except3_6):
     template = T(
-        except_header=N("except_body", "no_match").with_cond(
+        except_header=~N("except_body", "no_match").with_cond(
             ending_instructions("COMPARE_OP", "POP_JUMP_IF_FALSE"),
             ending_instructions("COMPARE_OP", "POP_JUMP_FORWARD_IF_FALSE")
         ),
-        except_body=N("tail.", None).of_subtemplate(ExcBody3_6).with_in_deg(1),
-        no_match=N.tail().of_subtemplate(Except3_6),
+        except_body=~N("tail.", None).of_subtemplate(ExcBody3_6).with_in_deg(1),
+        no_match=~N.tail().of_subtemplate(Except3_6),
         tail=N.tail(),
     )
 
@@ -698,26 +698,6 @@ class TryFinally3_6(ControlFlowTemplate):
         tail=N.tail(),
     )
 
-    @staticmethod
-    def find_finally_cutoff(mapping):
-        f = mapping["finally_body"]
-        g = mapping["fail_body"]
-        if any(x.starts_line is not None for x in g.get_instructions()):
-            return None
-        if not isinstance(f, BlockTemplate):
-            f = BlockTemplate([f])
-        if not isinstance(g, BlockTemplate):
-            g = BlockTemplate([g])
-        if isinstance(g.members[-1], InstTemplate) and g.members[-1].inst.opname == "END_FINALLY":
-            g.members.pop()
-        x = None
-        for x, y in zip(f.members, g.members):
-            if all(type(a) in [IfThen, IfElse] for a in (x, y)):
-                continue
-            if type(x) is not type(y):
-                return None
-        return x and f.members.index(x)
-
     cutoff: int
 
     @classmethod
@@ -730,12 +710,9 @@ class TryFinally3_6(ControlFlowTemplate):
                 return None
             mapping["try_header"] = mapping.pop("try_except")
 
-        cutoff = cls.find_finally_cutoff(mapping)
+        cutoff = next((i for i, x in enumerate(mapping["fail_body"].get_instructions())), None)
         if cutoff is None:
-            if cfg.run == 2:
-                cutoff = 9999
-            else:
-                return None
+            return None
 
         template = condense_mapping(cls, cfg, mapping, "try_header", "try_body", "finally_body", "fail_body")
         template.cutoff = cutoff
