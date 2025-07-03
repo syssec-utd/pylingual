@@ -407,6 +407,14 @@ def z_TryExceptReturn():
     except:
         print(2)
 
+def z1_TryExceptReturn():
+    try:
+        print(1)
+        return 2
+    except:
+        print(2)
+        return 3
+
 def aa_TryExceptReturnMulti():
     try:
         print(1)
@@ -422,6 +430,14 @@ def ab_TryExceptReturnNamed():
         return 2
     except A as a:
         print(2)
+
+def ab1_TryExceptReturnNamed():
+    try:
+        print(1)
+        return 2
+    except A as a:
+        print(2)
+        return 3
 
 def ac_TryFinallyBareFallthrough():
     try:
