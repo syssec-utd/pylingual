@@ -424,6 +424,24 @@ def aa_TryExceptReturnMulti():
     except b:
         print(3)
 
+def aa1_TryExceptReturnMulti():
+    try:
+        print(1)
+        return 2
+    except a:
+        print(2)
+        return 3
+
+def aa2_TryExceptReturnMulti():
+    try:
+        print(1)
+        return 2
+    except a:
+        print(2)
+        return 3
+    except b:
+        print(3)
+
 def ab_TryExceptReturnNamed():
     try:
         print(1)

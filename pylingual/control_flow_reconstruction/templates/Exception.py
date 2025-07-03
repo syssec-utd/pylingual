@@ -530,7 +530,7 @@ class Except3_6(ControlFlowTemplate):
     @classmethod
     @override
     def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
-        if [x.opname for x in node.get_instructions()] == ["END_FINALLY"]:
+        if [x.opname for x in node.get_instructions()[:1]] == ["END_FINALLY"]:
             return node
         if x := ExceptExc3_6.try_match(cfg, node):
             return x
@@ -543,7 +543,7 @@ class Except3_6(ControlFlowTemplate):
 class Try3_6(ControlFlowTemplate):
     template = T(
         try_header=~N("try_body").with_cond(without_top_level_instructions("SETUP_WITH")),
-        try_body=N("try_footer", None, "except_body"),
+        try_body=N("try_footer.", None, "except_body"),
         try_footer=~N("tail."),
         except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6),
         tail=N.tail(),
@@ -663,7 +663,7 @@ class TryElse3_6(ControlFlowTemplate):
 
 class BareExcept3_6(Except3_6):
     template = T(
-        except_body=~N("tail."),
+        except_body=~N("tail.").with_cond(starting_instructions("POP_TOP", "POP_TOP", "POP_TOP")).with_cond(has_incoming_edge_of_categories("exception", "false_jump")),
         tail=~N.tail(),
     )
 
