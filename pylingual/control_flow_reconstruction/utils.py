@@ -118,6 +118,18 @@ def has_incoming_edge_of_categories(*categories: str):
         return False
     return check
 
+
+def has_instval(opname: str, argval : Any):
+    def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        ops = {x.opname : x.argval for x in node.get_instructions()}
+        for op in ops:
+            if ops[op] == argval:
+                return True
+        return False
+    
+    return check_instructions
+
+
 def run_is(n: int):
     def check_run(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         return cfg.run == n
