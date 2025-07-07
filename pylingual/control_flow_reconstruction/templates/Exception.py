@@ -390,8 +390,8 @@ class NamedExc3_9(ExcBody3_9):
     template = T(
         header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
-        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
-        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
+        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
+        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
         tail=N.tail(),
     )
 
