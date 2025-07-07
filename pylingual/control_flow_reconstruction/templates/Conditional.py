@@ -1,5 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
-from ..utils import T, N, defer_source_to, run_is, exact_instructions, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
+from ..utils import T, N, defer_source_to, run_is, with_instructions, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
 
 
 @register_template(1, 40)
@@ -46,7 +46,7 @@ class IfThen(ControlFlowTemplate):
 class Assertion(ControlFlowTemplate):
     template = T(
         assertion=~N("fail", "tail"),
-        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), exact_instructions("LOAD_GLOBAL", "RAISE_VARARGS")),
+        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), with_instructions("LOAD_GLOBAL", "RAISE_VARARGS")),
         tail=N.tail(),
     )
 
