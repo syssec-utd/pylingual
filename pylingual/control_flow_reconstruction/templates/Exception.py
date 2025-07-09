@@ -687,14 +687,14 @@ class TryFinally3_6(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"),with_instructions("LOAD_CONST", "RETURN_VALUE")),
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"),with_instructions("LOAD_CONST", "RETURN_VALUE")),
         tail=N.tail(),
     )
 
@@ -731,3 +731,4 @@ class TryFinally3_6(ControlFlowTemplate):
             after = []
 
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
+        
