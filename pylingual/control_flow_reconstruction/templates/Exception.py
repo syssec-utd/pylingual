@@ -219,7 +219,7 @@ class TryFinally3_11(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE")),
+        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE"), ending_instructions("DELETE_SUBSCR", "RERAISE")),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -315,7 +315,7 @@ class Try3_9(ControlFlowTemplate):
         try_header=~N("try_body"),
         try_body=N("try_footer.", None, "except_body"),
         try_footer=~N("tail."),
-        except_body=~N("tail.").of_subtemplate(Except3_9),
+        except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_9),
         tail=N.tail(),
     )
 
@@ -457,7 +457,7 @@ class TryFinally3_9(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(ending_instructions("POP_TOP", "RERAISE")),
+        fail_body=N("tail.").with_cond(ending_instructions("POP_TOP", "RERAISE"), ending_instructions("DELETE_SUBSCR", "RERAISE")),
         tail=N.tail(),
     )
     template2 = T(
@@ -687,14 +687,14 @@ class TryFinally3_6(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"), with_instructions("DELETE_SUBSCR", "END_FINALLY")),
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"), with_instructions("DELETE_SUBSCR", "END_FINALLY")),
         tail=N.tail(),
     )
 
