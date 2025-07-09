@@ -132,39 +132,37 @@ def TryExceptFinallyBare():
     finally:
         print(3)
     print(4)
-##### NOT YET IMPLEMENTED #####
-##### crashes cflow.py #####
-##def TryExceptFinallyBareSpecific():
-##    try:
-##        print(1)
-##    except a:
-##        print(2)
-##    finally:
-##        print(3)
-##    print(4)
-##
-##def TryExceptMultiFinally():
-##    try:
-##        print(1)
-##    except a:
-##        print(2)
-##    except b:
-##        print(3)
-##    finally:
-##        print(4)
-##    print(5)
-##
-## Broken
-##def TryExceptMultiFallbackFinally():
-##    try:
-##        print(1)
-##    except a:
-##        print(2)
-##    except:
-##        print(3)
-##    finally:
-##        print(4)
-##    print(5)
+
+def TryExceptFinallyBareSpecific():
+    try:
+        print(1)
+    except a:
+        print(2)
+    finally:
+        print(3)
+    print(4)
+
+def TryExceptMultiFinally():
+    try:
+        print(1)
+    except a:
+        print(2)
+    except b:
+        print(3)
+    finally:
+        print(4)
+    print(5)
+
+def TryExceptMultiFallbackFinally():
+    try:
+        print(1)
+    except a:
+        print(2)
+    except:
+        print(3)
+    finally:
+        print(4)
+    print(5)
 
 def TryExceptMultiNamedFinally():
     try:
@@ -229,7 +227,6 @@ def TryExceptReturn():
     except:
         print(2)
 
-# Not currently working, see https://github.com/syssec-utd/pylingual/issues/24#issuecomment-3005215427
 def TryExceptRaise():
     try:
         print(1)
@@ -244,7 +241,7 @@ def TryExceptRaiseNamed():
         print(2)
         raise Exc
 
-### Expected to fail on 3.10- has the same issue as TryExceptFinally
+
 def TryExceptBareNestedNamed():
     try:
         print(1)
@@ -296,3 +293,102 @@ def TryExceptRaiseMulti():
     except b:
         print(3)
         raise Exc
+
+def TryEmptryFinally():
+    try:
+        pass
+    finally:
+        print(1)
+
+def TryMultiple():
+    try:
+        print(1)
+    except:
+        print(2)
+
+    try:
+        print(3)
+    except:
+        print(4)
+
+def TryExceptElseTry():
+    try:
+        print(1)
+    except:
+        print(2)
+    else:
+        try:
+            print(3)
+        except:
+            print(4)
+
+def TryFinallyNestedExcept():
+    try:
+        print(1)
+    finally:
+        try:
+            print(2)
+        except:
+            print(3)
+
+def TryExceptTuple():
+    try:
+        print(1)
+    except (A, B):
+        print(2)
+
+def TryFinallyReturn():
+    try:
+        print(1)
+    finally:
+        return 2
+
+def TryReturnFinally():
+    try:
+        return 1
+    finally:
+        print(2)
+
+def TryReturnFinallyReturn():
+    try:
+        return 1
+    finally:
+        return 2
+    
+def TryExceptRaise():
+    try:
+        print(1)
+        return 2
+    except:
+        raise Exception()
+    
+#doesn't work
+'''
+def TryExceptReturnFinally():
+    try:
+        raise Exception()
+    except:
+        print(1)
+        return 2
+    finally:
+        print(3)
+'''
+    
+# Doesn't Work
+'''
+def TryFinallyRaise():
+    try:
+        print(1)
+        return 2
+    finally:
+        raise Exception()
+'''
+
+'''
+def TryLoopBreakFinally():
+    while True:
+        try:
+            break
+        finally:
+            print("finally")
+'''
