@@ -695,7 +695,7 @@ class TryFinally3_6(ControlFlowTemplate):
         try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"), with_instructions("DELETE_SUBSCR", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
         tail=N.tail(),
     )
 
@@ -711,7 +711,7 @@ class TryFinally3_6(ControlFlowTemplate):
                 return None
             mapping["try_header"] = mapping.pop("try_except")
 
-        cutoff = next((i for i, x in enumerate(mapping["fail_body"].get_instructions())), None)
+        cutoff = next((i for i, x in enumerate(mapping["fail_body"].get_instructions()) if x.opname == "END_FINALLY"), None)
         if cutoff is None:
             return None
 
