@@ -338,6 +338,7 @@ class Try3_9(ControlFlowTemplate):
         try:
             {try_body}
         {except_body}
+        {try_footer}
         """
 
 
