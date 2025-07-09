@@ -309,7 +309,7 @@ class Except3_9(ControlFlowTemplate):
             return node
         
 
-@register_template(0, 1, (3, 9), (3, 10))
+@register_template(0, 0, (3, 9), (3, 10))
 class Try3_9(ControlFlowTemplate):
     template = T(
         try_header=~N("try_body"),
