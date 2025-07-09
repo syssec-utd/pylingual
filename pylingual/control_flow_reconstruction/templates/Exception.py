@@ -391,8 +391,8 @@ class NamedExc3_9(ExcBody3_9):
     template = T(
         header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
-        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
-        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_FAST")),
+        normal_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
+        exception_cleanup=~N.tail().with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
         tail=N.tail(),
     )
 
@@ -583,10 +583,10 @@ class ExcBody3_6(ControlFlowTemplate):
 
 class NamedExc3_6(ExcBody3_6):
     template = T(
-        header=~N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
+        header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=~N("exception_cleanup."),
-        exception_cleanup=~N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST"), with_instructions("LOAD_CONST", "STORE_NAME")),
+        exception_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
         tail=N.tail()
     )
 
@@ -664,7 +664,7 @@ class TryElse3_6(ControlFlowTemplate):
 
 class BareExcept3_6(Except3_6):
     template = T(
-        except_body=~N("tail.").with_cond(starting_instructions("POP_TOP", "POP_TOP", "POP_TOP")).with_cond(has_incoming_edge_of_categories("exception", "false_jump")),
+        except_body=~N("tail.").with_cond(starting_instructions("POP_TOP", "POP_TOP", "POP_TOP")),
         tail=~N.tail(),
     )
 

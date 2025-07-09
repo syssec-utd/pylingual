@@ -431,14 +431,6 @@ def aa1_TryExceptReturnMulti():
     except a:
         print(2)
         return 3
-
-def aa2_TryExceptReturnMulti():
-    try:
-        print(1)
-        return 2
-    except a:
-        print(2)
-        return 3
     except b:
         print(3)
 
