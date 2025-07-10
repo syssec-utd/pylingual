@@ -52,6 +52,8 @@ def edit_pyc_lines(pyc: PYCFile, src_lines: list[str]):
             line_insts[0].starts_line = lno
             for inst in line_insts[1:]:
                 inst.starts_line = None
+            if lno is not None and lno + 1 not in lno_bytecodes and pyc.version <= (3, 7) and src_lines[lno - 1].strip().startswith('@'):
+                bc.instructions[line_insts[0].offset // 2 + 1].starts_line = lno + 1
 
 
 def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
