@@ -256,7 +256,7 @@ def k_TryExceptFinallyBare():
     finally:
         print(3)
     print(4)
-
+    
 def l_TryExceptFinallyBareSpecific():
    try:
        print(1)
@@ -383,6 +383,7 @@ def w_TryExceptRaise():
         print(2)
         raise Exc
 
+
 def x_TryExceptRaiseMulti():
     try:
         print(1)
@@ -440,6 +441,99 @@ def ab_TryExceptReturnNamed():
         return 2
     except A as a:
         print(2)
+        raise Exc
+    except b:
+        print(3)
+        raise Exc
+
+def TryEmptryFinally():
+    try:
+        pass
+    finally:
+        print(1)
+
+def TryMultiple():
+    try:
+        print(1)
+    except:
+        print(2)
+
+    try:
+        print(3)
+    except:
+        print(4)
+
+def TryExceptElseTry():
+    try:
+        print(1)
+    except:
+        print(2)
+    else:
+        try:
+            print(3)
+        except:
+            print(4)
+
+def TryFinallyNestedExcept():
+    try:
+        print(1)
+    finally:
+        try:
+            print(2)
+        except:
+            print(3)
+
+def TryExceptTuple():
+    try:
+        print(1)
+    except (A, B):
+        print(2)
+
+def TryFinallyReturn():
+    try:
+        print(1)
+    finally:
+        return 2
+
+def TryReturnFinally():
+    try:
+        return 1
+    finally:
+        print(2)
+
+def TryReturnFinallyReturn():
+    try:
+        return 1
+    finally:
+        return 2
+    
+def TryExceptRaise():
+    try:
+        print(1)
+        return 2
+    except:
+        raise Exception()
+    
+'''
+def TryExceptReturnFinally():
+    try:
+        raise Exception()
+    except:
+        print(1)
+        return 2
+    finally:
+        print(3)
+'''
+    
+'''
+def TryFinallyRaise():
+    try:
+        print(1)
+        return 2
+    finally:
+        raise Exception()
+'''
+
 
 def ab1_TryExceptReturnNamed():
     try:
@@ -461,3 +555,4 @@ def ad_TryFinallyBare():
         print(1)
     finally:
         print(2)
+

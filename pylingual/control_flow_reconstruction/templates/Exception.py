@@ -11,6 +11,7 @@ from ..utils import (
     condense_mapping,
     defer_source_to,
     with_instructions,
+    without_instructions,
     ending_instructions,
     exact_instructions,
     no_back_edges,
@@ -294,6 +295,21 @@ class TryFinally3_11(ControlFlowTemplate):
 
         return list(chain(s, self.line("finally:"), in_finally, after))
 
+      
+
+class Except3_9(ControlFlowTemplate):
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
+            return node
+        if x := ExceptExc3_9.try_match(cfg, node):
+            return x
+        if x := BareExcept3_9.try_match(cfg, node):
+            return x
+        if isinstance(node, Except3_9):
+            return node
+        
 
 class Except3_9(ControlFlowTemplate):
     @classmethod
@@ -630,8 +646,8 @@ class TryElse3_6(ControlFlowTemplate):
     template = T(
         try_header=~N("try_body").with_cond(exact_instructions("SETUP_EXCEPT"), exact_instructions("SETUP_FINALLY")),
         try_body=N("try_footer.", None, "except_body"),
-        try_footer=~N("else_body").with_in_deg(1),
-        except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6),
+        try_footer=~N("else_body").with_in_deg(1),  
+        except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6).with_cond(without_instructions("RETURN_VALUE")),
         else_body=~N("tail.").with_in_deg(1),
         tail=N.tail(),
     )
@@ -658,6 +674,36 @@ class TryElse3_6(ControlFlowTemplate):
         {except_body}
         else:
             {else_body}
+        """
+
+@register_template(0, 0, (3, 6), (3, 7), (3, 8))
+class ReturnFinally3_6(ControlFlowTemplate):
+    template = T(
+        try_header=~N("try_body").with_cond(exact_instructions("SETUP_FINALLY")),
+        try_body=N(None, None, "fail_body").with_cond(with_instructions("LOAD_CONST","RETURN_VALUE")),
+        fail_body=~N("tail."),
+        tail=N.tail(),
+    )
+
+    try_match = revert_on_fail(
+        make_try_match(
+            {
+                EdgeKind.Fall: "tail",
+            },
+            "try_header",
+            "try_body",
+            "fail_body",
+        )
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {try_header}
+        try:
+            {try_body}
+        finally:
+            {fail_body}
         """
 
 
@@ -687,16 +733,17 @@ class TryFinally3_6(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"),with_instructions("LOAD_CONST", "RETURN_VALUE")),
         tail=N.tail(),
     )
     template2 = T(
-        try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6),
+        try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6, ReturnFinally3_6),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"),with_instructions("LOAD_CONST", "RETURN_VALUE")),
         tail=N.tail(),
     )
+    
 
     cutoff: int
 
@@ -731,3 +778,5 @@ class TryFinally3_6(ControlFlowTemplate):
             after = []
 
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
+
+      
