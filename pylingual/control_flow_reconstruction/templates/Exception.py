@@ -295,6 +295,21 @@ class TryFinally3_11(ControlFlowTemplate):
 
         return list(chain(s, self.line("finally:"), in_finally, after))
 
+      
+
+class Except3_9(ControlFlowTemplate):
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
+            return node
+        if x := ExceptExc3_9.try_match(cfg, node):
+            return x
+        if x := BareExcept3_9.try_match(cfg, node):
+            return x
+        if isinstance(node, Except3_9):
+            return node
+        
 
 class Except3_9(ControlFlowTemplate):
     @classmethod
@@ -531,7 +546,7 @@ class Except3_6(ControlFlowTemplate):
     @classmethod
     @override
     def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
-        if [x.opname for x in node.get_instructions()] == ["END_FINALLY"]:
+        if [x.opname for x in node.get_instructions()[:1]] == ["END_FINALLY"]:
             return node
         if x := ExceptExc3_6.try_match(cfg, node):
             return x
@@ -544,7 +559,7 @@ class Except3_6(ControlFlowTemplate):
 class Try3_6(ControlFlowTemplate):
     template = T(
         try_header=~N("try_body").with_cond(without_top_level_instructions("SETUP_WITH")),
-        try_body=N("try_footer", None, "except_body"),
+        try_body=N("try_footer.", None, "except_body"),
         try_footer=~N("tail."),
         except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6),
         tail=N.tail(),
@@ -583,10 +598,10 @@ class ExcBody3_6(ControlFlowTemplate):
 
 class NamedExc3_6(ExcBody3_6):
     template = T(
-        header=~N("body", None).with_cond(starting_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
+        header=~N("body", None).with_cond(with_instructions("POP_TOP", "STORE_FAST"), with_instructions("POP_TOP", "STORE_NAME")),
         body=N("normal_cleanup.", None, "exception_cleanup"),
         normal_cleanup=~N("exception_cleanup."),
-        exception_cleanup=~N("tail.").with_cond(with_instructions("LOAD_CONST", "STORE_FAST"), with_instructions("LOAD_CONST", "STORE_NAME")),
+        exception_cleanup=~N("tail.").with_cond(with_instructions("STORE_FAST", "DELETE_FAST"), with_instructions("STORE_NAME", "DELETE_NAME")),
         tail=N.tail()
     )
 
@@ -694,7 +709,7 @@ class ReturnFinally3_6(ControlFlowTemplate):
 
 class BareExcept3_6(Except3_6):
     template = T(
-        except_body=~N("tail."),
+        except_body=~N("tail.").with_cond(starting_instructions("POP_TOP", "POP_TOP", "POP_TOP")),
         tail=~N.tail(),
     )
 
@@ -763,4 +778,5 @@ class TryFinally3_6(ControlFlowTemplate):
             after = []
 
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
-        
+
+      
