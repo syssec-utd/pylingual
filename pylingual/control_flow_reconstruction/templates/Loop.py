@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
 from ..utils import (
     T,
@@ -5,9 +7,11 @@ from ..utils import (
     defer_source_to,
     starting_instructions,
     to_indented_source,
-    make_try_match,
+    make_try_match, 
 )
 
+if TYPE_CHECKING:
+    from pylingual.control_flow_reconstruction.cfg import CFG
 
 @register_template(0, 1)
 class ForLoop(ControlFlowTemplate):
@@ -58,3 +62,15 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
     )
 
     to_indented_source = defer_source_to("comp")
+
+class FixLoop(ControlFlowTemplate):
+    @classmethod
+    def try_match(cls, cfg: CFG, node: ControlFlowTemplate) -> ControlFlowTemplate | None:
+        # check that its a loop that we need to fix
+        # find the end of the loop
+        # find all nodes that belong to the loop
+        # find nodes in loop that go to end
+        # replace those edges with meta edges to the end
+        # find nodes in loop that go to header
+        # replace all but last of those edges with meta edge to end
+        
