@@ -83,7 +83,7 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         result = compare_pyc(in_pyc, out_pyc)
         if print:
             print_result(f"Equivalance results for {file}", result)
-        return Result.Success if all(x.success for x in result) else Result.Failure, [(x.success, str(x)) for x in result], file, out_dir
+        return Result.Success if all(x.success for x in result) else Result.Failure, [(x.success, x) for x in result], file, out_dir
     except (CompileError, SyntaxError) as e:
         return Result.CompileError, e, file, out_dir
     except Exception:
@@ -95,7 +95,7 @@ class NoPool:
     imap_unordered = map
 
 
-def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, str]] | Exception):
+def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, TestResult]] | Exception):
     a_text = a.read_text()
     b_text = b.read_text()
     console = rich.console.Console(highlight=False)
@@ -109,9 +109,36 @@ def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, st
         console.print(results)
     elif isinstance(results, list) and results:
         for success, name in results:
-            console.print(name, style="" if success else "red bold underline")
+            console.print(str(name), style="" if success else "red bold underline")
     else:
         console.print(result, style="red bold underline")
+
+def equivalence_report_json(
+    infilename: Path, result: 'Result',
+    results: list[tuple[bool, TestResult]] | Exception) -> dict:
+    report = []
+
+    if isinstance(results, Exception):
+        report.append({
+            "file": str(infilename),
+            "name": result.name,
+            "status": "error"
+        })
+    elif isinstance(results, list) and results:
+        for success, result in results:
+            report.append({
+            "file": str(infilename),
+                "name": result.name_a,
+                "status": "true" if success else "false"
+            })
+    else:
+        report.append({
+            "file": str(infilename),
+            "name": "error",
+            "status": "error"
+        })
+
+    return {"equivalence_report": report}
 
 
 def get_unused(a: Path, _=True):
@@ -133,8 +160,9 @@ def get_unused(a: Path, _=True):
 @click.option("-p", "--processes", type=int, default=os.cpu_count(), help="Number of processes")
 @click.option("-d", "--prefix", type=Path, default=Path("/tmp/cflow_test"), help="Base dir for all output")
 @click.option("-g", "--graph", is_flag=False, flag_value="graph", help="Enable CFG visualization")
+@click.option("-j", "--jsonout", is_flag=True, flag_value="jsonout", help="Enable json output")
 @click.option("-f", "--graph-format", default="jpg", help="Output format supported by pydot")
-def main(input: Path, output: str, version: PythonVersion, graph: str | None, prefix: Path, processes: int, graph_format: str):
+def main(input: Path, output: str, version: PythonVersion, graph: str | None, jsonout: bool, prefix: Path, processes: int, graph_format: str):
     warnings.filterwarnings("ignore")
     print = rich.get_console().print
     progress_columns = [
@@ -159,8 +187,11 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, pr
             out = TemporaryDirectory()
         with out as o:
             o = Path(o)
-            result, eqr, _, _ = run(input, o, version)
-            print_results(o / input.stem / "a.py", o / input.stem / "b.py", result, eqr)
+            result, eqr, infilename, _ = run(input, o, version)
+            if jsonout:
+                print(json.dumps(equivalence_report_json(infilename, result, eqr)))
+            else:
+                print_results(o / input.stem / "a.py", o / input.stem / "b.py", result, eqr)
     else:
         if not output:
             out_dir = get_unused(prefix / str(version) / input.stem)
