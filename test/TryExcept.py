@@ -382,11 +382,3 @@ def TryFinallyRaise():
         raise Exception()
 '''
 
-'''
-def TryLoopBreakFinally():
-    while True:
-        try:
-            break
-        finally:
-            print("finally")
-'''
