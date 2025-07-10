@@ -362,7 +362,6 @@ def TryExceptRaise():
     except:
         raise Exception()
     
-#doesn't work
 '''
 def TryExceptReturnFinally():
     try:
@@ -374,7 +373,6 @@ def TryExceptReturnFinally():
         print(3)
 '''
     
-# Doesn't Work
 '''
 def TryFinallyRaise():
     try:
