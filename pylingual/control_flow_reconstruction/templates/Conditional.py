@@ -1,9 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
-<<<<<<< Updated upstream
-from ..utils import T, N, defer_source_to, run_is, with_instructions, has_instval, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
-=======
 from ..utils import T, N, defer_source_to, run_is, has_no_lines, with_instructions, has_instval, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
->>>>>>> Stashed changes
 
 
 @register_template(1, 40)
@@ -50,16 +46,9 @@ class IfThen(ControlFlowTemplate):
 class Assertion(ControlFlowTemplate):
     template = T(
         assertion=~N("fail", "tail"),
-<<<<<<< Updated upstream
-        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), has_instval("LOAD_GLOBAL", argval = "AssertionError")),
-        tail=N.tail(),
-=======
         fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), has_instval("LOAD_GLOBAL", argval = "AssertionError")).with_cond(has_no_lines),
-        tail=N.tail().with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")),
->>>>>>> Stashed changes
+        tail=N.tail(),
     )
-
-
 
     try_match = make_try_match({EdgeKind.Fall: "tail"}, "assertion", "fail")
 
