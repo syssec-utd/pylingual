@@ -758,9 +758,7 @@ class TryFinally3_6(ControlFlowTemplate):
                 return None
             mapping["try_header"] = mapping.pop("try_except")
 
-        cutoff = next((i for i, x in enumerate(mapping["fail_body"].get_instructions()) if x.opname == "END_FINALLY"), None)
-        if cutoff is None:
-            return None
+        cutoff = next((i for i, x in enumerate(mapping["fail_body"].get_instructions()) if x.opname == "END_FINALLY"), 0)
 
         template = condense_mapping(cls, cfg, mapping, "try_header", "try_body", "finally_body", "fail_body")
         template.cutoff = cutoff
