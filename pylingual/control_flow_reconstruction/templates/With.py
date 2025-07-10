@@ -38,6 +38,7 @@ class With3_11(ControlFlowTemplate):
         """
         {setup_with}
             {with_body}
+        {normal_cleanup}
         {exc_cleanup}
         """
 

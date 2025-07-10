@@ -129,6 +129,10 @@ def has_instval(opname: str, argval : Any):
     return check_instructions
 
 
+def has_no_lines(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+    return node is None or all(i.starts_line is None for i in node.get_instructions())
+
+
 def run_is(n: int):
     def check_run(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         return cfg.run == n
