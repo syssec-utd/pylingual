@@ -116,16 +116,17 @@ def has_incoming_edge_of_categories(*categories: str):
             if any(kind.value == category for category in categories):
                 return True
         return False
+
     return check
 
 
-def has_instval(opname: str, argval : Any):
+def has_instval(opname: str, argval: Any):
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         for x in node.get_instructions():
             if x.opname == opname and x.argval == argval:
                 return True
         return False
-    
+
     return check_instructions
 
 

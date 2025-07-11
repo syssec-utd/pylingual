@@ -4,11 +4,12 @@ import logging
 import platform
 import subprocess
 import os
+import shutil
 from pathlib import Path
 
 from pylingual.equivalence_check import TestResult
 import pylingual.utils.ascii_art as ascii_art
-from pylingual.utils.generate_bytecode import CompileError, has_pyenv
+from pylingual.utils.generate_bytecode import CompileError
 from pylingual.utils.version import PythonVersion, supported_versions
 from pylingual.utils.tracked_list import TrackedList, SEGMENTATION_STEP, TRANSLATION_STEP, CFLOW_STEP, CORRECTION_STEP
 from pylingual.utils.lazy import lazy_import
@@ -132,26 +133,29 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
                 import pdb
 
                 live.stop()
-                pdb.xpm()
+                if hasattr(pdb, "xpm"):
+                    pdb.xpm()  # type: ignore
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
 
 
 def install_pyenv():
-    if has_pyenv():
+    if shutil.which("pyenv") is not None:
         logger.warning("pyenv seems to already be installed, ignoring --init-pyenv...")
         return True
-    if platform.system() not in ["Linux", "Darwin"] and not click.confirm("pyenv is probably not supported on your operating system. Continue?", default=False):
-        return False
     cmd = "curl -fsSL https://pyenv.run | bash"
+    if platform.system() == "Windows":
+        cmd = r'''powershell.exe -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile './install-pyenv-win.ps1'; &'./install-pyenv-win.ps1'"'''
+    elif platform.system() not in ["Linux", "Darwin"] and not click.confirm("pyenv is probably not supported on your operating system. Continue?", default=False):
+        return False
     if not click.confirm(f"pyenv will be installed with the following command:\n\n\t{cmd}\n\nContinue?", default=True):
         return False
     if subprocess.run(cmd, shell=True).returncode != 0:
         logger.error("pyenv install failed, exiting...")
         return False
-    has_pyenv.cache_clear()
     os.environ["PATH"] = f"{os.environ.get('PYENV_ROOT', os.path.expanduser('~/.pyenv'))}/bin:{os.environ['PATH']}"
-    if not has_pyenv():
+    which_pyenv = shutil.which("pyenv")
+    if which_pyenv is None:
         logger.error("Could not find pyenv, exiting...")
         return False
     versions = click.prompt(
@@ -160,7 +164,7 @@ def install_pyenv():
         default=supported_versions,
         show_default=False,
     )
-    if subprocess.run(["pyenv", "install", *map(str, versions)]).returncode != 0:
+    if subprocess.run([which_pyenv, "install", *map(str, versions)]).returncode != 0:
         logger.error("Error installing Python versions, exiting...")
         return False
     return True

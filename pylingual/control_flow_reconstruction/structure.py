@@ -32,7 +32,8 @@ def structure_control_flow(cfg: nx.DiGraph, bytecode: EditableBytecode) -> Contr
             if not iteration(cfg, runs):
                 return MetaTemplate("\x1b[31mirreducible cflow\x1b[0m", bytecode.codeobj)
     except Exception:
-        pdb.xpm()  # type: ignore
+        if hasattr(pdb, "xpm"):
+            pdb.xpm()  # type: ignore
         raise
 
     return next(iter(cfg.nodes))
