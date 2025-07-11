@@ -133,7 +133,8 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
                 import pdb
 
                 live.stop()
-                pdb.xpm()
+                if hasattr(pdb, "xpm"):
+                    pdb.xpm()  # type: ignore
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
 
