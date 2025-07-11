@@ -10,7 +10,7 @@ keywords = ["python", "decompilation", "pylingual", "reversing", "decompiler", "
 license = "GPL-3.0-only"
 
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "asttokens",
     "datasets",
