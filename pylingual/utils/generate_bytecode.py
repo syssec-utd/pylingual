@@ -18,6 +18,7 @@ class CompileError(Exception):
 class PyenvError(Exception):
     pass
 
+
 def compile_version(py_file, out_file, version):
     py_file = str(py_file)
     out_file = str(out_file)
@@ -31,7 +32,8 @@ def compile_version(py_file, out_file, version):
 
     which_pyenv = shutil.which("pyenv")
     version_win = None
-    if platform.system() == "Windows": # workaround for pyenv-win being bugged when passing versions like 3.x not 3.x.y
+    if platform.system() == "Windows":  # workaround for pyenv-win being bugged when passing versions like 3.x not 3.x.y
+
         def try_get_version_patch(version_str) -> int | None:
             try:
                 return int(version_str.split(".", 2)[2])
@@ -39,6 +41,7 @@ def compile_version(py_file, out_file, version):
                 return None
             except ValueError:
                 return None
+
         pyenv_versions_cmd = [which_pyenv, *"versions --bare".split()]
         pyenv_versions_output = subprocess.run(pyenv_versions_cmd, shell=False, capture_output=True, text=True)
         if pyenv_versions_output.stderr:
@@ -46,13 +49,7 @@ def compile_version(py_file, out_file, version):
         # get lastest pyenv version for the correct major.minor version
         pyenv_version_strings = list(filter(lambda x: x.startswith(f"{version.as_str()}"), pyenv_versions_output.stdout.splitlines()))
         if not any(x == version.as_str() for x in pyenv_version_strings):
-            pyenv_real_versions = list(
-                filter(lambda x: x is not None,
-                    map(try_get_version_patch, 
-                        pyenv_version_strings
-                    )
-                )
-            )
+            pyenv_real_versions = list(filter(lambda x: x is not None, map(try_get_version_patch, pyenv_version_strings)))
             if len(pyenv_real_versions) == 0:
                 raise PyenvError(f"Could not find pyenv version for {version.as_str()}")
             version_win = f"{version.as_str()}.{max(pyenv_real_versions)}"

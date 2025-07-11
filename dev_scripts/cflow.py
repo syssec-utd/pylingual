@@ -52,7 +52,7 @@ def edit_pyc_lines(pyc: PYCFile, src_lines: list[str]):
             line_insts[0].starts_line = lno
             for inst in line_insts[1:]:
                 inst.starts_line = None
-            if lno is not None and lno + 1 not in lno_bytecodes and pyc.version <= (3, 7) and src_lines[lno - 1].strip().startswith('@'):
+            if lno is not None and lno + 1 not in lno_bytecodes and pyc.version <= (3, 7) and src_lines[lno - 1].strip().startswith("@"):
                 bc.instructions[line_insts[0].offset // 2 + 1].starts_line = lno + 1
 
 
@@ -113,34 +113,17 @@ def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, st
     else:
         console.print(result, style="red bold underline")
 
-def equivalence_report_json(
-    infilename: Path, result: 'Result',
-    version: PythonVersion,
-    results: list[tuple[bool, str]] | Exception) -> dict:
+
+def equivalence_report_json(infilename: Path, result: "Result", version: PythonVersion, results: list[tuple[bool, str]] | Exception) -> dict:
     report = []
 
     if isinstance(results, Exception):
-        report.append({
-            "file": str(infilename),
-            "version": str(version),
-            "name": result.name,
-            "status": "error"
-        })
+        report.append({"file": str(infilename), "version": str(version), "name": result.name, "status": "error"})
     elif isinstance(results, list) and results:
         for success, result in results:
-            report.append({
-                "file": str(infilename),
-                "version": str(version),
-                "name": result.split(": ")[0],
-                "status": "true" if success else "false"
-            })
+            report.append({"file": str(infilename), "version": str(version), "name": result.split(": ")[0], "status": "true" if success else "false"})
     else:
-        report.append({
-            "file": str(infilename),
-            "version": str(version),
-            "name": "error",
-            "status": "error"
-        })
+        report.append({"file": str(infilename), "version": str(version), "name": "error", "status": "error"})
 
     return {"equivalence_report": report}
 

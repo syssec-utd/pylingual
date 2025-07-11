@@ -46,7 +46,7 @@ class IfThen(ControlFlowTemplate):
 class Assertion(ControlFlowTemplate):
     template = T(
         assertion=~N("fail", "tail"),
-        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), has_instval("LOAD_GLOBAL", argval = "AssertionError")).with_cond(has_no_lines),
+        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), has_instval("LOAD_GLOBAL", argval="AssertionError")).with_cond(has_no_lines),
         tail=N.tail(),
     )
 
