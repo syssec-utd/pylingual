@@ -52,7 +52,7 @@ def edit_pyc_lines(pyc: PYCFile, src_lines: list[str]):
             line_insts[0].starts_line = lno
             for inst in line_insts[1:]:
                 inst.starts_line = None
-            if lno is not None and lno + 1 not in lno_bytecodes and pyc.version <= (3, 7) and src_lines[lno - 1].strip().startswith('@'):
+            if lno is not None and lno + 1 not in lno_bytecodes and pyc.version <= (3, 7) and src_lines[lno - 1].strip().startswith("@"):
                 bc.instructions[line_insts[0].offset // 2 + 1].starts_line = lno + 1
 
 
@@ -83,7 +83,7 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         result = compare_pyc(in_pyc, out_pyc)
         if print:
             print_result(f"Equivalance results for {file}", result)
-        return Result.Success if all(x.success for x in result) else Result.Failure, [(x.success, x) for x in result], file, out_dir
+        return Result.Success if all(x.success for x in result) else Result.Failure, [(x.success, str(x)) for x in result], file, out_dir
     except (CompileError, SyntaxError) as e:
         return Result.CompileError, e, file, out_dir
     except Exception:
@@ -95,7 +95,7 @@ class NoPool:
     imap_unordered = map
 
 
-def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, TestResult]] | Exception):
+def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, str]] | Exception):
     a_text = a.read_text()
     b_text = b.read_text()
     console = rich.console.Console(highlight=False)
@@ -109,34 +109,21 @@ def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, Te
         console.print(results)
     elif isinstance(results, list) and results:
         for success, name in results:
-            console.print(str(name), style="" if success else "red bold underline")
+            console.print(name, style="" if success else "red bold underline")
     else:
         console.print(result, style="red bold underline")
 
-def equivalence_report_json(
-    infilename: Path, result: 'Result',
-    results: list[tuple[bool, TestResult]] | Exception) -> dict:
+
+def equivalence_report_json(infilename: Path, result: "Result", version: PythonVersion, results: list[tuple[bool, str]] | Exception) -> dict:
     report = []
 
     if isinstance(results, Exception):
-        report.append({
-            "file": str(infilename),
-            "name": result.name,
-            "status": "error"
-        })
+        report.append({"file": str(infilename), "version": str(version), "name": result.name, "status": "error"})
     elif isinstance(results, list) and results:
         for success, result in results:
-            report.append({
-            "file": str(infilename),
-                "name": result.name_a,
-                "status": "true" if success else "false"
-            })
+            report.append({"file": str(infilename), "version": str(version), "name": result.split(": ")[0], "status": "true" if success else "false"})
     else:
-        report.append({
-            "file": str(infilename),
-            "name": "error",
-            "status": "error"
-        })
+        report.append({"file": str(infilename), "version": str(version), "name": "error", "status": "error"})
 
     return {"equivalence_report": report}
 
@@ -189,7 +176,7 @@ def main(input: Path, output: str, version: PythonVersion, graph: str | None, js
             o = Path(o)
             result, eqr, infilename, _ = run(input, o, version)
             if jsonout:
-                print(json.dumps(equivalence_report_json(infilename, result, eqr)))
+                print(json.dumps(equivalence_report_json(infilename, result, version, eqr)))
             else:
                 print_results(o / input.stem / "a.py", o / input.stem / "b.py", result, eqr)
     else:

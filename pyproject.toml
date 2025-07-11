@@ -3,14 +3,14 @@ requires-poetry = ">=2.0"
 
 [project]
 name = "pylingual"
-version = "0.0.1"
+version = "0.1.0"
 description = "A Python bytecode decompilation tool, supporting versions 3.6 - 3.13"
 authors = [ {name = "syssec-utd"} ]
 keywords = ["python", "decompilation", "pylingual", "reversing", "decompiler", "bytecode"]
 license = "GPL-3.0-only"
 
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "~=3.12.0"
 dependencies = [
     "asttokens",
     "datasets",
@@ -27,7 +27,7 @@ dependencies = [
     "seqeval",
     "transformers==4.46.1",
     "transformers[torch]",
-    "xdis",
+    "xdis>=6.1.4",
     "click"
 ]
 
