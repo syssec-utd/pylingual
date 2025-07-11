@@ -8,7 +8,7 @@ This codebase is optimized for readability and future extension, so there may in
 
 ## Requirements
 
-- Python 3.12 or higher
+- Python 3.12
 
 ### Compiling bytecode
 
