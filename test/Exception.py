@@ -1,12 +1,18 @@
-def a_TryExcept():
+def a0_bare_try_except():
+    try:
+        print(1)
+    except:
+        print(2)
+
+def a1_bare_try_except_fallthrough():
     try:
         print(1)
     except:
         print(2)
     print(3)
 
-
-def b_TryExceptBareNested():
+# 3.11/3.12/3.13 Duplicate blocks causing blocks to not match
+def b0_nested_try_except():
     try:
         print(1)
     except:
@@ -16,8 +22,7 @@ def b_TryExceptBareNested():
         except:
             print(4)
 
-
-def b1_TryExceptBareNestedFallthrough():
+def b1_nested_try_except_fallthrough():
     try:
         print(1)
     except:
@@ -28,8 +33,8 @@ def b1_TryExceptBareNestedFallthrough():
             print(4)
         print(5)
 
-
-def b2_TryExceptBareNestedEarlyFallthrough():
+# 3.13 Duplicate blocks 
+def b2_nested_try_except_early_fallthrough():
     try:
         print(1)
     except:
@@ -40,8 +45,7 @@ def b2_TryExceptBareNestedEarlyFallthrough():
             print(4)
     print(5)
 
-
-def b3_TryExceptBareNestedDoubleFallthrough():
+def b3_nested_try_except_double_fallthrough():
     try:
         print(1)
     except:
@@ -53,8 +57,8 @@ def b3_TryExceptBareNestedDoubleFallthrough():
         print(5)
     print(6)
 
-
-def c_TryExceptBareMultiNested():
+# 3.11/3.12/3.13 Duplicate blocks causing blocks to not match
+def c0_multi_except_nested():
     try:
         print(1)
     except a:
@@ -70,8 +74,8 @@ def c_TryExceptBareMultiNested():
         except:
             print(7)
 
-
-def c1_TryExceptBareMultiNestedFallthrough():
+# 3.11/3.12/3.13 Duplicate blocks causing blocks to not match
+def c1_multi_except_nested_fallthrough():
     try:
         print(1)
     except a:
@@ -88,8 +92,7 @@ def c1_TryExceptBareMultiNestedFallthrough():
         except:
             print(8)
 
-
-def c2_TryExceptBareMultiNestedFallthrough2():
+def c2_multi_except_nested_fallthrough2():
     try:
         print(1)
     except a:
@@ -107,8 +110,8 @@ def c2_TryExceptBareMultiNestedFallthrough2():
             print(8)
         print(9)
 
-
-def c3_TryExceptBareMultiNestedEarlyFallthrough():
+# 3.13 Duplicate blocks 
+def c3_multi_except_nested_early_fallthrough():
     try:
         print(1)
     except a:
@@ -125,8 +128,7 @@ def c3_TryExceptBareMultiNestedEarlyFallthrough():
             print(7)
     print(8)
 
-
-def c4_TryExceptBareMultiNestedAllFallthrough():
+def c4_multi_except_nested_all_fallthrough():
     try:
         print(1)
     except a:
@@ -145,8 +147,9 @@ def c4_TryExceptBareMultiNestedAllFallthrough():
         print(9)
     print(10)
 
-
-def d_TryExceptBareNestedNamed():
+# 3.10/3.11/3.12/3.13 Duplicate blocks causing templates to not match
+# Discussed in issue 41
+def d0_named_except_nested():
     try:
         print(1)
     except A as a:
@@ -156,8 +159,7 @@ def d_TryExceptBareNestedNamed():
         except:
             print(4)
 
-
-def d1_TryExceptBareNestedNamedFallthrough():
+def d1_named_except_nested_fallthrough():
     try:
         print(1)
     except A as a:
@@ -168,8 +170,8 @@ def d1_TryExceptBareNestedNamedFallthrough():
             print(4)
         print(5)
 
-
-def d2_TryExceptBareNestedNamedEarlyFallthrough():
+# 3.13 Duplicate blocks 
+def d2_named_except_nested_early_fallthrough():
     try:
         print(1)
     except A as a:
@@ -180,8 +182,7 @@ def d2_TryExceptBareNestedNamedEarlyFallthrough():
             print(4)
     print(5)
 
-
-def d3_TryExceptBareNestedNamedDoubleFallthrough():
+def d3_named_except_nested_double_fallthrough():
     try:
         print(1)
     except A as a:
@@ -193,8 +194,7 @@ def d3_TryExceptBareNestedNamedDoubleFallthrough():
         print(5)
     print(6)
 
-
-def e_TryExceptElseBare():
+def e0_try_except_else():
     try:
         print(1)
     except:
@@ -203,8 +203,7 @@ def e_TryExceptElseBare():
         print(3)
     print(4)
 
-
-def f_TryExceptElseFinallyBare():
+def f0_try_except_else_finally():
     try:
         print(1)
     except:
@@ -215,8 +214,7 @@ def f_TryExceptElseFinallyBare():
         print(4)
     print(5)
 
-
-def g_TryExceptElseMulti():
+def g0_multi_except_with_else():
     try:
         print(1)
     except a:
@@ -227,8 +225,7 @@ def g_TryExceptElseMulti():
         print(4)
     print(5)
 
-
-def h_TryExceptElseMultiFallback():
+def h0_multi_except_fallback_with_else():
     try:
         print(1)
     except a:
@@ -241,8 +238,7 @@ def h_TryExceptElseMultiFallback():
         print(5)
     print(6)
 
-
-def i_TryExceptElseMultiNamedAndUnnamed():
+def i0_mixed_named_unnamed_except_with_else():
     try:
         print(1)
     except A as a:
@@ -255,8 +251,7 @@ def i_TryExceptElseMultiNamedAndUnnamed():
         print(5)
     print(6)
 
-
-def j_TryExceptElseNamed():
+def j0_named_except_with_else():
     try:
         print(1)
     except A as a:
@@ -267,8 +262,7 @@ def j_TryExceptElseNamed():
         print(4)
     print(5)
 
-
-def k_TryExceptFinallyBare():
+def k0_try_except_finally():
     try:
         print(1)
     except:
@@ -277,8 +271,7 @@ def k_TryExceptFinallyBare():
         print(3)
     print(4)
 
-
-def l_TryExceptFinallyBareSpecific():
+def l0_specific_except_finally():
     try:
         print(1)
     except a:
@@ -287,8 +280,7 @@ def l_TryExceptFinallyBareSpecific():
         print(3)
     print(4)
 
-
-def m_TryExceptMulti():
+def m0_multi_except():
     try:
         print(1)
     except a:
@@ -299,8 +291,7 @@ def m_TryExceptMulti():
         print(4)
     print(5)
 
-
-def n_TryExceptMultiFallback():
+def n0_multi_except_with_fallback():
     try:
         print(1)
     except a:
@@ -311,8 +302,7 @@ def n_TryExceptMultiFallback():
         print(4)
     print(5)
 
-
-def o_TryExceptMultiFallbackFinally():
+def o0_multi_except_fallback_finally():
     try:
         print(1)
     except a:
@@ -323,8 +313,7 @@ def o_TryExceptMultiFallbackFinally():
         print(4)
     print(5)
 
-
-def p_TryExceptMultiNamed():
+def p0_multi_named_except():
     try:
         print(1)
     except A as a:
@@ -335,8 +324,7 @@ def p_TryExceptMultiNamed():
         print(4)
     print(5)
 
-
-def q_TryExceptMultiNamedAndUnnamed():
+def q0_mixed_named_unnamed_except():
     try:
         print(1)
     except A as a:
@@ -347,8 +335,7 @@ def q_TryExceptMultiNamedAndUnnamed():
         print(4)
     print(5)
 
-
-def r_TryExceptMultiNamedAndUnnamedFinally():
+def r0_mixed_named_unnamed_except_finally():
     try:
         print(1)
     except A as a:
@@ -361,8 +348,7 @@ def r_TryExceptMultiNamedAndUnnamedFinally():
         print(5)
     print(6)
 
-
-def s_TryExceptMultiNamedFallback():
+def s0_named_except_fallback():
     try:
         print(1)
     except A as a:
@@ -371,8 +357,7 @@ def s_TryExceptMultiNamedFallback():
         print(3)
     print(4)
 
-
-def t_TryExceptMultiNamedFallbackFinally():
+def t0_named_except_fallback_finally():
     try:
         print(1)
     except A as a:
@@ -383,8 +368,7 @@ def t_TryExceptMultiNamedFallbackFinally():
         print(4)
     print(5)
 
-
-def u_TryExceptMultiNamedFinally():
+def u0_multi_named_except_finally():
     try:
         print(1)
     except A as a:
@@ -395,8 +379,7 @@ def u_TryExceptMultiNamedFinally():
         print(4)
     print(5)
 
-
-def v_TryExceptMultiFinally():
+def v0_multi_except_finally():
     try:
         print(1)
     except a:
@@ -407,16 +390,14 @@ def v_TryExceptMultiFinally():
         print(4)
     print(5)
 
-
-def w_TryExceptRaise():
+def w0_try_except_raise():
     try:
         print(1)
     except:
         print(2)
         raise Exc
 
-
-def x_TryExceptRaiseMulti():
+def x0_multi_except_raise():
     try:
         print(1)
     except a:
@@ -426,24 +407,23 @@ def x_TryExceptRaiseMulti():
         print(3)
         raise Exc
 
-
-def y_TryExceptRaiseNamed():
+def y0_named_except_raise():
     try:
         print(1)
     except A as a:
         print(2)
         raise Exc
 
-
-def z_TryExceptReturn():
+# 3.11 Try return getting left outside of TryExcept
+def z0_try_except_return():
     try:
         print(1)
         return 2
     except:
         print(2)
 
-
-def z1_TryExceptReturn():
+# 3.11 Try return getting left outside of TryExcept
+def z1_try_except_return_both():
     try:
         print(1)
         return 2
@@ -451,8 +431,8 @@ def z1_TryExceptReturn():
         print(2)
         return 3
 
-
-def aa_TryExceptReturnMulti():
+# 3.11 Try return getting left outside of TryExcept
+def aa0_multi_except_return():
     try:
         print(1)
         return 2
@@ -461,8 +441,10 @@ def aa_TryExceptReturnMulti():
     except b:
         print(3)
 
-
-def aa1_TryExceptReturnMulti():
+# 3.6/3.7/3.8 ExceptExc abandons tail node. 
+# Could be fixed (?) but breaks other test cases
+# 3.11 Try return getting left outside of TryExcept
+def aa1_multi_except_return_both():
     try:
         print(1)
         return 2
@@ -472,8 +454,8 @@ def aa1_TryExceptReturnMulti():
     except b:
         print(3)
 
-
-def ab_TryExceptReturnNamed():
+# 3.11 Try return getting left outside of TryExcept
+def ab0_named_except_raise_return():
     try:
         print(1)
         return 2
@@ -484,15 +466,24 @@ def ab_TryExceptReturnNamed():
         print(3)
         raise Exc
 
+# 3.8 Double natural edge graph error (?)
+# 3.11 Try return getting left outside of TryExcept
+def ab1_named_except_return():
+    try:
+        print(1)
+        return 2
+    except A as a:
+        print(2)
+        return 3
 
-def TryEmptryFinally():
+# 3.11/3.12/3.13 No template match
+def ac0_empty_try_finally():
     try:
         pass
     finally:
         print(1)
 
-
-def TryMultiple():
+def ad0_multiple_try_blocks():
     try:
         print(1)
     except:
@@ -503,8 +494,8 @@ def TryMultiple():
     except:
         print(4)
 
-
-def TryExceptElseTry():
+# 3.10/3.11 Try matching before TryElse
+def ae0_try_except_else_nested_try():
     try:
         print(1)
     except:
@@ -515,8 +506,9 @@ def TryExceptElseTry():
         except:
             print(4)
 
-
-def TryFinallyNestedExcept():
+# 3.9 Duplicate blocks (?)
+# 3.11/3.12/3.13 Matching priority TryElse TryFinally (?)
+def af0_try_finally_nested_except():
     try:
         print(1)
     finally:
@@ -525,45 +517,44 @@ def TryFinallyNestedExcept():
         except:
             print(3)
 
-
-def TryExceptTuple():
+def ag0_try_except_tuple():
     try:
         print(1)
     except (A, B):
         print(2)
 
-
-def TryFinallyReturn():
+# 3.9 Difficult template ambiguity between Try/TryFinally
+# 3.11/3.12/3.13 Matching priority TryElse TryFinally (?)
+def ah0_try_finally_return():
     try:
         print(1)
     finally:
         return 2
 
-
-def TryReturnFinally():
+# 3.11/3.12/3.13 No template match (?)
+def ai0_try_return_finally():
     try:
         return 1
     finally:
         print(2)
 
-
-def TryReturnFinallyReturn():
+# 3.9/3.10 Difficult template ambiguity between Try/TryFinally
+# 3.11/3.12/3.13 No template match (?)
+def aj0_try_return_finally_return():
     try:
         return 1
     finally:
         return 2
 
-
-def TryExceptRaise():
+def ak0_try_except_raise_return():
     try:
         print(1)
         return 2
     except:
         raise Exception()
 
-
-"""
-def TryExceptReturnFinally():
+# 3.8/3.9/3.10 No template match
+def al0_try_except_return_finally():
     try:
         raise Exception()
     except:
@@ -571,36 +562,24 @@ def TryExceptReturnFinally():
         return 2
     finally:
         print(3)
-"""
 
-"""
-def TryFinallyRaise():
+# 3.8/3.9/3.10 No template match
+# 3.11/3.12/3.13 Matching priority TryElse TryFinally (?)
+def am0_try_finally_raise():
     try:
         print(1)
         return 2
     finally:
         raise Exception()
-"""
 
-
-def ab1_TryExceptReturnNamed():
-    try:
-        print(1)
-        return 2
-    except A as a:
-        print(2)
-        return 3
-
-
-def ac_TryFinallyBareFallthrough():
+def an0_try_finally_fallthrough():
     try:
         print(1)
     finally:
         print(2)
     print(3)
 
-
-def ad_TryFinallyBare():
+def ao0_try_finally_simple():
     try:
         print(1)
     finally:
