@@ -494,7 +494,6 @@ def ad0_multiple_try_blocks():
     except:
         print(4)
 
-# 3.10/3.11 Try matching before TryElse
 def ae0_try_except_else_nested_try():
     try:
         print(1)
