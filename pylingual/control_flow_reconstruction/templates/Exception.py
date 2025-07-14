@@ -185,7 +185,7 @@ class ExceptExc3_11(Except3_11):
         except_header=N("except_body", "no_match", "reraise").with_cond(ending_instructions("CHECK_EXC_MATCH", "POP_JUMP_FORWARD_IF_FALSE"), ending_instructions("CHECK_EXC_MATCH", "POP_JUMP_IF_FALSE")),
         except_body=N("except_footer.", None, "reraise").of_subtemplate(ExcBody3_11).with_in_deg(1),
         no_match=N("tail?", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
-        except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")),
+        except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("SWAP", "POP_EXCEPT"), starting_instructions("POP_EXCEPT")),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -294,20 +294,6 @@ class TryFinally3_11(ControlFlowTemplate):
             after = []
 
         return list(chain(s, self.line("finally:"), in_finally, after))
-
-
-class Except3_9(ControlFlowTemplate):
-    @classmethod
-    @override
-    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
-        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
-            return node
-        if x := ExceptExc3_9.try_match(cfg, node):
-            return x
-        if x := BareExcept3_9.try_match(cfg, node):
-            return x
-        if isinstance(node, Except3_9):
-            return node
 
 
 class Except3_9(ControlFlowTemplate):

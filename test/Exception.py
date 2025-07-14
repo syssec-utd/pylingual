@@ -476,7 +476,6 @@ def ab1_named_except_return():
         print(2)
         return 3
 
-# 3.12 NamedExc not matching    
 def ab2_named_except_return():
     try:
         return a
