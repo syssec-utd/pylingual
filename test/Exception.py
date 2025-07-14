@@ -476,6 +476,13 @@ def ab1_named_except_return():
         print(2)
         return 3
 
+# 3.12 NamedExc not matching    
+def ab2_named_except_return():
+    try:
+        return a
+    except Exception as a:
+        return b
+
 # 3.11/3.12/3.13 No template match
 def ac0_empty_try_finally():
     try:
