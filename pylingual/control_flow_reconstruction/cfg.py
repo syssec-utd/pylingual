@@ -75,6 +75,59 @@ class CFG(DiGraph_CFT):
         self._create_dominator_tree()
         return nx.dfs_postorder_nodes(self, source=self.start, sort_neighbors=lambda nodes: sorted(nodes, key=lambda x: x.offset, reverse=True))
 
+    def is_loop_header(self, node):
+        # Check all predecessors
+        for predecessor in self.predecessors(node):
+            # A back edge exists if the predecessor is dominated by this node
+            if self.dominates(node, predecessor):
+                return True
+        return False
+
+    def dfs_labeled_edges_no_loop(self, source=None, depth_limit=None, *, sort_neighbors=None):
+        if source is None:
+            # edges for all components
+            nodes = self
+        else:
+            # edges for components with source
+            nodes = [source]
+        if depth_limit is None:
+            depth_limit = len(self)
+
+        get_children = (
+            self.neighbors
+            if sort_neighbors is None
+            else lambda n: iter(sort_neighbors(self.neighbors(n)))
+        )
+
+        visited = set()
+        for start in nodes:
+            if start in visited:
+                continue
+            yield start, start, "forward"
+            visited.add(start)
+            stack = [(start, get_children(start))]
+            depth_now = 1
+            while stack:
+                parent, children = stack[-1]
+                for child in children:
+                    if child in visited or self.is_loop_header(child):
+                        yield parent, child, "nontree"
+                    else:
+                        yield parent, child, "forward"
+                        visited.add(child)
+                        if depth_now < depth_limit:
+                            stack.append((child, iter(get_children(child))))
+                            depth_now += 1
+                            break
+                        else:
+                            yield parent, child, "reverse-depth_limit"
+                else:
+                    stack.pop()
+                    depth_now -= 1
+                    if stack:
+                        yield stack[-1][0], parent, "reverse"
+            yield start, start, "reverse"
+
     def apply_graphs(self):
         graphs = self.iteration_graphs.pop()
         if self.iteration_graphs:
