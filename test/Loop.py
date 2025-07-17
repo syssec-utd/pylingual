@@ -16,12 +16,14 @@ def b1_for_over_tuples_nofallthru():
         print("tuples")
     print("end")
 
+# 3.6 No else template
 def c0_for_else():
     for i in range(3):
         print("for body")
     else:
         print("for else")
 
+# 3.6 No else template
 def c1_for_else_nofallthru():
     for i in range(3):
         print("for body")
@@ -29,14 +31,15 @@ def c1_for_else_nofallthru():
         print("for else")
     print("end")
 
-# Fails due to no break
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
+# 3.9 Naive break detection, an unexpected buffer block to end
 def d0_for_with_break():
     for x in range(10):
         if x == 5:
             print("breaking")
             break
 
-# Fails due to no break
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
 def d1_for_with_break_nofallthru():
     for x in range(10):
         if x == 5:
@@ -135,6 +138,8 @@ def j1_for_with_empty_body_ellipsis_nofallthru():
         ...
     print("end")
 
+# 3.6 Naive break detection, no back edge
+# 3.9/3.11 No while loop detection, self false_jump edge & naive break detection
 def k0_while_true_with_break():
     x = 0
     while True:
@@ -143,6 +148,8 @@ def k0_while_true_with_break():
         if x >= 1:
             break
 
+# 3.6 Naive break detection, no back edge
+# 3.9/3.11 No while loop detection, self false_jump edge & naive break detection
 def k1_while_true_with_break_nofallthru():
     x = 0
     while True:
@@ -152,6 +159,8 @@ def k1_while_true_with_break_nofallthru():
             break
     print("end")
 
+# 3.6 No else template
+# 3.11 No while loop detection, self false_jump edge
 def l0_while_with_else():
     i = 0
     while i < 3:
@@ -160,6 +169,8 @@ def l0_while_with_else():
     else:
         print("while else")
 
+# 3.6 No else template
+# 3.11 No while loop detection, self false_jump edge
 def l1_while_with_else_nofallthru():
     i = 0
     while i < 3:
@@ -169,6 +180,7 @@ def l1_while_with_else_nofallthru():
         print("while else")
     print("end")
 
+# 3.11 No continue
 def m0_while_with_continue():
     i = 0
     while i < 5:
@@ -178,6 +190,7 @@ def m0_while_with_continue():
             continue
         print("after continue")
 
+# 3.11 No continue
 def m1_while_with_continue_nofallthru():
     i = 0
     while i < 5:
@@ -188,12 +201,14 @@ def m1_while_with_continue_nofallthru():
         print("after continue")
     print("end")
 
+# 3.6 Naive break detection, no back edge
 def n0_while_with_break():
     i = 0
     while True:
         print("break in while")
         break
 
+# 3.6 Naive break detection, no back edge
 def n1_while_with_break_nofallthru():
     i = 0
     while True:
@@ -201,6 +216,7 @@ def n1_while_with_break_nofallthru():
         break
     print("end")
 
+# 3.11 While template broke
 def o0_nested_while_loops():
     i = 0
     while i < 2:
@@ -210,6 +226,7 @@ def o0_nested_while_loops():
             j += 1
         i += 1
 
+# 3.11 While template broke
 def o1_nested_while_loops_nofallthru():
     i = 0
     while i < 2:
@@ -220,6 +237,8 @@ def o1_nested_while_loops_nofallthru():
         i += 1
     print("end")
 
+# 3.6 While template broke (?)
+# 3.9 Disconnected with MetaTemplate[end] (?) 
 def p0_while_with_try_except():
     while True:
         try:
@@ -227,6 +246,8 @@ def p0_while_with_try_except():
         except:
             print("except in while")
 
+# 3.6 While template broke (?)
+# 3.9 Disconnected with MetaTemplate[end] (?) 
 def p1_while_with_try_except_nofallthru():
     while True:
         try:
@@ -235,34 +256,40 @@ def p1_while_with_try_except_nofallthru():
             print("except in while")
     print("end")
 
+# 3.6 While template broke (?) abandoning nodes
 def q0_while_with_with_statement():
     while True:
         with a:
             print("inside while with")
 
+# 3.6 While template broke (?) abandoning nodes
 def q1_while_with_with_statement_nofallthru():
     while True:
         with a:
             print("inside while with")
     print("end")
 
+# 3.6 While template broke
 def r0_for_inside_while():
     while True:
         for x in [1, 2]:
             print("for in while")
 
+# 3.6 While template broke
 def r1_for_inside_while_nofallthru():
     while True:
         for x in [1, 2]:
             print("for in while")
     print("end")
 
+# 3.6 While template broke
 def s0_while_inside_for():
     for _ in range(1):
         while True:
             print("while in for")
             break
 
+# 3.6 While template broke
 def s1_while_inside_for_nofallthru():
     for _ in range(1):
         while True:
@@ -270,10 +297,12 @@ def s1_while_inside_for_nofallthru():
             break
     print("end")
 
+# 3.6 While template broke
 def t0_while_with_empty_body_ellipsis():
     while True:
         ...
 
+# 3.6 While template broke
 def t1_while_with_empty_body_ellipsis_nofallthru():
     while True:
         ...
@@ -311,6 +340,8 @@ def v1_continue_in_nested_for_nofallthru():
             print(f"Processing i={i}, j={j}")
     print("end")
 
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
+# 3.9/3.11 Naive break detection, an unexpected buffer block to end
 def w0_break_with_else():
     for i in range(5):
         if i == 3:
@@ -319,6 +350,8 @@ def w0_break_with_else():
     else:
         print("This won't execute due to break")
 
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
+# 3.9/3.11 Naive break detection, an unexpected buffer block to end
 def w1_break_with_else_nofallthru():
     for i in range(5):
         if i == 3:
@@ -328,6 +361,7 @@ def w1_break_with_else_nofallthru():
         print("This won't execute due to break")
     print("end")
 
+# 3.6 No continue detection
 def x0_continue_with_else():
     for i in range(3):
         if i == 1:
@@ -336,6 +370,7 @@ def x0_continue_with_else():
     else:
         print("Else clause still executes after continue")
 
+# 3.6 No continue detection
 def x1_continue_with_else_nofallthru():
     for i in range(3):
         if i == 1:
@@ -345,6 +380,8 @@ def x1_continue_with_else_nofallthru():
         print("Else clause still executes after continue")
     print("end")
 
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
+# 3.9/3.11 Naive break detection, break statement is further up
 def y0_break_in_try_except():
     for i in range(5):
         try:
@@ -354,6 +391,8 @@ def y0_break_in_try_except():
         except:
             print("Exception occurred")
 
+# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
+# 3.9/3.11 Naive break detection, break statement is further up
 def y1_break_in_try_except_nofallthru():
     for i in range(5):
         try:
@@ -364,6 +403,7 @@ def y1_break_in_try_except_nofallthru():
             print("Exception occurred")
     print("end")
 
+# 3.6/3.9/3.11 No continue detection
 def z0_continue_in_try_except():
     for i in range(5):
         try:
@@ -373,6 +413,7 @@ def z0_continue_in_try_except():
         except:
             print("Exception occurred")
 
+# 3.6/3.9/3.11 No continue detection
 def z1_continue_in_try_except_nofallthru():
     for i in range(5):
         try:
