@@ -380,7 +380,6 @@ def x1_continue_with_else_nofallthru():
         print("Else clause still executes after continue")
     print("end")
 
-# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
 # 3.9/3.11 Naive break detection, break statement is further up
 def y0_break_in_try_except():
     for i in range(5):
@@ -391,7 +390,6 @@ def y0_break_in_try_except():
         except:
             print("Exception occurred")
 
-# 3.6 Naive break detection, an unexpected buffer POP_BLOCK to end
 # 3.9/3.11 Naive break detection, break statement is further up
 def y1_break_in_try_except_nofallthru():
     for i in range(5):
@@ -399,6 +397,18 @@ def y1_break_in_try_except_nofallthru():
             if i == 3:
                 break
             print(f"Value: {i}")
+        except:
+            print("Exception occurred")
+    print("end")
+
+# 3.9/3.11 Naive break detection, break statement is further up
+def y2_return_in_try_except_nofallthru():
+    for i in range(5):
+        try:
+            if i == 3:
+                print(f"Value: {i}")
+            else:
+                break
         except:
             print("Exception occurred")
     print("end")
