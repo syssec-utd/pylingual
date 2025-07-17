@@ -46,6 +46,24 @@ class SelfLoop(ControlFlowTemplate):
             {loop_body}
         """
 
+@register_template(0, 2)
+class TrueSelfLoop(ControlFlowTemplate):
+    template = T(
+        loop_body=~N("tail.", "loop_body"),
+        tail=N.tail())
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+        }, 
+        "loop_body"
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {loop_body}
+        """
 
 @register_template(0, 3)
 class InlinedComprehensionTemplate(ControlFlowTemplate):
