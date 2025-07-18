@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, override
 from itertools import chain
 from pylingual.editable_bytecode import Inst
 
+import networkx as nx
+
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
 from ..utils import E, N, T, defer_source_to, remove_nodes
 
@@ -35,6 +37,21 @@ class EndTemplate(ControlFlowTemplate):
         return template
 
     to_indented_source = defer_source_to("body")
+
+
+@register_template(3, 0)
+class RemoveUnreachable(ControlFlowTemplate):
+    @override
+    @classmethod
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if node is not cfg.start:
+            return None
+
+        valid = list(nx.dfs_preorder_nodes(cfg, source=cfg.start))
+        invalid = [n for n in cfg.nodes if n not in valid]
+        if invalid:
+            cfg.remove_nodes_from(invalid)
+            return node
 
 
 @register_template(0, 20)
