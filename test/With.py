@@ -7,7 +7,6 @@ def a1_bare_with_fallthrough():
         print(1)
     print(2)
 
-# Fails in 3.10, duplicate blocks explained further in issue 32
 def b0_multi_with():
     with a, b:
         print(1)
@@ -26,7 +25,6 @@ def c1_with_as_fallthrough():
         print(1)
     print(2)
 
-# Fails in 3.10, same issue as b
 def d0_multi_with_as():
     with a, b as c:
         print(1)
@@ -36,7 +34,6 @@ def d1_multi_with_as_fallthrough():
         print(1)
     print(2)
 
-# Fails in 3.10, same issue as b
 def e0_with_multi_as():
     with a as b, c:
         print(1)
@@ -46,7 +43,6 @@ def e1_with_multi_as_fallthrough():
         print(1)
     print(2)
 
-# Fails in 3.10, same issue as b
 def f0_multi_with_multi_as():
     with a as b, c as d:
         print(1)
@@ -56,7 +52,6 @@ def f1_multi_with_multi_as_fallthrough():
         print(1)
     print(2)
 
-# Fails in 3.10, same issue as b
 def g0_multi_with_multi_as_alt():
     with a, b as c, d:
         print(1)
@@ -66,7 +61,6 @@ def g1_multi_with_multi_as_fallthrough_alt():
         print(1)
     print(2)
 
-# Fails in 3.13, unexpected JUMP_BACKWARD_NO_INTERRUPT messes up the template
 def h0_try_with_except():
     try:
         with a:
