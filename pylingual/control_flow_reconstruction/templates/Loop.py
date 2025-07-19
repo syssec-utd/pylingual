@@ -140,7 +140,7 @@ class FixLoop(ControlFlowTemplate):
         encompassed_nodes = [
             v for u, v, d in dfs_edges
             if d == "forward" and v != node
-        ][1:]
+        ]
         edges_to_remove = []
         
         # Find the candidate end that break connect to
@@ -160,7 +160,13 @@ class FixLoop(ControlFlowTemplate):
         if encompassed_nodes is not None:
             for succ in encompassed_nodes:
                 if cfg.get_edge_data(succ, candidate_end) != None:
-                    edges_to_remove.append((succ, candidate_end))
+                    for parent in cfg.predecessors(succ):
+                        if parent in encompassed_nodes:
+                            continue
+                        else:
+                            break
+                    else:
+                        edges_to_remove.append((succ, candidate_end))
 
         valid = []
         for pred, succ in edges_to_remove:
