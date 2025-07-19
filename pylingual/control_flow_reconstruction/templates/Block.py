@@ -7,7 +7,7 @@ from pylingual.editable_bytecode import Inst
 import networkx as nx
 
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, defer_source_to, remove_nodes
+from ..utils import E, N, T, defer_source_to, remove_nodes, without_instructions, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
@@ -52,6 +52,27 @@ class RemoveUnreachable(ControlFlowTemplate):
         if invalid:
             cfg.remove_nodes_from(invalid)
             return node
+
+
+@register_template(0, 0)
+class JumpTemplate(ControlFlowTemplate):
+    template = T(
+        body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
+        jump=N("tail", "block.").with_in_deg(1).with_cond(exact_instructions("JUMP_BACKWARD_NO_INTERRUPT"), exact_instructions("POP_JUMP_IF_TRUE")),
+        block=~N.tail(),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+            EdgeKind.TrueJump: "block",
+        },
+        "body",
+        "jump",
+    )
+
+    to_indented_source = defer_source_to("body")
 
 
 @register_template(0, 20)
