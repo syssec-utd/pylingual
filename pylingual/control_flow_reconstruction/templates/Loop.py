@@ -4,7 +4,9 @@ from ..cft import ControlFlowTemplate, EdgeKind, register_template
 from ..utils import (
     T,
     N,
-    without_top_level_instructions,
+    with_instructions,
+    exact_instructions,
+    has_no_lines,
     condense_mapping,
     defer_source_to,
     starting_instructions,
@@ -86,7 +88,7 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if isinstance(node, BreakTemplate):
+        if isinstance(node, BreakTemplate) or has_no_lines(cfg, node) or with_instructions("RAISE_VARARGS")(cfg, node):
             return None
         return condense_mapping(cls, cfg, {'child': node}, 'child')
 
@@ -96,7 +98,12 @@ class BreakTemplate(ControlFlowTemplate):
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        return condense_mapping(cls, cfg, {'child': node}, 'child')
+        if isinstance(node, ContinueTemplate) or has_no_lines(cfg, node):
+            return None
+        instruction = node.get_instructions()[-1].opname
+        if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP"} and (node.get_instructions()[-1].starts_line is not None or node.get_instructions()[-2].starts_line is not None):
+            return condense_mapping(cls, cfg, {'child': node}, 'child')
+        return None
 
     def to_indented_source(self, source):
         return self.child.to_indented_source(source) + self.line('continue')
@@ -122,9 +129,6 @@ class FixLoop(ControlFlowTemplate):
             # A back edge exists if the predecessor is reachable from the node (node dominates predecessor)
             if cfg.dominates(node, predecessor):
                 back_edges.append(predecessor)
-            if cfg.has_edge(node, node):
-                return None
-            
 
         if not back_edges:
             return None
@@ -137,45 +141,38 @@ class FixLoop(ControlFlowTemplate):
                 break
 
         dfs_edges = cfg.dfs_labeled_edges_no_loop(source=loopnode)
-        encompassed_nodes = [
-            v for u, v, d in dfs_edges
-            if d == "forward" and v != node
-        ]
+        encompassed_nodes = [v for u, v, d in dfs_edges if d == "forward"]
+        
         edges_to_remove = []
         
-        # Find the candidate end that break connect to
+        # Find the candidate end that break connects to
         candidate_end = None
         for succ in cfg.successors(node):
             if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump and cfg.out_degree(succ) <= 1:
                 candidate_end = succ
 
                 # Candidate end is a buffer node
-                if cfg.in_degree(candidate_end) == 1:
+                if cfg.in_degree(candidate_end) == 1 and any(exact_instructions(*op)(cfg, candidate_end) for op in [
+                    ("POP_BLOCK",), ("END_FOR",), ("END_FOR", "POP_TOP"), ("LOAD_CONST", "RETURN_VALUE")]):
                     for ss in cfg.successors(candidate_end):
-
-                        # If the successor has only one predecessor and one successor, it is a buffer node
                         if cfg.out_degree(ss) <= 1:
                             candidate_end = ss
-
+                            break
+        
         if encompassed_nodes is not None:
             for succ in encompassed_nodes:
                 if cfg.get_edge_data(succ, candidate_end) != None:
-                    for parent in cfg.predecessors(succ):
-                        if parent in encompassed_nodes:
-                            continue
-                        else:
-                            break
-                    else:
-                        edges_to_remove.append((succ, candidate_end))
+                    edges_to_remove.append((succ, candidate_end))
 
-        valid = []
         for pred, succ in edges_to_remove:
-            if not (cfg.get_edge_data(pred, succ).get("kind") == EdgeKind.Exception or cfg.get_edge_data(pred, succ).get("kind") == EdgeKind.FalseJump):
-                if without_top_level_instructions("RAISE_VARARGS")(cfg, pred):
-                    cfg.remove_edge(pred, succ)
-                    valid.append((pred, succ))
+            break_node = BreakTemplate.try_match(cfg, pred)
+            if break_node is not None:
+                cfg.remove_edge(break_node, succ)
 
-        for pred in set(x for x, _ in valid):
-            BreakTemplate.try_match(cfg, pred)
+        for candidate in back_edges:
+            cont_node = ContinueTemplate.try_match(cfg, candidate)
+            if cont_node is not None and cfg.in_degree(node) > 2:
+                cfg.remove_edge(cont_node, node)
+
         cfg.iterate()
         return

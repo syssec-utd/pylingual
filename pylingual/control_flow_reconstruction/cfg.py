@@ -110,7 +110,7 @@ class CFG(DiGraph_CFT):
             while stack:
                 parent, children = stack[-1]
                 for child in children:
-                    if child in visited or self.is_loop_header(child):
+                    if child in visited or self.is_loop_header(child) or not all(p in visited for p in self.predecessors(child)):
                         yield parent, child, "nontree"
                     else:
                         yield parent, child, "forward"
