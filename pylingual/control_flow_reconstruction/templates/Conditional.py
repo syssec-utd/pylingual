@@ -1,13 +1,14 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
 from ..utils import T, N, defer_source_to, run_is, has_no_lines, with_instructions, has_instval, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
+from .Loop import BreakTemplate
 
 
 @register_template(1, 40)
 class IfElse(ControlFlowTemplate):
     template = T(
         if_header=~N("if_body", "else_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
-        if_body=~N("tail.").with_in_deg(1),
-        else_body=~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1),
+        if_body=N.tail().with_in_deg(1).of_type(BreakTemplate) | ~N("tail.").with_in_deg(1),
+        else_body=N.tail().with_in_deg(1).of_type(BreakTemplate) | ~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1),
         tail=N.tail(),
     )
 
