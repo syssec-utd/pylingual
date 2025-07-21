@@ -39,7 +39,7 @@ class Except3_11(ControlFlowTemplate):
             return x
 
 
-@register_template(0, 1, *versions_from(3, 11))
+@register_template(0, 0, *versions_from(3, 11))
 class Try3_11(ControlFlowTemplate):
     template = T(
         try_header=N("try_body"),
@@ -310,7 +310,7 @@ class Except3_9(ControlFlowTemplate):
             return node
 
 
-@register_template(0, 1, (3, 9), (3, 10))
+@register_template(0, 0, (3, 9), (3, 10))
 class Try3_9(ControlFlowTemplate):
     template = T(
         try_header=~N("try_body"),
