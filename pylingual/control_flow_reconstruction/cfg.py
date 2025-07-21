@@ -93,11 +93,7 @@ class CFG(DiGraph_CFT):
         if depth_limit is None:
             depth_limit = len(self)
 
-        get_children = (
-            self.neighbors
-            if sort_neighbors is None
-            else lambda n: iter(sort_neighbors(self.neighbors(n)))
-        )
+        get_children = self.neighbors if sort_neighbors is None else lambda n: iter(sort_neighbors(self.neighbors(n)))
 
         visited = set()
         for start in nodes:

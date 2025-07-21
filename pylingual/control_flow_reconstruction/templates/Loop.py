@@ -11,11 +11,12 @@ from ..utils import (
     defer_source_to,
     starting_instructions,
     to_indented_source,
-    make_try_match, 
+    make_try_match,
 )
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
+
 
 @register_template(0, 1)
 class ForLoop(ControlFlowTemplate):
@@ -48,17 +49,16 @@ class SelfLoop(ControlFlowTemplate):
             {loop_body}
         """
 
+
 @register_template(0, 2)
 class TrueSelfLoop(ControlFlowTemplate):
-    template = T(
-        loop_body=~N("tail.", "loop_body"),
-        tail=N.tail())
+    template = T(loop_body=~N("tail.", "loop_body"), tail=N.tail())
 
     try_match = make_try_match(
         {
             EdgeKind.Fall: "tail",
-        }, 
-        "loop_body"
+        },
+        "loop_body",
     )
 
     @to_indented_source
@@ -66,6 +66,7 @@ class TrueSelfLoop(ControlFlowTemplate):
         """
         {loop_body}
         """
+
 
 @register_template(0, 3)
 class InlinedComprehensionTemplate(ControlFlowTemplate):
@@ -85,15 +86,17 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 
     to_indented_source = defer_source_to("comp")
 
+
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
         if isinstance(node, BreakTemplate) or has_no_lines(cfg, node) or with_instructions("RAISE_VARARGS")(cfg, node):
             return None
-        return condense_mapping(cls, cfg, {'child': node}, 'child')
+        return condense_mapping(cls, cfg, {"child": node}, "child")
 
     def to_indented_source(self, source):
-        return self.child.to_indented_source(source) + self.line('break')
+        return self.child.to_indented_source(source) + self.line("break")
+
 
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
@@ -102,11 +105,12 @@ class ContinueTemplate(ControlFlowTemplate):
             return None
         instruction = node.get_instructions()[-1].opname
         if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP"} and (node.get_instructions()[-1].starts_line is not None or node.get_instructions()[-2].starts_line is not None):
-            return condense_mapping(cls, cfg, {'child': node}, 'child')
+            return condense_mapping(cls, cfg, {"child": node}, "child")
         return None
 
     def to_indented_source(self, source):
-        return self.child.to_indented_source(source) + self.line('continue')
+        return self.child.to_indented_source(source) + self.line("continue")
+
 
 @register_template(0, 0)
 class FixLoop(ControlFlowTemplate):
@@ -125,14 +129,13 @@ class FixLoop(ControlFlowTemplate):
         # a back-edge is an edge from any node that is dominated by this node
         back_edges = []
         for predecessor in cfg.predecessors(node):
-            
             # A back edge exists if the predecessor is reachable from the node (node dominates predecessor)
             if cfg.dominates(node, predecessor):
                 back_edges.append(predecessor)
 
         if not back_edges:
             return None
-        
+
         # Get all nodes encompassed by the loop excluding source node and initial false jump
         loopnode = None
         for succ in cfg.successors(node):
@@ -142,9 +145,9 @@ class FixLoop(ControlFlowTemplate):
 
         dfs_edges = cfg.dfs_labeled_edges_no_loop(source=loopnode)
         encompassed_nodes = [v for u, v, d in dfs_edges if d == "forward"]
-        
+
         edges_to_remove = []
-        
+
         # Find the candidate end that break connects to
         candidate_end = None
         for succ in cfg.successors(node):
@@ -152,13 +155,12 @@ class FixLoop(ControlFlowTemplate):
                 candidate_end = succ
 
                 # Candidate end is a buffer node
-                if cfg.in_degree(candidate_end) == 1 and any(exact_instructions(*op)(cfg, candidate_end) for op in [
-                    ("POP_BLOCK",), ("END_FOR",), ("END_FOR", "POP_TOP"), ("LOAD_CONST", "RETURN_VALUE")]):
+                if cfg.in_degree(candidate_end) == 1 and any(exact_instructions(*op)(cfg, candidate_end) for op in [("POP_BLOCK",), ("END_FOR",), ("END_FOR", "POP_TOP"), ("LOAD_CONST", "RETURN_VALUE")]):
                     for ss in cfg.successors(candidate_end):
                         if cfg.out_degree(ss) <= 1:
                             candidate_end = ss
                             break
-        
+
         if encompassed_nodes is not None:
             for succ in encompassed_nodes:
                 if cfg.get_edge_data(succ, candidate_end) != None:
