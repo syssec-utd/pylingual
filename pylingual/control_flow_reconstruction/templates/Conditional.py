@@ -24,6 +24,28 @@ class IfElse(ControlFlowTemplate):
         """
 
 
+@register_template(1, 39, (3, 12), (3, 13))
+class IfElseLoop(ControlFlowTemplate):
+    template = T(
+        if_header=~N("else_body", "if_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
+        if_body=~N("tail.").with_in_deg(1),
+        else_body=~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1).with_cond(has_no_lines),
+        for_iter=N.tail().with_cond(with_instructions("FOR_ITER")),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {if_header}
+            {if_body}
+        {else_body?else:}
+            {else_body}
+        """
+
+
 @register_template(1, 41)
 @register_template(2, 41)
 class IfThen(ControlFlowTemplate):
