@@ -139,11 +139,9 @@ class CFG(DiGraph_CFT):
     def _layout_nodes(self):
         relabeled = nx.convert_node_labels_to_integers(self, label_attribute="template")  # type: ignore
 
-        try:
-            root = next(i for i in relabeled.nodes if relabeled.nodes[i]["template"] == self.start)
-            for i, pos in nx.nx_pydot.pydot_layout(relabeled, prog="dot", root=root).items():
-                relabeled.nodes[i]["template"]._pos = [pos]
-        except: pass
+        root = next(i for i in relabeled.nodes if relabeled.nodes[i]["template"] == self.start)
+        for i, pos in nx.nx_pydot.pydot_layout(relabeled, prog="dot", root=root).items():
+            relabeled.nodes[i]["template"]._pos = [pos]
 
     def node_by_offset(self, offset: int):
         return next(x for x in self.nodes if x.offset == offset)
@@ -173,7 +171,7 @@ class CFG(DiGraph_CFT):
         nodes = {}
 
         for node, data in self.nodes.data():
-            nodes[node] = pydot.Node(str(hash(node)), label=repr(node).replace("\n", "\\l").replace("\t", "|    ").replace('"', '') + "\\l", fontname="Noto Sans", labeljust="l", shape="box", pos=node.pos())
+            nodes[node] = pydot.Node(str(hash(node)), label=repr(node).replace("\n", "\\l").replace("\t", "|    ") + "\\l", fontname="Noto Sans", labeljust="l", shape="box", pos=node.pos())
             dot.add_node(nodes[node])
         for a, b, data in self.edges.data():
             dot.add_edge(pydot.Edge(nodes[a], nodes[b], **data, label=data["kind"].value, color=data["kind"].color(), fontname="Noto Sans", labeljust="l"))
