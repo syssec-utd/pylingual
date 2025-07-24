@@ -36,7 +36,7 @@ class Result(Enum):
 def edit_pyc_lines(pyc: PYCFile, src_lines: list[str]):
     if pyc.version == (3, 10):
         pyc.replace_duplicated_returns10(src_lines)
-    elif pyc.version == (3, 12):
+    elif pyc.version >= (3, 12):
         pyc.replace_duplicated_returns12(src_lines)
     seen_lines = set()
     # multiple instructions can start the same lno, but the segmentation model will only assign the lno to the first one
