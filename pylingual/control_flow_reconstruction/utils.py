@@ -134,6 +134,10 @@ def has_no_lines(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or all(i.starts_line is None for i in node.get_instructions())
 
 
+def has_some_lines(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+    return node is None or any(i.starts_line is not None for i in node.get_instructions())
+
+
 def run_is(n: int):
     def check_run(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         return cfg.run == n
