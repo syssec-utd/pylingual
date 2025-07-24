@@ -155,12 +155,12 @@ class FixLoop(ControlFlowTemplate):
                 candidate_end = succ
 
                 # Candidate end is a buffer node
-                if cfg.in_degree(candidate_end) == 1 and any(exact_instructions(*op)(cfg, candidate_end) for op in [("POP_BLOCK",), ("END_FOR",), ("END_FOR", "POP_TOP"), ("LOAD_CONST", "RETURN_VALUE")]):
+                if cfg.in_degree(candidate_end) == 1 and all(x.opname in {"POP_TOP", "POP_BLOCK", "END_FOR", "RETURN_CONST", "LOAD_CONST", "RETURN_VALUE", "JUMP_BACKWARD"} for x in candidate_end.get_instructions()):
                     for ss in cfg.successors(candidate_end):
-                        if cfg.out_degree(ss) <= 1:
+                        if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
                             candidate_end = ss
                             break
-
+        
         if encompassed_nodes is not None:
             for succ in encompassed_nodes:
                 if cfg.get_edge_data(succ, candidate_end) != None:
