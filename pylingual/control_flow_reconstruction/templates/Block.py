@@ -7,7 +7,7 @@ from pylingual.editable_bytecode import Inst
 import networkx as nx
 
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, defer_source_to, remove_nodes, without_instructions, has_no_lines, exact_instructions, make_try_match
+from ..utils import E, N, T, defer_source_to, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
@@ -81,7 +81,7 @@ class JumpTemplate(ControlFlowTemplate):
 
     to_indented_source = defer_source_to("body")
 
-@register_template(0, 0, (3, 13))
+@register_template(0, 0, *versions_from(3, 11))
 class NopTemplate(ControlFlowTemplate):
     template = T(
         body=~N("nop", None).with_cond(without_instructions("CLEANUP_THROW")),
