@@ -160,7 +160,7 @@ class FixLoop(ControlFlowTemplate):
                         if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
                             candidate_end = ss
                             break
-        
+
         if encompassed_nodes is not None:
             for succ in encompassed_nodes:
                 if cfg.get_edge_data(succ, candidate_end) != None:

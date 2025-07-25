@@ -107,7 +107,7 @@ class TryElse3_12(ControlFlowTemplate):
         else:
             {try_else}
         """
-            
+
 
 @register_template(0, 0, (3, 11))
 class Try3_11(ControlFlowTemplate):

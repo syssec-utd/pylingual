@@ -58,14 +58,17 @@ class RemoveUnreachable(ControlFlowTemplate):
 class JumpTemplate(ControlFlowTemplate):
     template = T(
         body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
-        jump=N("tail", "block?").with_in_deg(1).with_cond(
+        jump=N("tail", "block?")
+        .with_in_deg(1)
+        .with_cond(
             exact_instructions("JUMP_BACKWARD_NO_INTERRUPT"),
-            exact_instructions("POP_JUMP_IF_TRUE"), 
+            exact_instructions("POP_JUMP_IF_TRUE"),
             exact_instructions("JUMP_FORWARD"),
             exact_instructions("JUMP_BACKWARD"),
-            exact_instructions("POP_JUMP_IF_NOT_NONE"), 
-            exact_instructions("POP_JUMP_IF_NONE"), 
-            exact_instructions("POP_JUMP_IF_FALSE")),
+            exact_instructions("POP_JUMP_IF_NOT_NONE"),
+            exact_instructions("POP_JUMP_IF_NONE"),
+            exact_instructions("POP_JUMP_IF_FALSE"),
+        ),
         block=N.tail(),
         tail=N.tail(),
     )
@@ -80,6 +83,7 @@ class JumpTemplate(ControlFlowTemplate):
     )
 
     to_indented_source = defer_source_to("body")
+
 
 @register_template(0, 0, *versions_from(3, 11))
 class NopTemplate(ControlFlowTemplate):
