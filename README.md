@@ -57,4 +57,4 @@ Options:
 
 ## Support
 
-If you have any issues for installing and using PyLingual, please create an issue or send your message via our support email at pylingual@gmail.com.
+If you have any issues for installing and using PyLingual, please create an issue or send your message via our support email at pylingual.io@gmail.com.
