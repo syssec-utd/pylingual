@@ -90,9 +90,21 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if isinstance(node, BreakTemplate) or has_no_lines(cfg, node) or with_instructions("RAISE_VARARGS")(cfg, node):
+        if isinstance(node, BreakTemplate) or has_no_lines(cfg, node):
             return None
-        return condense_mapping(cls, cfg, {"child": node}, "child")
+
+        i = len(node.get_instructions()) - 1
+        while i >= 0:
+            instruction = node.get_instructions()[i].opname
+            if instruction in {"POP_TOP", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP"}:
+                if node.get_instructions()[i].starts_line is not None:
+                    return condense_mapping(cls, cfg, {"child": node}, "child")
+                else:
+                    i -= 1
+                    continue
+            else:
+                return None
+        return None
 
     def to_indented_source(self, source):
         return self.child.to_indented_source(source) + self.line("break")
@@ -103,9 +115,18 @@ class ContinueTemplate(ControlFlowTemplate):
     def try_match(cls, cfg, node):
         if isinstance(node, ContinueTemplate) or has_no_lines(cfg, node):
             return None
-        instruction = node.get_instructions()[-1].opname
-        if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP"} and (node.get_instructions()[-1].starts_line is not None or node.get_instructions()[-2].starts_line is not None):
-            return condense_mapping(cls, cfg, {"child": node}, "child")
+        
+        i = len(node.get_instructions()) - 1
+        while i >= 0:
+            instruction = node.get_instructions()[i].opname
+            if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT"}:
+                if node.get_instructions()[i].starts_line is not None:
+                    return condense_mapping(cls, cfg, {"child": node}, "child")
+                else:
+                    i -= 1
+                    continue
+            else:
+                return None
         return None
 
     def to_indented_source(self, source):
@@ -151,11 +172,11 @@ class FixLoop(ControlFlowTemplate):
         # Find the candidate end that break connects to
         candidate_end = None
         for succ in cfg.successors(node):
-            if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump and cfg.out_degree(succ) <= 1:
+            if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump:
                 candidate_end = succ
 
                 # Candidate end is a buffer node
-                if cfg.in_degree(candidate_end) == 1 and all(x.opname in {"POP_TOP", "POP_BLOCK", "END_FOR", "RETURN_CONST", "LOAD_CONST", "RETURN_VALUE", "JUMP_BACKWARD"} for x in candidate_end.get_instructions()):
+                if cfg.in_degree(candidate_end) == 1:
                     for ss in cfg.successors(candidate_end):
                         if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
                             candidate_end = ss
