@@ -1,5 +1,3 @@
-import pdb
-
 from pylingual.editable_bytecode import EditableBytecode
 from pylingual.editable_bytecode.control_flow_graph import bytecode_to_control_flow_graph
 
@@ -27,13 +25,8 @@ def structure_control_flow(cfg: nx.DiGraph, bytecode: EditableBytecode) -> Contr
     cfg = CFG.from_graph(cfg, bytecode)
     runs = get_template_runs(bytecode.version[:2])
 
-    try:
-        while len(cfg) > 1:
-            if not iteration(cfg, runs):
-                return MetaTemplate("\x1b[31mirreducible cflow\x1b[0m", bytecode.codeobj)
-    except Exception:
-        if hasattr(pdb, "xpm"):
-            pdb.xpm()  # type: ignore
-        raise
+    while len(cfg) > 1:
+        if not iteration(cfg, runs):
+            return MetaTemplate("\x1b[31mirreducible cflow\x1b[0m", bytecode.codeobj)
 
     return next(iter(cfg.nodes))

@@ -238,7 +238,7 @@ class Masker:
         if inst.is_jump_target:
             view = f"{inst.offset} {view}"
             # create list of offsets greater than or less than inst, for all jump origins to this inst
-            jumps_greater_or_less = [inst.offset < inst.offset for inst in inst.jumped_to_from_insts]
+            jumps_greater_or_less = [i.offset < inst.offset for i in inst.jumped_to_from_insts]
             if any(jumps_greater_or_less):  # 1 in list
                 view = f"^~> {view}"
             if not all(jumps_greater_or_less):  # 0 in list

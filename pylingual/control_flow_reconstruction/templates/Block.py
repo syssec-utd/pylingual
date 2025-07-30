@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING, override
 from itertools import chain
 from pylingual.editable_bytecode import Inst
 
+import networkx as nx
+
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, defer_source_to, remove_nodes
+from ..utils import E, N, T, defer_source_to, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
@@ -33,6 +35,71 @@ class EndTemplate(ControlFlowTemplate):
         cfg.start = template
         cfg.end = template
         return template
+
+    to_indented_source = defer_source_to("body")
+
+
+@register_template(3, 0)
+class RemoveUnreachable(ControlFlowTemplate):
+    @override
+    @classmethod
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if node is not cfg.start:
+            return None
+
+        valid = list(nx.dfs_preorder_nodes(cfg, source=cfg.start))
+        invalid = [n for n in cfg.nodes if n not in valid]
+        if invalid:
+            cfg.remove_nodes_from(invalid)
+            return node
+
+
+@register_template(0, 0, (3, 13))
+class JumpTemplate(ControlFlowTemplate):
+    template = T(
+        body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
+        jump=N("tail", "block?")
+        .with_in_deg(1)
+        .with_cond(
+            exact_instructions("JUMP_BACKWARD_NO_INTERRUPT"),
+            exact_instructions("POP_JUMP_IF_TRUE"),
+            exact_instructions("JUMP_FORWARD"),
+            exact_instructions("JUMP_BACKWARD"),
+            exact_instructions("POP_JUMP_IF_NOT_NONE"),
+            exact_instructions("POP_JUMP_IF_NONE"),
+            exact_instructions("POP_JUMP_IF_FALSE"),
+        ),
+        block=N.tail(),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+            EdgeKind.TrueJump: "block",
+        },
+        "body",
+        "jump",
+    )
+
+    to_indented_source = defer_source_to("body")
+
+
+@register_template(0, 0, *versions_from(3, 11))
+class NopTemplate(ControlFlowTemplate):
+    template = T(
+        body=~N("nop", None).with_cond(without_instructions("CLEANUP_THROW")),
+        nop=N("tail", None).with_in_deg(1).with_cond(exact_instructions("NOP")).with_cond(has_no_lines),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+        },
+        "body",
+        "nop",
+    )
 
     to_indented_source = defer_source_to("body")
 

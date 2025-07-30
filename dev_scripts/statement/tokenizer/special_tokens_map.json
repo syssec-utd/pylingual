@@ -1086,6 +1086,13 @@
       "single_word": false
     },
     {
+      "content": "FORMAT_WITH_SPEC",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
       "content": "GEN_START",
       "lstrip": false,
       "rstrip": true,

@@ -115,7 +115,7 @@ def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, l
     pyc = PYCFile(str(pyc_path.resolve()))
     if pyc.version == (3, 10):
         pyc.replace_duplicated_returns10(py_path.read_text().split("\n"))
-    elif pyc.version == (3, 12):
+    elif pyc.version >= (3, 12):
         pyc.replace_duplicated_returns12(py_path.read_text().split("\n"))
     global_masker = create_global_masker(pyc)
 

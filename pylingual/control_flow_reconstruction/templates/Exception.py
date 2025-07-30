@@ -13,6 +13,8 @@ from ..utils import (
     with_instructions,
     without_instructions,
     ending_instructions,
+    has_no_lines,
+    has_some_lines,
     exact_instructions,
     no_back_edges,
     without_top_level_instructions,
@@ -39,8 +41,8 @@ class Except3_11(ControlFlowTemplate):
             return x
 
 
-@register_template(0, 0, *versions_from(3, 11))
-class Try3_11(ControlFlowTemplate):
+@register_template(0, 0, *versions_from(3, 12))
+class Try3_12(ControlFlowTemplate):
     template = T(
         try_header=N("try_body"),
         try_body=N("tail.", None, "except_body"),
@@ -71,13 +73,83 @@ class Try3_11(ControlFlowTemplate):
         """
 
 
-@register_template(0, 0, *versions_from(3, 11))
-class TryElse3_11(ControlFlowTemplate):
+@register_template(0, 0, *versions_from(3, 12))
+class TryElse3_12(ControlFlowTemplate):
     template = T(
         try_header=N("try_body"),
         try_body=N("try_else.", None, "except_body"),
         except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
         try_else=~N("tail.").with_in_deg(1),
+        reraise=reraise,
+        tail=N.tail(),
+    )
+
+    try_match = revert_on_fail(
+        make_try_match(
+            {
+                EdgeKind.Fall: "tail",
+            },
+            "try_header",
+            "try_body",
+            "except_body",
+            "try_else",
+            "reraise",
+        )
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {try_header}
+        try:
+            {try_body}
+        {except_body}
+        else:
+            {try_else}
+        """
+
+
+@register_template(0, 0, (3, 11))
+class Try3_11(ControlFlowTemplate):
+    template = T(
+        try_header=N("try_body"),
+        try_body=N("try_else.", None, "except_body"),
+        except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
+        try_else=~N("tail.").with_in_deg(1).with_cond(has_no_lines),
+        reraise=reraise,
+        tail=N.tail(),
+    )
+
+    try_match = revert_on_fail(
+        make_try_match(
+            {
+                EdgeKind.Fall: "tail",
+            },
+            "try_header",
+            "try_else",
+            "try_body",
+            "except_body",
+            "reraise",
+        )
+    )
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {try_header}
+        try:
+            {try_body}
+        {except_body}
+        """
+
+
+@register_template(0, 0, (3, 11))
+class TryElse3_11(ControlFlowTemplate):
+    template = T(
+        try_header=N("try_body"),
+        try_body=N("try_else.", None, "except_body"),
+        except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
+        try_else=~N("tail.").with_in_deg(1).with_cond(has_some_lines),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -185,7 +257,7 @@ class ExceptExc3_11(Except3_11):
         except_header=N("except_body", "no_match", "reraise").with_cond(ending_instructions("CHECK_EXC_MATCH", "POP_JUMP_FORWARD_IF_FALSE"), ending_instructions("CHECK_EXC_MATCH", "POP_JUMP_IF_FALSE")),
         except_body=N("except_footer.", None, "reraise").of_subtemplate(ExcBody3_11).with_in_deg(1),
         no_match=N("tail?", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
-        except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")),
+        except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("SWAP", "POP_EXCEPT"), starting_instructions("POP_EXCEPT")),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -225,7 +297,7 @@ class TryFinally3_11(ControlFlowTemplate):
         tail=N.tail(),
     )
     template2 = T(
-        try_except=N("finally_body", None, "fail_body").of_type(Try3_11, TryElse3_11),
+        try_except=N("finally_body", None, "fail_body").of_type(Try3_11, TryElse3_11, Try3_12, TryElse3_12),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
         fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE")),
         reraise=reraise,
@@ -280,7 +352,7 @@ class TryFinally3_11(ControlFlowTemplate):
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
         header = source[self.try_header]
         body = source[self.try_body, 1]
-        if isinstance(self.try_header, (Try3_11, TryElse3_11)) and self.members["try_body"] is None:
+        if isinstance(self.try_header, (Try3_11, TryElse3_11, Try3_12, TryElse3_12)) and self.members["try_body"] is None:
             s = header
         else:
             s = chain(header, self.line("try:"), body)
@@ -294,20 +366,6 @@ class TryFinally3_11(ControlFlowTemplate):
             after = []
 
         return list(chain(s, self.line("finally:"), in_finally, after))
-
-
-class Except3_9(ControlFlowTemplate):
-    @classmethod
-    @override
-    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
-        if [x.opname for x in node.get_instructions()] == ["RERAISE"]:
-            return node
-        if x := ExceptExc3_9.try_match(cfg, node):
-            return x
-        if x := BareExcept3_9.try_match(cfg, node):
-            return x
-        if isinstance(node, Except3_9):
-            return node
 
 
 class Except3_9(ControlFlowTemplate):

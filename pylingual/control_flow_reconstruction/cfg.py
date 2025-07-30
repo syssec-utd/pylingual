@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 from pathlib import Path
 
@@ -75,6 +76,55 @@ class CFG(DiGraph_CFT):
         self._create_dominator_tree()
         return nx.dfs_postorder_nodes(self, source=self.start, sort_neighbors=lambda nodes: sorted(nodes, key=lambda x: x.offset, reverse=True))
 
+    def is_loop_header(self, node):
+        # Check all predecessors
+        for predecessor in self.predecessors(node):
+            # A back edge exists if the predecessor is dominated by this node
+            if self.dominates(node, predecessor):
+                return True
+        return False
+
+    def dfs_labeled_edges_no_loop(self, source=None, depth_limit=None, *, sort_neighbors=None):
+        if source is None:
+            # edges for all components
+            nodes = self
+        else:
+            # edges for components with source
+            nodes = [source]
+        if depth_limit is None:
+            depth_limit = len(self)
+
+        get_children = self.neighbors if sort_neighbors is None else lambda n: iter(sort_neighbors(self.neighbors(n)))
+
+        visited = set()
+        for start in nodes:
+            if start in visited:
+                continue
+            yield start, start, "forward"
+            visited.add(start)
+            stack = [(start, get_children(start))]
+            depth_now = 1
+            while stack:
+                parent, children = stack[-1]
+                for child in children:
+                    if child in visited or self.is_loop_header(child) or not all(p in visited for p in self.predecessors(child)):
+                        yield parent, child, "nontree"
+                    else:
+                        yield parent, child, "forward"
+                        visited.add(child)
+                        if depth_now < depth_limit:
+                            stack.append((child, iter(get_children(child))))
+                            depth_now += 1
+                            break
+                        else:
+                            yield parent, child, "reverse-depth_limit"
+                else:
+                    stack.pop()
+                    depth_now -= 1
+                    if stack:
+                        yield stack[-1][0], parent, "reverse"
+            yield start, start, "reverse"
+
     def apply_graphs(self):
         graphs = self.iteration_graphs.pop()
         if self.iteration_graphs:
@@ -130,3 +180,16 @@ class CFG(DiGraph_CFT):
             dot.write(out, prog=["neato", "-n"], format=CFG.graph_format)
         else:
             self.iteration_graphs[-1].append(dot.to_string())
+
+    def cdg(self) -> CFG:
+        pdt = nx.create_empty_copy(self)
+        pdt.add_edges_from((B, A) for A, B in nx.immediate_dominators(self.reverse(), self.end).items())
+        pdt.remove_edge(self.end, self.end)
+        pdr = nx.transitive_closure_dag(pdt)
+        postdominates = lambda A, B: pdr.has_edge(A, B) or A == B
+        control_dependent = lambda A, B: 0 < sum(postdominates(A, succ) for succ in self.successors(B)) < self.out_degree(B)
+        cdg = nx.create_empty_copy(self)
+        cdg.add_edges_from((B, A, {"kind": EdgeKind.Fall}) for A, B in itertools.product(self.nodes, self.nodes) if A != B and control_dependent(A, B))
+        cdg.remove_node(self.end)
+        cdg.add_edges_from(((self.start, n) for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start), kind=EdgeKind.Fall)
+        return cdg

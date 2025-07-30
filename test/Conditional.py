@@ -302,3 +302,24 @@ def f_nofallthru_if_pass():
     if a > b:
         pass
     print("end")
+
+
+def g1_ifElseLoop():
+    for a in range(3):
+        if a > b:
+            print(1)
+
+
+def g2_ifElseLoop():
+    for a in range(3):
+        if a > b:
+            print(1)
+        print(2)
+
+
+def g3_ifElseLoop():
+    for a in range(3):
+        if a > b:
+            print(1)
+        else:
+            print(2)

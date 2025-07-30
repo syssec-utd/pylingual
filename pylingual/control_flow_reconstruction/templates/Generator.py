@@ -1,5 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, MetaTemplate, register_template
-from ..utils import E, T, N, defer_source_to, exact_instructions, no_back_edges, to_indented_source, make_try_match
+from ..utils import E, T, N, defer_source_to, ending_instructions, exact_instructions, no_back_edges, to_indented_source, make_try_match
 
 
 @register_template(0, 0)
@@ -38,7 +38,7 @@ class AwaitWith3_12(ControlFlowTemplate):
 @register_template(0, 0)
 class Generator3_12(ControlFlowTemplate):
     template = T(
-        entry=N("body").with_cond(exact_instructions("RETURN_GENERATOR", "POP_TOP")),
+        entry=N("body").with_cond(ending_instructions("RETURN_GENERATOR", "POP_TOP")),
         body=N(E.exc("gen_cleanup"), E.meta("end?")),
         gen_cleanup=N(E.meta("end")).with_cond(exact_instructions("CALL_INTRINSIC_1", "RERAISE")),
         end=N().of_type(MetaTemplate),
