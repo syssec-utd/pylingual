@@ -96,6 +96,19 @@ def without_top_level_instructions(*opnames: str):
     return check_instructions
 
 
+def with_top_level_instructions(*opnames: str):
+    from .templates.Block import BlockTemplate
+
+    def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        if isinstance(node, BlockTemplate):
+            return any(x.inst.opname in opnames for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            return node.inst.opname in opnames
+        return False
+
+    return check_instructions
+
+
 def has_type(*template_type: type[ControlFlowTemplate]):
     def check_type(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         return isinstance(node, template_type)
