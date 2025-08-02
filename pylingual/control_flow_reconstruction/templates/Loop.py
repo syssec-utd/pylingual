@@ -100,6 +100,25 @@ class TrueSelfLoop(ControlFlowTemplate):
         """
 
 
+@register_template(0, 1, *versions_from(3, 12))
+class AsyncForLoop3_12(ControlFlowTemplate):
+    template = T(
+        for_iter=N("for_body", None, "tail"),
+        for_body=~N("for_iter").with_in_deg(1),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({}, "tail", "for_iter", "for_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {for_iter}
+            {for_body}
+        {tail}
+        """
+        
+
 @register_template(1, 39)
 class WhileIfElseLoop(ControlFlowTemplate):
     template = T(
