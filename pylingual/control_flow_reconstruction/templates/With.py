@@ -1,5 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
-from ..utils import T, N, exact_instructions, starting_instructions, without_instructions, to_indented_source, make_try_match, versions_from
+from ..utils import T, N, exact_instructions, starting_instructions, without_top_level_instructions, to_indented_source, make_try_match, versions_from
 
 
 class WithCleanup3_11(ControlFlowTemplate):
@@ -83,7 +83,7 @@ class With3_9(ControlFlowTemplate):
 @register_template(0, 10, (3, 6), (3, 7), (3, 8))
 class With3_6(ControlFlowTemplate):
     template = T(
-        setup_with=~N("with_body", None).with_cond(without_instructions("SETUP_FINALLY")),
+        setup_with=~N("with_body", None).with_cond(without_top_level_instructions("SETUP_FINALLY", "SETUP_EXCEPT")),
         with_body=N("buffer_block.", None, "normal_cleanup").with_in_deg(1),
         buffer_block=~N("normal_cleanup.", None).with_in_deg(1),
         normal_cleanup=~N.tail(),
