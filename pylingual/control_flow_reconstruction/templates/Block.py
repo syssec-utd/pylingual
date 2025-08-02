@@ -48,7 +48,7 @@ class RemoveUnreachable(ControlFlowTemplate):
             return None
 
         valid = list(nx.dfs_preorder_nodes(cfg, source=cfg.start))
-        invalid = [n for n in cfg.nodes if n not in valid]
+        invalid = [n for n in cfg.nodes if n not in valid and has_no_lines(cfg, n)]
         if invalid:
             cfg.remove_nodes_from(invalid)
             return node
