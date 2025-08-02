@@ -119,6 +119,8 @@ def has_type(*template_type: type[ControlFlowTemplate]):
 def no_back_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or not any(cfg.dominates(succ, node) for succ in cfg.successors(node))
 
+def no_self_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+    return node is None or not any(cfg.has_edge(succ, node) and cfg.has_edge(node, succ) for succ in cfg.successors(node))
 
 def has_incoming_edge_of_categories(*categories: str):
     def check(cfg: CFG, node: ControlFlowTemplate | None) -> bool:

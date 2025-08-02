@@ -7,7 +7,7 @@ from pylingual.editable_bytecode import Inst
 import networkx as nx
 
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, defer_source_to, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
+from ..utils import E, N, T, defer_source_to, no_self_edges, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
@@ -58,14 +58,18 @@ class RemoveUnreachable(ControlFlowTemplate):
 class JumpTemplate(ControlFlowTemplate):
     template = T(
         body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
-        jump=N("tail", "block?").with_in_deg(1).with_cond(
+        jump=N("tail", "block?")
+        .with_cond(no_self_edges)
+        .with_in_deg(1)
+        .with_cond(
             exact_instructions("JUMP_BACKWARD_NO_INTERRUPT"),
-            exact_instructions("POP_JUMP_IF_TRUE"), 
+            exact_instructions("POP_JUMP_IF_TRUE"),
             exact_instructions("JUMP_FORWARD"),
             exact_instructions("JUMP_BACKWARD"),
-            exact_instructions("POP_JUMP_IF_NOT_NONE"), 
-            exact_instructions("POP_JUMP_IF_NONE"), 
-            exact_instructions("POP_JUMP_IF_FALSE")),
+            exact_instructions("POP_JUMP_IF_NOT_NONE"),
+            exact_instructions("POP_JUMP_IF_NONE"),
+            exact_instructions("POP_JUMP_IF_FALSE"),
+        ),
         block=N.tail(),
         tail=N.tail(),
     )
@@ -80,6 +84,7 @@ class JumpTemplate(ControlFlowTemplate):
     )
 
     to_indented_source = defer_source_to("body")
+
 
 @register_template(0, 0, *versions_from(3, 11))
 class NopTemplate(ControlFlowTemplate):
