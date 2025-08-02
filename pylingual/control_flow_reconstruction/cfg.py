@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 from pathlib import Path
 
@@ -179,3 +180,16 @@ class CFG(DiGraph_CFT):
             dot.write(out, prog=["neato", "-n"], format=CFG.graph_format)
         else:
             self.iteration_graphs[-1].append(dot.to_string())
+
+    def cdg(self) -> CFG:
+        pdt = nx.create_empty_copy(self)
+        pdt.add_edges_from((B, A) for A, B in nx.immediate_dominators(self.reverse(), self.end).items())
+        pdt.remove_edge(self.end, self.end)
+        pdr = nx.transitive_closure_dag(pdt)
+        postdominates = lambda A, B: pdr.has_edge(A, B) or A == B
+        control_dependent = lambda A, B: 0 < sum(postdominates(A, succ) for succ in self.successors(B)) < self.out_degree(B)
+        cdg = nx.create_empty_copy(self)
+        cdg.add_edges_from((B, A, {"kind": EdgeKind.Fall}) for A, B in itertools.product(self.nodes, self.nodes) if A != B and control_dependent(A, B))
+        cdg.remove_node(self.end)
+        cdg.add_edges_from(((self.start, n) for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start), kind=EdgeKind.Fall)
+        return cdg

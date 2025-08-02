@@ -130,11 +130,7 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
                 pyc = result.original_pyc
                 print_result(f"Equivalence Results for {pyc.pyc_path.name if pyc.pyc_path else repr(pyc)}", result.equivalence_results)
             except Exception:
-                import pdb
-
                 live.stop()
-                if hasattr(pdb, "xpm"):
-                    pdb.xpm()  # type: ignore
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
 
