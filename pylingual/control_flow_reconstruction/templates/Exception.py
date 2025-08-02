@@ -292,14 +292,14 @@ class TryFinally3_11(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE"), ending_instructions("DELETE_SUBSCR", "RERAISE")),
+        fail_body=N(E.exc("reraise")).with_cond(without_top_level_instructions("DELETE_FAST")),
         reraise=reraise,
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_body", None, "fail_body").of_type(Try3_11, TryElse3_11, Try3_12, TryElse3_12),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N(E.exc("reraise")).with_cond(ending_instructions("POP_TOP", "RERAISE")),
+        fail_body=N(E.exc("reraise")).with_cond(without_top_level_instructions("DELETE_FAST")),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -531,14 +531,14 @@ class TryFinally3_9(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(ending_instructions("POP_TOP", "RERAISE"), ending_instructions("DELETE_SUBSCR", "RERAISE")),
+        fail_body=N("tail.").with_cond(without_top_level_instructions("DELETE_FAST")),
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_9, Try3_9),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("tail.").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(ending_instructions("POP_TOP", "RERAISE")),
+        fail_body=N("tail.").with_cond(without_top_level_instructions("DELETE_FAST")),
         tail=N.tail(),
     )
 
@@ -790,14 +790,14 @@ class TryFinally3_6(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"), with_instructions("LOAD_CONST", "RETURN_VALUE"), with_instructions("DELETE_SUBSCR", "END_FINALLY")),
+        fail_body=N("tail.").with_cond(without_top_level_instructions("DELETE_FAST")),
         tail=N.tail(),
     )
     template2 = T(
         try_except=N("finally_tail", None, "fail_body").of_type(TryElse3_6, Try3_6, ReturnFinally3_6),
         finally_tail=N("finally_body", None, "fail_body"),
         finally_body=~N("fail_body").with_in_deg(1).with_cond(no_back_edges),
-        fail_body=N("tail.").with_cond(with_instructions("POP_TOP", "END_FINALLY"), with_instructions("LOAD_CONST", "RETURN_VALUE")),
+        fail_body=N("tail.").with_cond(without_top_level_instructions("DELETE_FAST")),
         tail=N.tail(),
     )
 
