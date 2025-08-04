@@ -96,6 +96,19 @@ def without_top_level_instructions(*opnames: str):
     return check_instructions
 
 
+def with_top_level_instructions(*opnames: str):
+    from .templates.Block import BlockTemplate
+
+    def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        if isinstance(node, BlockTemplate):
+            return any(x.inst.opname in opnames for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            return node.inst.opname in opnames
+        return False
+
+    return check_instructions
+
+
 def has_type(*template_type: type[ControlFlowTemplate]):
     def check_type(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         return isinstance(node, template_type)
@@ -106,6 +119,8 @@ def has_type(*template_type: type[ControlFlowTemplate]):
 def no_back_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or not any(cfg.dominates(succ, node) for succ in cfg.successors(node))
 
+def no_self_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+    return node is None or not any(cfg.has_edge(succ, node) and cfg.has_edge(node, succ) for succ in cfg.successors(node))
 
 def has_incoming_edge_of_categories(*categories: str):
     def check(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
