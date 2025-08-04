@@ -306,7 +306,7 @@ class Decompiler:
     def run_cflow_reconstruction(self):
         logger.info(f"Reconstructing control flow for {self.name}...")
         try:
-            cfts = {bc.codeobj: bc_to_cft(bc) for bc in TrackedList(CFLOW_STEP, self.ordered_bytecodes)}
+            cfts = {bc.codeobj: bc_to_cft(bc, self.source_lines) for bc in TrackedList(CFLOW_STEP, self.ordered_bytecodes)}
             self.source_context = SourceContext(self.pyc, self.source_lines, cfts)
             version = magicint2version.get(self.pyc.magic, "?")
             time = datetime.datetime.fromtimestamp(self.pyc.timestamp, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

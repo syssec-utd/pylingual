@@ -73,7 +73,7 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         pyc = PYCFile(in_pyc)
         edit_pyc_lines(pyc, src_lines)
 
-        cfts = {bc.codeobj: bc_to_cft(bc) for bc in pyc.iter_bytecodes()}
+        cfts = {bc.codeobj: bc_to_cft(bc, src_lines) for bc in pyc.iter_bytecodes()}
         out_src = str(SourceContext(pyc, src_lines, cfts))
 
         out_path = out_dir / "b.py"
@@ -98,7 +98,7 @@ class NoPool:
 def print_results(a: Path, b: Path, result: Result, results: list[tuple[bool, str]] | Exception):
     a_text = a.read_text()
     b_text = b.read_text()
-    console = rich.console.Console(highlight=False)
+    console = rich.console.Console(highlight=False, markup=False)
     console.print("=== original file ===", style="green bold")
     console.print(a_text)
     console.print("\n=== reconstructed file ===", style="green bold")
