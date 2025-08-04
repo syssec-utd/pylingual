@@ -17,16 +17,16 @@ def iteration(cfg: CFG, runs: list[list[type[ControlFlowTemplate]]]):
     return False
 
 
-def bc_to_cft(bc: EditableBytecode):
-    return structure_control_flow(bytecode_to_control_flow_graph(bc), bc)
+def bc_to_cft(bc: EditableBytecode, source: list[str]):
+    return structure_control_flow(bytecode_to_control_flow_graph(bc), bc, source)
 
 
-def structure_control_flow(cfg: nx.DiGraph, bytecode: EditableBytecode) -> ControlFlowTemplate:
-    cfg = CFG.from_graph(cfg, bytecode)
+def structure_control_flow(cfg: nx.DiGraph, bytecode: EditableBytecode, source: list[str]) -> ControlFlowTemplate:
+    cfg = CFG.from_graph(cfg, bytecode, source=source)
     runs = get_template_runs(bytecode.version[:2])
 
     while len(cfg) > 1:
         if not iteration(cfg, runs):
-            return MetaTemplate("\x1b[31mirreducible cflow\x1b[0m", bytecode.codeobj)
+            return MetaTemplate("irreducible cflow", bytecode.codeobj)
 
     return next(iter(cfg.nodes))

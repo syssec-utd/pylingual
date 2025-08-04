@@ -35,7 +35,7 @@ class CFG(DiGraph_CFT):
         CFG.graph_format = fmt
 
     @staticmethod
-    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode, iterate=True) -> CFG:
+    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode, iterate=True, source=None) -> CFG:
         self = CFG(cfg)
 
         self.bytecode = bytecode
@@ -46,6 +46,11 @@ class CFG(DiGraph_CFT):
         self.run = 0
 
         InstTemplate.match_all(self)
+        for n in self.nodes:
+            if source is not None and n.inst.starts_line is not None:
+                n.inst.source_line = source[n.inst.starts_line - 1]
+            else:
+                n.inst.source_line = ''
 
         for _a, _b, _p in self.edges(data=True):
             self[_a][_b]["kind"] = EdgeKind(_p["type"])
