@@ -18,7 +18,7 @@ from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, 
 from pylingual.control_flow_reconstruction.cfg import CFG
 from pylingual.control_flow_reconstruction.structure import bc_to_cft
 from pylingual.main import print_result
-from pylingual.control_flow_reconstruction.source import SourceContext
+from pylingual.control_flow_reconstruction.source import SourceContext, sanitize_lines
 from pylingual.editable_bytecode import PYCFile
 from pylingual.equivalence_check import TestResult, compare_pyc
 from pylingual.utils.version import PythonVersion
@@ -64,7 +64,7 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
             file = next(file.iterdir())
 
         in_src = normalize_source(file.read_text(), replace_docstrings=True)
-        src_lines = in_src.split("\n")
+        src_lines = sanitize_lines(in_src.split("\n"))
         in_path = out_dir / "a.py"
         in_path.write_text(in_src, encoding="utf-8")
         in_pyc = out_dir / "a.pyc"
