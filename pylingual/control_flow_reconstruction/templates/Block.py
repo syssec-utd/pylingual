@@ -54,7 +54,7 @@ class RemoveUnreachable(ControlFlowTemplate):
             return node
 
 
-@register_template(0, 0, (3, 13))
+@register_template(0, 0, (3, 12), (3, 13))
 class JumpTemplate(ControlFlowTemplate):
     template = T(
         body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
