@@ -59,6 +59,7 @@ class JumpTemplate(ControlFlowTemplate):
     template = T(
         body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
         jump=N("tail", "block?")
+        .with_cond(has_no_lines)
         .with_cond(no_self_edges)
         .with_in_deg(1)
         .with_cond(
