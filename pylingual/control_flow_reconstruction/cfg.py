@@ -187,6 +187,17 @@ class CFG(DiGraph_CFT):
             self.iteration_graphs[-1].append(dot.to_string())
 
     def cdg(self) -> CFG:
+        if self.start not in self or self.end not in self:
+            start_disc_node = [n for n in self.nodes if self.out_degree(n) == 0 and n != self.end]
+            end_disc_node = [n for n in self.nodes if self.in_degree(n) == 0 and n != self.start]
+            if len(end_disc_node) != 0 and len(start_disc_node) != 0:
+                self.add_edge(start_disc_node[0], end_disc_node[0])
+            elif len(start_disc_node) != 0:
+                self.add_edge(start_disc_node[0], self.end)
+            elif len(end_disc_node) != 0:
+                self.add_edge(self.start, end_disc_node[0])
+            else:
+                self.add_edge(self.start, self.end)
         pdt = nx.create_empty_copy(self)
         pdt.add_edges_from((B, A) for A, B in nx.immediate_dominators(self.reverse(), self.end).items())
         pdt.remove_edge(self.end, self.end)
@@ -196,5 +207,6 @@ class CFG(DiGraph_CFT):
         cdg = nx.create_empty_copy(self)
         cdg.add_edges_from((B, A, {"kind": EdgeKind.Fall}) for A, B in itertools.product(self.nodes, self.nodes) if A != B and control_dependent(A, B))
         cdg.remove_node(self.end)
-        cdg.add_edges_from(((self.start, n) for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start), kind=EdgeKind.Fall)
+        start_nodes = [n for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start]
+        cdg.add_edges_from(((self.start, n) for n in start_nodes), kind=EdgeKind.Fall)
         return cdg
