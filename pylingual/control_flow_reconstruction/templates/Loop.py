@@ -13,6 +13,7 @@ from ..utils import (
     versions_from,
     with_instructions,
     exact_instructions,
+    ending_instructions,
     has_no_lines,
     has_some_lines,
     condense_mapping,
@@ -45,6 +46,22 @@ class ForLoop(ControlFlowTemplate):
             {for_body}
         """
 
+@register_template(0, 2)
+class LoopedReturn(ControlFlowTemplate):
+    template = T(
+        for_iter=~N("for_body", "tail").with_cond(ending_instructions("FOR_ITER")),
+        for_body=~N.tail().with_in_deg(1).with_cond(ending_instructions("RETURN_CONST"),ending_instructions("RETURN_VALUE")),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "for_iter", "for_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {for_iter}
+            {for_body}
+        """
 
 @register_template(0, 2, *versions_below(3, 10))
 class SelfLoop3_6(ControlFlowTemplate):
