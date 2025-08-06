@@ -33,6 +33,9 @@ class CDG(ControlFlowTemplate):
 
         cfg.clear()
         cfg.add_node(cdg)
+        for p, n in nx.dfs_edges(cdg.cdg, cfg.start):
+            cdg.cdg.nodes[n]["indent"] = cdg.cdg.nodes[p].get("indent", -1) + 1
+        cdg.cdg.remove_node(cfg.start)
         return cdg
 
     @override
@@ -41,11 +44,7 @@ class CDG(ControlFlowTemplate):
 
     @override
     def to_indented_source(self, source):
-        cdg = self.cdg
-        for p, n in nx.dfs_edges(cdg, self.start):
-            cdg.nodes[n]["indent"] = cdg.nodes[p].get("indent", -1) + 1
-        cdg.remove_node(self.start)
         src = []
-        for n in sorted(cdg.nodes, key=lambda x: x.offset):
-            src.extend(source[n, cdg.nodes[n].get("indent", 0)])
+        for n in sorted(self.cdg.nodes, key=lambda x: x.offset):
+            src.extend(source[n, self.cdg.nodes[n].get("indent", 0)])
         return src
