@@ -72,7 +72,7 @@ class JumpTemplate(ControlFlowTemplate):
             exact_instructions("POP_JUMP_IF_FALSE"),
         ),
         block=N.tail(),
-        tail=N.tail(),
+        tail=N.tail().with_cond(without_instructions("NOP")),
     )
 
     try_match = make_try_match(
