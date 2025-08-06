@@ -119,7 +119,7 @@ class Inst:
         @rtype:
         """
 
-        return self.opcode in self.bytecode.opcode.JUMP_UNCONDITONAL  # His typo, not mine
+        return self.opcode in self.bytecode.opcode.JUMP_UNCONDITIONAL
 
     @property
     def target(self):
