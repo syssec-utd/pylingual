@@ -187,17 +187,9 @@ class CFG(DiGraph_CFT):
             self.iteration_graphs[-1].append(dot.to_string())
 
     def cdg(self) -> CFG:
-        if self.start not in self or self.end not in self:
-            start_disc_node = [n for n in self.nodes if self.out_degree(n) == 0 and n != self.end]
-            end_disc_node = [n for n in self.nodes if self.in_degree(n) == 0 and n != self.start]
-            if len(end_disc_node) != 0 and len(start_disc_node) != 0:
-                self.add_edge(start_disc_node[0], end_disc_node[0])
-            elif len(start_disc_node) != 0:
-                self.add_edge(start_disc_node[0], self.end)
-            elif len(end_disc_node) != 0:
-                self.add_edge(self.start, end_disc_node[0])
-            else:
-                self.add_edge(self.start, self.end)
+        self.add_nodes_from([self.start, self.end])
+        self.add_edges_from((self.start, n, EdgeKind.Meta.prop()) for n in self.nodes if self.in_degree(n) == 0)
+        self.add_edges_from((n, self.end, EdgeKind.Meta.prop()) for n in self.nodes if all(e["kind"] is EdgeKind.Exception for _, _, e in self.out_edges(n, data=True)))
         pdt = nx.create_empty_copy(self)
         pdt.add_edges_from((B, A) for A, B in nx.immediate_dominators(self.reverse(), self.end).items())
         pdt.remove_edge(self.end, self.end)
