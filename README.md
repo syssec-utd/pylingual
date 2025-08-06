@@ -15,7 +15,7 @@ This codebase is optimized for readability and future extension, so there may in
 Some parts of PyLingual require the ability to compile bytecode in a different Python version (equivalence check and model training). For this, you will need the following:
 
 - [pyenv](https://github.com/pyenv/pyenv) with all Python versions you want to compile to
-- Unix-like operating system (pyenv does not support Windows)
+- [pyenv-win](https://github.com/pyenv-win/pyenv-win) for Windows
 
 ## Setup
 
@@ -26,7 +26,7 @@ git clone https://github.com/syssec-utd/pylingual
 cd pylingual
 python -m venv venv
 source venv/bin/activate
-pip install poetry==2.1.1
+pip install poetry>=2.0
 poetry install
 ```
 
@@ -57,4 +57,4 @@ Options:
 
 ## Support
 
-If you have any issues for installing and using PyLingual, please create an issue or send your message via our support email at pylingual@gmail.com.
+If you have any issues for installing and using PyLingual, please create an issue or send your message via our support email at pylingual.io@gmail.com.
