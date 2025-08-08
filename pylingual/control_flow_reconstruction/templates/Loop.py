@@ -186,7 +186,7 @@ class BreakTemplate(ControlFlowTemplate):
         while i >= 0:
             instruction = node.get_instructions()[i].opname
             if instruction in {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and node.get_instructions()[i].source_line not in {"pass", "...", "return"}:
+                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -209,7 +209,7 @@ class ContinueTemplate(ControlFlowTemplate):
         while i >= 0:
             instruction = node.get_instructions()[i].opname
             if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and node.get_instructions()[i].source_line not in {"pass", "...", "return"}:
+                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
