@@ -54,11 +54,12 @@ class RemoveUnreachable(ControlFlowTemplate):
             return node
 
 
-@register_template(0, 0, (3, 13))
+@register_template(0, 0, (3, 12), (3, 13))
 class JumpTemplate(ControlFlowTemplate):
     template = T(
         body=~N("jump", None).with_cond(without_instructions("CLEANUP_THROW")),
         jump=N("tail", "block?")
+        .with_cond(has_no_lines)
         .with_cond(no_self_edges)
         .with_in_deg(1)
         .with_cond(
@@ -71,7 +72,7 @@ class JumpTemplate(ControlFlowTemplate):
             exact_instructions("POP_JUMP_IF_FALSE"),
         ),
         block=N.tail(),
-        tail=N.tail(),
+        tail=N.tail().with_cond(without_instructions("NOP")),
     )
 
     try_match = make_try_match(

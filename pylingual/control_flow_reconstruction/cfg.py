@@ -199,5 +199,6 @@ class CFG(DiGraph_CFT):
         cdg = nx.create_empty_copy(self)
         cdg.add_edges_from((B, A, {"kind": EdgeKind.Fall}) for A, B in itertools.product(self.nodes, self.nodes) if A != B and control_dependent(A, B))
         cdg.remove_node(self.end)
-        cdg.add_edges_from(((self.start, n) for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start), kind=EdgeKind.Fall)
+        start_nodes = [n for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start]
+        cdg.add_edges_from(((self.start, n) for n in start_nodes), kind=EdgeKind.Fall)
         return cdg

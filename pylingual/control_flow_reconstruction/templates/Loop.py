@@ -15,7 +15,6 @@ from ..utils import (
     exact_instructions,
     ending_instructions,
     has_no_lines,
-    has_some_lines,
     condense_mapping,
     defer_source_to,
     starting_instructions,
@@ -180,14 +179,14 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("POP_TOP", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP")(cfg, node) or has_no_lines(cfg, node):
+        if not with_top_level_instructions("POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
             return None
 
         i = len(node.get_instructions()) - 1
         while i >= 0:
             instruction = node.get_instructions()[i].opname
-            if instruction in {"POP_TOP", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP"}:
-                if node.get_instructions()[i].starts_line is not None:
+            if instruction in {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}:
+                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -203,14 +202,14 @@ class BreakTemplate(ControlFlowTemplate):
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT")(cfg, node) or has_no_lines(cfg, node):
+        if not with_top_level_instructions("JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
             return None
         
         i = len(node.get_instructions()) - 1
         while i >= 0:
             instruction = node.get_instructions()[i].opname
-            if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT"}:
-                if node.get_instructions()[i].starts_line is not None:
+            if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}:
+                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -244,7 +243,7 @@ class FixLoop(ControlFlowTemplate):
             if cfg.dominates(node, predecessor):
                 back_edges.append(predecessor)
                 
-        if not back_edges or with_top_level_instructions("SEND")(cfg, node):
+        if not back_edges or all(n == node for n in back_edges) or with_top_level_instructions("SEND")(cfg, node):
             return None
 
         # Get all nodes encompassed by the loop excluding source node and initial false jump
