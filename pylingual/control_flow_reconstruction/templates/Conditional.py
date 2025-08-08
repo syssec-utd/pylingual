@@ -51,7 +51,7 @@ class IfElseLoop(ControlFlowTemplate):
 class IfThen(ControlFlowTemplate):
     template = T(
         if_header=~N("if_body", "tail").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER", "JUMP_IF_NOT_EXC_MATCH")),
-        if_body=~N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail").with_in_deg(1) | ~N("tail.").with_in_deg(1).with_cond(run_is(2)) | ~N.tail().with_in_deg(1).with_cond(exact_instructions("LOAD_CONST","RETURN_VALUE")),
+        if_body=~N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail").with_in_deg(1) | ~N("tail.").with_in_deg(1).with_cond(run_is(2)) | ~N.tail().with_in_deg(1).with_cond(exact_instructions("LOAD_CONST","RETURN_VALUE"), exact_instructions("POP_TOP", "LOAD_CONST","RETURN_VALUE")),
         tail=N.tail(),
     )
 
