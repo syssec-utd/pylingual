@@ -145,6 +145,16 @@ def has_instval(opname: str, argval: Any):
     return check_instructions
 
 
+def has_start_end_source(argval: Any, endval: Any):
+    def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        for x in node.get_instructions():
+            if x.source_line.startswith(argval) and x.source_line.endswith(endval):
+                return True
+        return False
+
+    return check_instructions
+
+
 def has_no_lines(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or all(i.starts_line is None for i in node.get_instructions())
 
