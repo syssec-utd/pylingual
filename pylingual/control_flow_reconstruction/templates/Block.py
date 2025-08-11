@@ -130,6 +130,7 @@ class BlockTemplate(ControlFlowTemplate):
     @override
     @classmethod
     def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        from .Loop import LoopElse
         members: list[ControlFlowTemplate] = []
         out = out_edge_dict(cfg, node)
         exc = out[EdgeCategory.Exception]
@@ -140,6 +141,8 @@ class BlockTemplate(ControlFlowTemplate):
             if current != node and cfg.in_degree(current) > 1:  # type: ignore
                 break
             if current in members:
+                break
+            if isinstance(current, LoopElse):
                 break
             members.append(current)
             next = out[EdgeCategory.Natural]
