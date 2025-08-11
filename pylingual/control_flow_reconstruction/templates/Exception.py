@@ -699,7 +699,7 @@ class ExceptExc3_6(Except3_6):
 @register_template(0, 0, (3, 6), (3, 7), (3, 8))
 class TryElse3_6(ControlFlowTemplate):
     template = T(
-        try_header=~N("try_body").with_cond(exact_instructions("SETUP_EXCEPT"), exact_instructions("SETUP_FINALLY")),
+        try_header=~N("try_body").with_cond(ending_instructions("SETUP_EXCEPT"), ending_instructions("SETUP_FINALLY")),
         try_body=N("try_footer.", None, "except_body"),
         try_footer=~N("else_body").with_in_deg(1),
         except_body=~N("tail.").with_in_deg(1).of_subtemplate(Except3_6).with_cond(without_instructions("RETURN_VALUE")),
