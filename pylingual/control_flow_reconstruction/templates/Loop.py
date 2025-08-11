@@ -8,11 +8,10 @@ from ..cft import ControlFlowTemplate, EdgeKind, register_template
 from ..utils import (
     T,
     N,
+    is_not_type,
     no_back_edges,
     versions_below,
     versions_from,
-    with_instructions,
-    exact_instructions,
     ending_instructions,
     has_no_lines,
     condense_mapping,
@@ -28,12 +27,24 @@ if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
 
 
+class LoopElse(ControlFlowTemplate):
+    @classmethod
+    def try_match(cls, cfg, node):
+        if has_no_lines(cfg, node):
+            return None
+        else:
+            return condense_mapping(cls, cfg, {"child": node}, "child")
+
+    def to_indented_source(self, source):
+        return self.child.to_indented_source(source)
+    
+
 @register_template(0, 1)
 class ForLoop(ControlFlowTemplate):
     template = T(
         for_iter=~N("for_body", "tail"),
         for_body=~N("for_iter").with_in_deg(1),
-        tail=N.tail(),
+        tail=N.tail().with_cond(is_not_type(LoopElse)),
     )
 
     try_match = make_try_match({EdgeKind.Fall: "tail"}, "for_iter", "for_body")
@@ -44,6 +55,28 @@ class ForLoop(ControlFlowTemplate):
         {for_iter}
             {for_body}
         """
+
+
+@register_template(0, 1)
+class ForElseLoop(ControlFlowTemplate):
+    template = T(
+        for_iter=~N("for_body", "else_body"),
+        for_body=~N("for_iter").with_in_deg(1),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "for_iter", "for_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {for_iter}
+            {for_body}
+        else:
+            {else_body}
+        """
+
 
 @register_template(0, 2)
 class LoopedReturn(ControlFlowTemplate):
@@ -259,10 +292,12 @@ class FixLoop(ControlFlowTemplate):
         edges_to_remove = []
 
         # Find the candidate end that break connects to
+        false_edge = None
         candidate_end = None
         for succ in cfg.successors(node):
             if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump and not any(n == node for n in cfg.successors(succ)):
                 candidate_end = succ
+                false_edge = succ
 
                 # Candidate end is a buffer node
                 if cfg.in_degree(candidate_end) == 1:
@@ -307,6 +342,8 @@ class FixLoop(ControlFlowTemplate):
                 break_node = BreakTemplate.try_match(cfg, pred)
                 if break_node is not None:
                     cfg.remove_edge(break_node, succ)
+                    if succ != false_edge:
+                        LoopElse.try_match(cfg, false_edge)
 
         cfg.iterate()
         return

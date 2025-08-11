@@ -116,6 +116,13 @@ def has_type(*template_type: type[ControlFlowTemplate]):
     return check_type
 
 
+def is_not_type(*template_type: type[ControlFlowTemplate]):
+    def check_type(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
+        return not isinstance(node, template_type)
+
+    return check_type
+
+
 def no_back_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or not any(cfg.dominates(succ, node) for succ in cfg.successors(node))
 
