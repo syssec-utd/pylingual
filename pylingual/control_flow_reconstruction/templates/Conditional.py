@@ -1,5 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
-from ..utils import T, N, defer_source_to, run_is, has_no_lines, with_instructions, exact_instructions, without_instructions, has_instval, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
+from ..utils import T, N, defer_source_to, has_some_lines, run_is, has_no_lines, with_instructions, exact_instructions, has_instval, starting_instructions, to_indented_source, make_try_match, without_top_level_instructions
 from .Loop import BreakTemplate, ContinueTemplate
 
 
@@ -8,7 +8,52 @@ class IfElse(ControlFlowTemplate):
     template = T(
         if_header=~N("if_body", "else_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
         if_body=N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail.").with_in_deg(1),
-        else_body=N("tail.").with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1),
+        else_body=N("tail.").with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1) | ~N("tail").with_cond(has_some_lines).with_in_deg(1),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {if_header}
+            {if_body}
+        {else_body?else:}
+            {else_body}
+        """
+
+
+@register_template(1, 40)
+class IfJumpElse(ControlFlowTemplate):
+    template = T(
+        if_header=~N("if_body", "else_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
+        if_body=N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("JUMP").with_in_deg(1),
+        JUMP=N("tail.").with_cond(has_no_lines).with_cond(exact_instructions("JUMP_FORWARD"), exact_instructions("JUMP_ABSOLUTE")),
+        else_body=N("tail.").with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1) | ~N("tail").with_cond(has_some_lines).with_in_deg(1),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {if_header}
+            {if_body}
+        {else_body?else:}
+            {else_body}
+        """
+
+
+
+@register_template(1, 40)
+class IfElseJump(ControlFlowTemplate):
+    template = T(
+        if_header=~N("if_body", "else_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
+        if_body=N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail").with_in_deg(1),
+        else_body=N("tail.").with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("JUMP").with_in_deg(1),
+        JUMP=N("tail.").with_cond(has_no_lines).with_cond(exact_instructions("JUMP_FORWARD"), exact_instructions("JUMP_ABSOLUTE")),
         tail=N.tail(),
     )
 
@@ -29,7 +74,7 @@ class IfElseLoop(ControlFlowTemplate):
     template = T(
         if_header=~N("else_body", "if_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
         if_body=~N("tail.").with_in_deg(1),
-        else_body=~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1).with_cond(has_no_lines),
+        else_body=~N("tail.").with_in_deg(1).with_cond(has_no_lines),
         for_iter=N.tail().with_cond(with_instructions("FOR_ITER")),
         tail=N.tail(),
     )
