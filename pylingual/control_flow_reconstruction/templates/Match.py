@@ -2,7 +2,7 @@ from itertools import chain
 from typing import override
 from .Block import BlockTemplate
 from ..cft import SourceContext, SourceLine, ControlFlowTemplate, EdgeKind, register_template
-from ..utils import T, N, ending_instructions, has_start_end_source, versions_from, make_try_match
+from ..utils import E, T, N, ending_instructions, has_start_end_source, versions_from, make_try_match
 
 
 class CaseOne(ControlFlowTemplate):
@@ -30,6 +30,31 @@ class CaseOne(ControlFlowTemplate):
         return list(chain(case_header, case_lines, case_body))
 
 
+class WildCase(ControlFlowTemplate):
+    template = T(
+        case_header=~N(E.meta("tail")).with_cond(has_start_end_source("case", ":")),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Meta: "tail"}, "case_header")
+
+    def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
+
+        cutoff = next((i for i, x in enumerate(self.case_header.get_instructions()) if x.source_line.strip().startswith("case")), 0)
+        
+        if isinstance(self.case_header, BlockTemplate):
+            i = cutoff + 1
+            case_header = source[BlockTemplate(self.case_header.members[:i]), 1] if i > 0 else []
+            print(self.case_header)
+            print(source[BlockTemplate(self.case_header.members[:i])])
+            case_lines = source[BlockTemplate(self.case_header.members[i:]), 2] if i < len(self.case_header.members) else []
+        else:
+            case_header = source[self.case_header, 1]
+            case_lines = []
+
+        return list(chain(case_header, case_lines))
+
+
 class CaseWrapper(ControlFlowTemplate):
     @classmethod
     @override
@@ -37,6 +62,8 @@ class CaseWrapper(ControlFlowTemplate):
         if x := CaseTwo.try_match(cfg, node):
             return x
         if x := CaseOne.try_match(cfg, node):
+            return x
+        if x := WildCase.try_match(cfg, node):
             return x
 
 
@@ -112,7 +139,6 @@ class MultiMatch(ControlFlowTemplate):
             case_line = source[BlockTemplate(self.match_header.members[i:]), 1] if i < len(self.match_header.members) else []
         else:
             match_line = source[self.match_header, 1]
-            
             case_line = []
 
         return list(chain(match_line, case_line, case_body))
