@@ -45,8 +45,6 @@ class WildCase(ControlFlowTemplate):
         if isinstance(self.case_header, BlockTemplate):
             i = cutoff + 1
             case_header = source[BlockTemplate(self.case_header.members[:i]), 1] if i > 0 else []
-            print(self.case_header)
-            print(source[BlockTemplate(self.case_header.members[:i])])
             case_lines = source[BlockTemplate(self.case_header.members[i:]), 2] if i < len(self.case_header.members) else []
         else:
             case_header = source[self.case_header, 1]
