@@ -127,7 +127,7 @@ class Assertion(ControlFlowTemplate):
 class ShortCircuitAnd(ControlFlowTemplate):
     template = T(
         A=~N("B", "tail"),
-        B=~N("body", "tail").with_in_deg(1),
+        B=~N("body", "tail").with_in_deg(1).with_cond(has_no_lines),
         body=~N.tail(),
         tail=N.tail(),
     )
