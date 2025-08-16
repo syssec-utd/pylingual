@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 
-from ..cft import ControlFlowTemplate, EdgeKind, register_template
+from .Block import BlockTemplate, LoopElse
+from ..cft import ControlFlowTemplate, EdgeKind, InstTemplate, register_template
 from ..utils import (
     T,
     N,
@@ -27,17 +28,6 @@ if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
 
 
-class LoopElse(ControlFlowTemplate):
-    @classmethod
-    def try_match(cls, cfg, node):
-        if has_no_lines(cfg, node):
-            return None
-        else:
-            return condense_mapping(cls, cfg, {"child": node}, "child")
-
-    def to_indented_source(self, source):
-        return self.child.to_indented_source(source)
-    
 
 @register_template(0, 1)
 class ForLoop(ControlFlowTemplate):
@@ -212,14 +202,21 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
+        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK", "NOP"}
+
+        if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
 
-        i = len(node.get_instructions()) - 1
+        if isinstance(node, BlockTemplate):
+            opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            opcodes = [node.inst]
+
+        i = len(opcodes) - 1
         while i >= 0:
-            instruction = node.get_instructions()[i].opname
-            if instruction in {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
+            instruction = opcodes[i].opname
+            if instruction in break_candidates:
+                if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -235,14 +232,21 @@ class BreakTemplate(ControlFlowTemplate):
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
+        continue_candidates = {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}
+
+        if not with_top_level_instructions(*continue_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
         
-        i = len(node.get_instructions()) - 1
+        if isinstance(node, BlockTemplate):
+            opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            opcodes = [node.inst]
+        
+        i = len(opcodes) - 1
         while i >= 0:
-            instruction = node.get_instructions()[i].opname
-            if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
+            instruction = opcodes[i].opname
+            if instruction in continue_candidates:
+                if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
