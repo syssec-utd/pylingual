@@ -202,7 +202,7 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK", "NOP"}
+        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
 
         if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
