@@ -8,26 +8,17 @@ This codebase is optimized for readability and future extension, so there may in
 
 ## Requirements
 
-- Python 3.12
+- `uv` Python package manager ([installation](https://docs.astral.sh/uv/getting-started/installation/)), used for project dependencies and managed Python versions.
 
-### Compiling bytecode
-
-Some parts of PyLingual require the ability to compile bytecode in a different Python version (equivalence check and model training). For this, you will need the following:
-
-- [pyenv](https://github.com/pyenv/pyenv) with all Python versions you want to compile to
-- [pyenv-win](https://github.com/pyenv-win/pyenv-win) for Windows
+WARN: `uv` does not support Python 3.6 or 3.7. This branch is unable to verify decompilations in Python <= 3.7.
 
 ## Setup
 
-Install from source, using [Poetry](https://python-poetry.org/):
+Install from source, using [uv](https://docs.astral.sh/uv/):
 
 ```sh
 git clone https://github.com/syssec-utd/pylingual
-cd pylingual
-python -m venv venv
-source venv/bin/activate
-pip install poetry>=2.0
-poetry install
+uv tool install ./pylingual
 ```
 
 ## Usage

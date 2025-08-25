@@ -122,10 +122,6 @@ class Decompiler:
             self.run_cflow_reconstruction()
             self.reconstruct_source()
 
-            if shutil.which("pyenv") is None and self.version != sys.version_info:
-                logger.warning(f"pyenv is not installed so equivalence check cannot be performed. Please install pyenv manually along with the required Python version ({self.version}) or run PyLingual again with the --init-pyenv flag")
-                return DecompilerResult(self.indented_source, [TestResult(False, "Cannot compare equivalence without pyenv installed", bc, bc) for bc in self.pyc.iter_bytecodes()], self.pyc, self.version)
-
             self.equivalence_results = self.check_reconstruction(self.indented_source)
             self.correct_failures()
 
