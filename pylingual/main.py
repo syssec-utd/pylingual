@@ -1,6 +1,10 @@
 from typing import TYPE_CHECKING
 import click
 import logging
+import platform
+import subprocess
+import os
+import shutil
 from pathlib import Path
 
 from pylingual.equivalence_check import TestResult
@@ -59,17 +63,21 @@ def print_result(title: str, results: list[TestResult]):
 @click.option("-k", "--top-k", default=10, type=int, help="Maximum number of additional segmentations to consider.", metavar="INT")
 @click.option("-q", "--quiet", is_flag=True, default=False, help="Suppress console output.")
 @click.option("--trust-lnotab", is_flag=True, default=False, help="Use the lnotab for segmentation instead of the segmentation model.")
-def main(files: list[str], out_dir: Path | None, config_file: Path | None, version: PythonVersion | None, top_k: int, trust_lnotab: bool, quiet: bool):
+@click.option("--init-pyenv", is_flag=True, default=False, help="Install pyenv before decompiling.")
+def main(files: list[str], out_dir: Path | None, config_file: Path | None, version: PythonVersion | None, top_k: int, trust_lnotab: bool, init_pyenv: bool, quiet: bool):
     rich.reconfigure(markup=False, emoji=False, quiet=quiet, theme=Theme({"logging.keyword": "yellow not bold"}))
     console = rich.get_console()
     log_handler = RichHandler(console=console, rich_tracebacks=True)
     logging.basicConfig(level="INFO", format="%(message)s", datefmt="[%X]", handlers=[log_handler], force=True)
 
-    if not files:
+    if not init_pyenv and not files:
         click.echo(click.get_current_context().get_help())
         return
 
     print_header()
+
+    if init_pyenv and (not install_pyenv() or not files):
+        return
 
     if out_dir:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -125,6 +133,36 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
                 live.stop()
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
+
+def install_pyenv():
+    if shutil.which("pyenv") is not None:
+        logger.warning("pyenv seems to already be installed, ignoring --init-pyenv...")
+        return True
+    cmd = "curl -fsSL https://pyenv.run | bash"
+    if platform.system() == "Windows":
+        cmd = r'''powershell.exe -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1' -OutFile './install-pyenv-win.ps1'; &'./install-pyenv-win.ps1'"'''
+    elif platform.system() not in ["Linux", "Darwin"] and not click.confirm("pyenv is probably not supported on your operating system. Continue?", default=False):
+        return False
+    if not click.confirm(f"pyenv will be installed with the following command:\n\n\t{cmd}\n\nContinue?", default=True):
+        return False
+    if subprocess.run(cmd, shell=True).returncode != 0:
+        logger.error("pyenv install failed, exiting...")
+        return False
+    os.environ["PATH"] = f"{os.environ.get('PYENV_ROOT', os.path.expanduser('~/.pyenv'))}/bin:{os.environ['PATH']}"
+    which_pyenv = shutil.which("pyenv")
+    if which_pyenv is None:
+        logger.error("Could not find pyenv, exiting...")
+        return False
+    versions = click.prompt(
+        "Enter comma-separated Python versions to install (leave empty to install all supported versions)",
+        value_proc=lambda s: [PythonVersion(x) for x in s.split(",")] if isinstance(s, str) else s,
+        default=supported_versions,
+        show_default=False,
+    )
+    if subprocess.run([which_pyenv, "install", *map(str, versions)]).returncode != 0:
+        logger.error("Error installing Python versions, exiting...")
+        return False
+    return True
 
 if __name__ == "__main__":
     main()

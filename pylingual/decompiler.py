@@ -41,7 +41,7 @@ from pylingual.control_flow_reconstruction.structure import bc_to_cft
 from pylingual.control_flow_reconstruction.cft import MetaTemplate
 from pylingual.equivalence_check import TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
-from pylingual.utils.generate_bytecode import CompileError, compile_version
+from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
 from pylingual.editable_bytecode import PYCFile
 from pylingual.segmentation.segmentation_search_strategies import get_top_k_predictions, m_deep_top_k, naive_confidence_priority, filter_subwords
@@ -357,6 +357,9 @@ class Decompiler:
             compile_version(src, pyc, self.version)
         except CompileError as e:
             return [e]
+        except PyenvError as e:
+            logger.error(f"Could not check decompilation due to pyenv error: {e}")
+            return []
         else:
             return compare_pyc(self.pyc, pyc)
 

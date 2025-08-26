@@ -10,7 +10,11 @@ This codebase is optimized for readability and future extension, so there may in
 
 - `uv` Python package manager ([installation](https://docs.astral.sh/uv/getting-started/installation/)), used for project dependencies and managed Python versions.
 
-WARN: `uv` does not support Python 3.6 or 3.7. This branch is unable to verify decompilations in Python <= 3.7.
+### Decompiling End-Of-Life Python Versions
+
+To verify decompilation correctness and produce model training sets, PyLingual requires the ability to compile Python in the target version.
+
+For current Python versions (3.8-3.13), PyLingual uses `uv`'s managed installations, but for Python 3.6 and 3.7, PyLingual uses [pyenv](https://github.com/pyenv/pyenv) ([pyenv-win](https://github.com/pyenv-win/pyenv-win) for Windows).
 
 ## Setup
 
