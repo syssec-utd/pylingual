@@ -5,7 +5,9 @@ import sys
 import py_compile
 import platform
 import os
+import re
 import shutil
+
 
 from pylingual.utils.version import PythonVersion
 
@@ -37,8 +39,10 @@ def _compile_uv(py_file: str, out_file: str, version: PythonVersion):
 
     output = subprocess.run(cmd, shell=False, capture_output=True, text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"})
 
-    if output.stderr:
-        raise CompileError(output.stderr)
+    # Ignore stderr messages from uv downloading versions on demand
+    stderr = re.sub(r'Downloading .+\n', '', output.stderr)
+    if stderr:
+        raise CompileError(stderr)
 
 
 def _compile_pyenv(py_file: str, out_file: str, version: PythonVersion):
