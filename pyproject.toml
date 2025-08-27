@@ -13,7 +13,6 @@ keywords = [
     "reversing",
     "decompiler",
     "bytecode",
-]
 dependencies = [
     "asttokens",
     "datasets",
