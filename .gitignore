@@ -13,6 +13,7 @@ segmentation_test_cases/
 __pycache__/
 .env
 mise.toml
+.eval_harness/
 dist/
 decompiled_*/
 decompiled_*.py
