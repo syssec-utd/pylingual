@@ -132,7 +132,7 @@ def setup_workspace(workspace_path: Path, version_name: str, commit_hash: str = 
 
     # 3. Install dependencies
     console.print("  -> Installing project dependencies...")
-    run_command([str(pip_executable), "install", "-e", "."], cwd=code_dir)
+    run_command([str(pip_executable), "install", "-e", "."], cwd=code_dir, capture_output=True)
 
     return code_dir, venv_dir
 
@@ -172,12 +172,12 @@ def run_evaluation(workspace_path: Path, venv_dir: Path, input_file: Path, pytho
 
     return EvaluationResult.import_json(results_file)
 
-def compare_and_report(commit_results: EvaluationResult, local_results: EvaluationResult, report_path: Path, compare_to_commit: str):
+def compare_and_report(commit_results: EvaluationResult, local_results: EvaluationResult, report_path: Path, compare_to_commit: str, python_version: str):
     """Compares two sets of results and prints a detailed report to console and a file."""
     with report_path.open("w", encoding="utf-8") as f:
-        report_console = Console(file=f, width=120, record=True)
+        report_console = Console(file=f)
 
-        title = "[bold magenta]Evaluation Comparison Report[/bold magenta]"
+        title = f"[bold magenta]Evaluation Comparison Report (Python {python_version})[/bold magenta]"
         console.print(f"\n\n{title}")
         report_console.print(title)
 
@@ -338,7 +338,7 @@ def main(input_file: Path, python_versions: list[str], compare_to_commit: str, n
 
         # --- Comparison ---
         report_artifact_path = CACHE_DIR / python_version / f"comparison_report_{run_timestamp}.txt"
-        compare_and_report(commit_results, local_results, report_artifact_path, compare_to_commit)
+        compare_and_report(commit_results, local_results, report_artifact_path, compare_to_commit, python_version)
 
     # --- Final Cleanup ---
     console.print("\n[bold]Cleaning up workspaces...[/bold]")
