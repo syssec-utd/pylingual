@@ -8,17 +8,62 @@ from rich.console import Console
 from rich.table import Table
 from datetime import datetime
 
+from dataclasses import dataclass, asdict
+
+@dataclass
+class EvaluationResult:
+    success: set[Path]
+    failure: set[Path]
+    compile_error: set[Path]
+    error: set[Path]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, list[Path]]) -> 'EvaluationResult':
+        return cls(
+            success = set(data.get('success', [])),
+            failure = set(data.get('failure', [])),
+            compile_error = set(data.get('compile_error', [])),
+            error = set(data.get('error', [])),
+        )
+    
+    @classmethod
+    def import_json(cls, json_path: Path) -> 'EvaluationResult':
+        with json_path.open("r") as f:
+            return cls.from_dict(json.load(f))
+    
+    def to_dict(self):
+        return asdict(self)
+
+    def export_json(self, json_path: Path):
+        jsonable_dict = {
+            'success': sorted(self.success),
+            'failure': sorted(self.failure),
+            'compile_error': sorted(self.compile_error),
+            'error': sorted(self.error),
+        }
+        with json_path.open("w") as f:
+            json.dump(jsonable_dict, f, indent=2)
+
+    def __post_init__(self):
+        assert len(set.intersection(self.success, self.failure, self.compile_error, self.error)) == 0, 'Malformed evaluation result. Paths appear in multiple categories.'
+
+
 # --- Constants and Configuration ---
 # Project root is the parent directory of this script's location
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 HARNESS_DIR = PROJECT_ROOT / ".eval_harness"
 CACHE_DIR = HARNESS_DIR / "results_cache"
-HEAD_WORKSPACE = HARNESS_DIR / "head"
 LOCAL_WORKSPACE = HARNESS_DIR / "local"
+
+SUPPORTED_PYTHON_VERSIONS = ('3.6', '3.7', '3.8', '3.9', '3.10', '3.11', '3.12', '3.13')
 
 # Rich console for pretty printing
 console = Console()
 
+def _get_cache_path(commit_hash: str, eval_file_list_path: Path, python_version: str) -> Path:
+    cache_path = CACHE_DIR / python_version / commit_hash / eval_file_list_path.with_suffix('.json').name
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    return cache_path
 
 def run_command(command, cwd=None, capture_output=False, text=True):
     """A helper to run a shell command and handle errors."""
@@ -51,7 +96,7 @@ def get_head_commit_hash():
     return run_command(["git", "rev-parse", "--short", "HEAD"], capture_output=True).stdout.strip()
 
 
-def setup_workspace(workspace_path: Path, version_name: str, head_commit_hash: str = None):
+def setup_workspace(workspace_path: Path, version_name: str, commit_hash: str = ''):
     """Prepares a clean workspace for an evaluation run."""
     console.print(f"\n[bold cyan]Setting up '{version_name}' workspace...[/bold cyan]")
 
@@ -66,13 +111,7 @@ def setup_workspace(workspace_path: Path, version_name: str, head_commit_hash: s
     pip_executable = venv_dir / "Scripts" / "pip.exe" if sys.platform == "win32" else venv_dir / "bin" / "pip"
 
     # 1. Get the source code
-    if version_name == "head":
-        console.print(f"  -> Exporting code from HEAD ({head_commit_hash})...")
-        code_dir.mkdir()
-        # Using git archive is a clean way to export the repo content
-        git_archive_command = f"git archive {head_commit_hash} | tar -x -C {code_dir}"
-        run_command(git_archive_command, cwd=PROJECT_ROOT)
-    else: # "local"
+    if version_name == "local":
         console.print("  -> Copying current project state...")
         # Ignore git, the harness, and other noise
         shutil.copytree(
@@ -80,6 +119,12 @@ def setup_workspace(workspace_path: Path, version_name: str, head_commit_hash: s
             code_dir,
             ignore=shutil.ignore_patterns(".git", ".eval_harness", "__pycache__", "*.pyc", ".idea"),
         )
+    else:
+        console.print(f"  -> Exporting code from {version_name} ({commit_hash})...")
+        code_dir.mkdir()
+        # Using git archive is a clean way to export the repo content
+        git_archive_command = f"git archive {commit_hash} | tar -x -C {code_dir}"
+        run_command(git_archive_command, cwd=PROJECT_ROOT)
 
     # 2. Create virtual environment
     console.print(f"  -> Creating virtual environment at [italic]{venv_dir}[/italic]...")
@@ -92,7 +137,7 @@ def setup_workspace(workspace_path: Path, version_name: str, head_commit_hash: s
     return code_dir, venv_dir
 
 
-def run_evaluation(workspace_path: Path, venv_dir: Path, input_file: Path, python_version: str):
+def run_evaluation(workspace_path: Path, venv_dir: Path, input_file: Path, python_version: str) -> EvaluationResult:
     """Runs the cflow.py evaluation script within a given workspace."""
     version_name = workspace_path.name
     console.print(f"\n[bold green]Running evaluation for '{version_name}' on Python {python_version}...[/bold green]")
@@ -125,126 +170,180 @@ def run_evaluation(workspace_path: Path, venv_dir: Path, input_file: Path, pytho
         console.print(f"[bold red]Error:[/bold red] Evaluation for '{version_name}' finished but 'results.json' was not created.")
         sys.exit(1)
 
-    with open(results_file) as f:
-        return json.load(f)
+    return EvaluationResult.import_json(results_file)
 
-
-def compare_and_report(head_results, local_results, report_path: Path):
+def compare_and_report(commit_results: EvaluationResult, local_results: EvaluationResult, report_path: Path, compare_to_commit: str):
     """Compares two sets of results and prints a detailed report to console and a file."""
-    # Setup a new console to capture the report text to a file
     with report_path.open("w", encoding="utf-8") as f:
         report_console = Console(file=f, width=120, record=True)
 
         title = "[bold magenta]Evaluation Comparison Report[/bold magenta]"
-        console.print("\n\n" + title)
+        console.print(f"\n\n{title}")
         report_console.print(title)
 
-        # 1. Summary Table
-        table = Table(title="Comparison Summary")
-        table.add_column("Category", justify="right", style="cyan", no_wrap=True)
-        table.add_column("HEAD", justify="center", style="green")
-        table.add_column("Local", justify="center", style="yellow")
-        table.add_column("Change", justify="center")
+        categories = ["success", "failure", "compile_error", "error"]
+        commit_dict = commit_results.to_dict()
+        local_dict = local_results.to_dict()
 
-        categories = sorted(list(set(list(head_results.keys()) + list(local_results.keys()))))
-        for cat in categories:
-            head_count = len(head_results.get(cat, []))
-            local_count = len(local_results.get(cat, []))
-            change = local_count - head_count
-            change_str = f"[red]+{change}[/red]" if change > 0 else f"[green]{change}[/green]" if change < 0 else "0"
-            table.add_row(cat.replace("_", " ").title(), str(head_count), str(local_count), change_str)
+        # 1. Movement Matrix
+        table = Table(title="Evaluation Movement Matrix")
+        table.add_column(f"From ({compare_to_commit})", justify="right", style="cyan", no_wrap=True)
+        for category in categories:
+            table.add_column(
+                f"To (Local)\n{category.replace('_', ' ').title()}",
+                justify="center",
+            )
+
+        commit_map = {path: cat for cat, paths in commit_dict.items() for path in paths}
+        local_map = {path: cat for cat, paths in local_dict.items() for path in paths}
+        all_paths = set(commit_map.keys()) | set(local_map.keys())
+        
+        movement_matrix = {cat: {cat2: 0 for cat2 in categories} for cat in categories}
+        for path in all_paths:
+            from_cat = commit_map.get(path)
+            to_cat = local_map.get(path)
+            if from_cat and to_cat:
+                movement_matrix[from_cat][to_cat] += 1
+
+        for from_cat in categories:
+            row = [from_cat.replace("_", " ").title()]
+            for to_cat in categories:
+                count = movement_matrix[from_cat][to_cat]
+                if count == 0:
+                    row.append("[bright_black]-[/bright_black]")
+                    continue
+
+                if from_cat == to_cat:
+                    style = "blue"
+                elif from_cat == "success":
+                    style = "bold red" # Regression from success
+                elif to_cat == "success":
+                    style = "bold green" # Improvement to success
+                else:
+                    style = "tan" # Side-move
+                row.append(f"[{style}]{'+' if from_cat != to_cat else ''}{count}[/{style}]")
+            table.add_row(*row)
 
         console.print(table)
         report_console.print(table)
 
-        # 2. Detailed Deltas
-        head_map = {path: cat for cat, paths in head_results.items() for path in paths}
-        local_map = {path: cat for cat, paths in local_results.items() for path in paths}
-        all_paths = set(head_map.keys()) | set(local_map.keys())
+        # 2. Detailed Deltas by Movement Category
+        for from_cat in categories:
+            for to_cat in categories:
+                if from_cat == to_cat:
+                    continue
 
-        regressions = sorted([(path, local_map.get(path)) for path in all_paths if head_map.get(path) == "success" and local_map.get(path) != "success"])
-        improvements = sorted([(path, head_map.get(path)) for path in all_paths if local_map.get(path) == "success" and head_map.get(path) != "success"])
-        side_moves = sorted([(path, head_map.get(path), local_map.get(path)) for path in all_paths if head_map.get(path) != local_map.get(path) and "success" not in [head_map.get(path), local_map.get(path)]])
+                moved_paths = sorted([
+                    p for p in all_paths
+                    if commit_map.get(p) == from_cat and local_map.get(p) == to_cat
+                ])
 
-        def print_section(title, items, format_func):
+                if not moved_paths:
+                    continue
+
+                # Determine style and title
+                if from_cat == "success":
+                    style = "bold red"  # Regression
+                elif to_cat == "success":
+                    style = "bold green"  # Improvement
+                else:
+                    style = "bold yellow"  # Side-move
+
+                title = f"[{style}]{from_cat.replace('_', ' ').title()} -> {to_cat.replace('_', ' ').title()}[/{style}]"
+                console.print(f"\n{title}")
+                report_console.print(f"\n{title}")
+                for p in moved_paths:
+                    console.print(f"- {p}")
+                    report_console.print(f"- {p}")
+        
+        # 3. New and Removed Items
+        new_items = sorted([p for p in all_paths if commit_map.get(p) is None])
+        removed_items = sorted([p for p in all_paths if local_map.get(p) is None])
+
+        def print_list_section(title, items, format_func):
             if items:
                 console.print(f"\n{title}")
                 report_console.print(f"\n{title}")
                 for item in items:
-                    line = format_func(*item)
+                    line = format_func(item)
                     console.print(line)
                     report_console.print(line)
+        
+        print_list_section(
+            "\n[bold blue]New Items[/bold blue]",
+            new_items,
+            lambda p: f"- {p} (Added as [cyan]{local_map.get(p)}[/cyan])",
+        )
 
-        print_section("[bold red]Regressions (Success -> Other)[/bold red]", regressions, lambda p, new: f"- {p}  ([green]success[/green] -> [yellow]{new}[/yellow])")
-        print_section("[bold green]Improvements (Other -> Success)[/bold green]", improvements, lambda p, old: f"- {p}  ([yellow]{old}[/yellow] -> [green]success[/green])")
-        print_section("[bold yellow]Side Moves (Error -> Error)[/bold yellow]", side_moves, lambda p, old, new: f"- {p}  ([cyan]{old}[/cyan] -> [cyan]{new}[/cyan])")
-    
+        print_list_section(
+            "[bold gray50]Removed Items[/bold gray50]",
+            removed_items,
+            lambda p: f"- {p} (Removed from [cyan]{commit_map.get(p)}[/cyan])",
+        )
+
     console.print(f"\n-> Comparison report saved to [italic]{report_path}[/italic]")
 
 @click.command()
 @click.option('--input-file', required=True, type=click.Path(exists=True, dir_okay=False, resolve_path=True, path_type=Path), help='Path to the input file listing test cases.')
-@click.option('--python-version', 'python_versions', required=True, multiple=True, type=str, help='Python version to evaluate. Can be specified multiple times.')
-@click.option('--no-cache', is_flag=True, default=False, help='Force re-evaluation of the HEAD commit for all specified Python versions.')
-def main(input_file, python_versions, no_cache):
+@click.option('--python-version', 'python_versions', multiple=True, type=str, help='Python version to evaluate. Can be specified multiple times. Defaults to all supported versions.', default=SUPPORTED_PYTHON_VERSIONS)
+@click.option('--compare-to-commit', type=str, help='The git commit hash to compare to. Defaults to HEAD.', default='HEAD')
+@click.option('--no-cache', is_flag=True, default=False, help='Force re-evaluation of the comparison commit for all specified Python versions.')
+def main(input_file: Path, python_versions: list[str], compare_to_commit: str, no_cache: bool):
     """
     An evaluation framework to compare the performance of the current project
-    state against the most recent git commit (HEAD).
+    state against a previous git commit.
     """
     HARNESS_DIR.mkdir(exist_ok=True)
-    CACHE_DIR.mkdir(exist_ok=True)
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    head_commit = get_head_commit_hash()
-    input_filename = Path(input_file).name
+    commit_version = compare_to_commit
+    if compare_to_commit.lower() == 'head':
+        compare_to_commit = get_head_commit_hash()
+        console.print(f"[bold green]Resolved HEAD to commit {compare_to_commit}.[/bold green]")
+    else:
+        compare_to_commit = compare_to_commit[:7].lower() # shorten and lowercase for consistency 
 
-    # Determine if we need to setup the HEAD workspace
-    head_is_setup = False
-    head_venv_dir = None
-    if no_cache or not all((CACHE_DIR / f"{head_commit}_{input_filename}_{py_ver}.json").exists() for py_ver in python_versions):
-        _, head_venv_dir = setup_workspace(HEAD_WORKSPACE, "head", head_commit)
-        head_is_setup = True
+    COMMIT_WORKSPACE = HARNESS_DIR / compare_to_commit
 
     # Always setup the local workspace
     _, local_venv_dir = setup_workspace(LOCAL_WORKSPACE, "local")
+    # Only setup the commit workspace on demand
+    commit_venv_dir = None
 
     for python_version in python_versions:
         console.print(f"\n[bold rule dark_orange]Processing Python Version: {python_version}[/bold rule dark_orange]")
 
-        # --- HEAD Evaluation ---
-        cache_filename = f"{head_commit}_{input_filename}_{python_version}.json"
-        cached_result_file = CACHE_DIR / cache_filename
+        # --- Commit Evaluation ---
+        cached_result_file = _get_cache_path(compare_to_commit, input_file, python_version)
 
         if not no_cache and cached_result_file.exists():
-            console.print(f"[bold green]Using cached result for HEAD ({head_commit}) on Python {python_version}...[/bold green]")
-            with open(cached_result_file) as f:
-                head_results = json.load(f)
+            console.print(f"[bold green]Using cached result for ({compare_to_commit}) on Python {python_version}...[/bold green]")
+            commit_results = EvaluationResult.import_json(cached_result_file)
         else:
-            if not head_is_setup: # Should not happen if logic is correct, but as a safeguard
-                 _, head_venv_dir = setup_workspace(HEAD_WORKSPACE, "head", head_commit)
-                 head_is_setup = True
-            assert head_venv_dir is not None
-            head_results = run_evaluation(HEAD_WORKSPACE, head_venv_dir, input_file, python_version)
-            with open(cached_result_file, "w") as f:
-                json.dump(head_results, f, indent=2)
+            if commit_venv_dir is None:
+                _, commit_venv_dir = setup_workspace(COMMIT_WORKSPACE, commit_version, compare_to_commit)
+            
+            assert commit_venv_dir is not None
+            commit_results = run_evaluation(COMMIT_WORKSPACE, commit_venv_dir, input_file, python_version)
+            commit_results.export_json(cached_result_file)
             console.print(f"-> Caching result to [italic]{cached_result_file}[/italic]")
 
         # --- Local Evaluation ---
         local_results = run_evaluation(LOCAL_WORKSPACE, local_venv_dir, input_file, python_version)
         
         # --- Save Local Results Artifact ---
-        local_artifact_path = CACHE_DIR / f"local_results_{run_timestamp}_{python_version}.json"
-        with open(local_artifact_path, "w") as f:
-            json.dump(local_results, f, indent=2)
+        local_artifact_path = CACHE_DIR / python_version / f"local_results_{run_timestamp}.json"
+        local_results.export_json(local_artifact_path)
         console.print(f"-> Local results saved to [italic]{local_artifact_path}[/italic]")
 
         # --- Comparison ---
-        report_artifact_path = CACHE_DIR / f"comparison_report_{run_timestamp}_{python_version}.txt"
-        compare_and_report(head_results, local_results, report_artifact_path)
+        report_artifact_path = CACHE_DIR / python_version / f"comparison_report_{run_timestamp}.txt"
+        compare_and_report(commit_results, local_results, report_artifact_path, compare_to_commit)
 
     # --- Final Cleanup ---
     console.print("\n[bold]Cleaning up workspaces...[/bold]")
-    if head_is_setup:
-        shutil.rmtree(HEAD_WORKSPACE)
+    if commit_venv_dir is not None:
+        shutil.rmtree(COMMIT_WORKSPACE)
     shutil.rmtree(LOCAL_WORKSPACE)
     console.print("Done.")
 
