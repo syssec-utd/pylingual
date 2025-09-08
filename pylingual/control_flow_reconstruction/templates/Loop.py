@@ -139,6 +139,70 @@ class TrueSelfLoop(ControlFlowTemplate):
         """
 
 
+@register_template(0, 1, *versions_below(3, 10))
+class WhileElse3_6(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body").with_cond(without_top_level_instructions("FOR_ITER")),
+        while_body=~N("while_header").with_in_deg(1),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
+@register_template(0, 1, (3, 10), (3, 11))
+class WhileElse3_10(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body"),
+        while_body=~N("else_body").of_type(TrueSelfLoop),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
+@register_template(0, 1, (3, 12), (3, 13))
+class WhileElse3_12(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body"),
+        while_body=~N("JUMP", "else_body"),
+        JUMP=~N("while_body"),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
 @register_template(0, 1, *versions_from(3, 12))
 class AsyncForLoop3_12(ControlFlowTemplate):
     template = T(
