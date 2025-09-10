@@ -254,7 +254,7 @@ def compare_and_report(commit_results: EvaluationResult, local_results: Evaluati
                 report_console.print(f"\n{title}")
                 for p in moved_paths:
                     console.print(f"- {p}")
-                    report_console.print(f"- {p}")
+                    report_console.print(f"- {p}", soft_wrap=True)
         
         # 3. New and Removed Items
         new_items = sorted([p for p in all_paths if commit_map.get(p) is None])
