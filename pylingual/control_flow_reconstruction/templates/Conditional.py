@@ -4,7 +4,7 @@ from .Loop import BreakTemplate, ContinueTemplate
 
 class EarlyRet(ControlFlowTemplate):
     template = T(
-        pop_block=~N("early_ret", None).with_cond(ending_instructions("POP_BLOCK")).with_in_deg(1),
+        pop_block=~N("early_ret", None).with_in_deg(1),
         early_ret=N(E.meta("end")).with_cond(ending_instructions("RETURN_VALUE")).with_cond(has_no_lines).with_in_deg(1),
         end=N(None).of_type(MetaTemplate),
     )
