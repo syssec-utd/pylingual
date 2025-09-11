@@ -7,10 +7,22 @@ from pylingual.editable_bytecode import Inst
 import networkx as nx
 
 from ..cft import ControlFlowTemplate, EdgeKind, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, defer_source_to, no_self_edges, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
+from ..utils import E, N, T, condense_mapping, defer_source_to, no_self_edges, remove_nodes, versions_from, without_instructions, has_no_lines, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
+
+
+class LoopElse(ControlFlowTemplate):
+    @classmethod
+    def try_match(cls, cfg, node):
+        if has_no_lines(cfg, node):
+            return None
+        else:
+            return condense_mapping(cls, cfg, {"child": node}, "child")
+
+    def to_indented_source(self, source):
+        return self.child.to_indented_source(source)
 
 
 @register_template(100, 0)

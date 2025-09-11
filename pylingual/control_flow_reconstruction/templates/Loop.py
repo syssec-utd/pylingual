@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 
-from ..cft import ControlFlowTemplate, EdgeKind, register_template
+from .Block import BlockTemplate, LoopElse
+from ..cft import ControlFlowTemplate, EdgeKind, InstTemplate, register_template
 from ..utils import (
     T,
     N,
@@ -27,17 +28,6 @@ if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
 
 
-class LoopElse(ControlFlowTemplate):
-    @classmethod
-    def try_match(cls, cfg, node):
-        if has_no_lines(cfg, node):
-            return None
-        else:
-            return condense_mapping(cls, cfg, {"child": node}, "child")
-
-    def to_indented_source(self, source):
-        return self.child.to_indented_source(source)
-    
 
 @register_template(0, 1)
 class ForLoop(ControlFlowTemplate):
@@ -60,7 +50,7 @@ class ForLoop(ControlFlowTemplate):
 @register_template(0, 1)
 class ForElseLoop(ControlFlowTemplate):
     template = T(
-        for_iter=~N("for_body", "else_body"),
+        for_iter=~N("for_body", "else_body").with_cond(with_top_level_instructions("FOR_ITER")),
         for_body=~N("for_iter").with_in_deg(1),
         else_body=~N("tail.").of_type(LoopElse),
         tail=N.tail(),
@@ -149,6 +139,70 @@ class TrueSelfLoop(ControlFlowTemplate):
         """
 
 
+@register_template(0, 1, *versions_below(3, 10))
+class WhileElse3_6(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body").with_cond(without_top_level_instructions("FOR_ITER")),
+        while_body=~N("while_header").with_in_deg(1),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
+@register_template(0, 1, (3, 10), (3, 11))
+class WhileElse3_10(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body"),
+        while_body=~N("else_body").of_type(TrueSelfLoop),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
+@register_template(0, 1, (3, 12), (3, 13))
+class WhileElse3_12(ControlFlowTemplate):
+    template = T(
+        while_header=~N("while_body", "else_body"),
+        while_body=~N("JUMP", "else_body"),
+        JUMP=~N("while_body"),
+        else_body=~N("tail.").of_type(LoopElse),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "while_header", "while_body", "else_body")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {while_header}
+            {while_body}
+        else:
+            {else_body}
+        """
+
+
 @register_template(0, 1, *versions_from(3, 12))
 class AsyncForLoop3_12(ControlFlowTemplate):
     template = T(
@@ -212,14 +266,21 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
+        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
+
+        if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
 
-        i = len(node.get_instructions()) - 1
+        if isinstance(node, BlockTemplate):
+            opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            opcodes = [node.inst]
+
+        i = len(opcodes) - 1
         while i >= 0:
-            instruction = node.get_instructions()[i].opname
-            if instruction in {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
+            instruction = opcodes[i].opname
+            if instruction in break_candidates:
+                if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -235,14 +296,21 @@ class BreakTemplate(ControlFlowTemplate):
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        if not with_top_level_instructions("JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
+        continue_candidates = {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}
+
+        if not with_top_level_instructions(*continue_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
         
-        i = len(node.get_instructions()) - 1
+        if isinstance(node, BlockTemplate):
+            opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
+        if isinstance(node, InstTemplate):
+            opcodes = [node.inst]
+        
+        i = len(opcodes) - 1
         while i >= 0:
-            instruction = node.get_instructions()[i].opname
-            if instruction in {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}:
-                if node.get_instructions()[i].starts_line is not None and not any(node.get_instructions()[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
+            instruction = opcodes[i].opname
+            if instruction in continue_candidates:
+                if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
                     return condense_mapping(cls, cfg, {"child": node}, "child")
                 else:
                     i -= 1
@@ -279,71 +347,135 @@ class FixLoop(ControlFlowTemplate):
         if not back_edges or all(n == node for n in back_edges) or with_top_level_instructions("SEND")(cfg, node):
             return None
 
-        # Get all nodes encompassed by the loop excluding source node and initial false jump
-        loopnode = None
-        for succ in cfg.successors(node):
-            if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.Fall:
-                loopnode = succ
-                break
-
-        dfs_edges = cfg.dfs_labeled_edges_no_loop(source=loopnode)
-        encompassed_nodes = [v for u, v, d in dfs_edges if d == "forward"]
+        # Check if for loop
+        for_loop = True
+        if without_top_level_instructions("FOR_ITER")(cfg, node):
+            for_loop = False
 
         edges_to_remove = []
+        else_candidates = []
+        else_node = None
 
-        # Find the candidate end that break connects to
-        false_edge = None
-        candidate_end = None
-        for succ in cfg.successors(node):
-            if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump and not any(n == node for n in cfg.successors(succ)):
-                candidate_end = succ
-                false_edge = succ
-
-                # Candidate end is a buffer node
-                if cfg.in_degree(candidate_end) == 1:
-                    for ss in cfg.successors(candidate_end):
-                        if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
-                            candidate_end = ss
-                            break
-
-        if candidate_end == None:
-            # While loops
-            for candidate in back_edges:
-                cont_node = ContinueTemplate.try_match(cfg, candidate)
-                if cont_node is not None and not cfg.has_edge(node, cont_node):
-                    cfg.remove_edge(cont_node, node)
-            
-            dfs_edges = cfg.dfs_labeled_edges_no_loop(source=node)
-            candidates = [v for u, v, d in dfs_edges if d == "forward"][1:]
-
-            for n in candidates:
-                for s in cfg.successors(n):
-                    if cfg.get_edge_data(n, s).get("kind") != EdgeKind.Exception and not all(cfg.get_edge_data(p, n).get("kind") == EdgeKind.Exception for p in cfg.predecessors(n)):
-                        edges_to_remove.append((n, s))
-            
-            for pred, succ in edges_to_remove:
-                break_node = BreakTemplate.try_match(cfg, pred)
-                if break_node is not None and cfg.in_degree(succ) > 2:
-                    cfg.remove_edge(break_node, succ)
-
-        else:
+        if for_loop:
             # For loops
-            if encompassed_nodes is not None:
-                for succ in encompassed_nodes:
-                    if cfg.get_edge_data(succ, candidate_end) != None:
-                        edges_to_remove.append((succ, candidate_end))
+            # Much simpler and loop header indicated by "FOR_ITER" in all versions
 
+            # Candidate ends are the nodes that all break statements point to 
+            # and where the loop would naturally end
+            candidate_end = None
+
+            # Get all nodes encompassed by the loop excluding source node and initial false jump
+            loopnode = None
+            for succ in cfg.successors(node):
+                if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.Fall:
+                    loopnode = succ
+                    break
+
+            dfs_edges = cfg.dfs_labeled_edges_no_loop(source=loopnode)
+            encompassed_nodes = [v for u, v, d in dfs_edges if d == "forward"]
+            
+            # Find the candidate end that break connects to
+            for succ in cfg.successors(node):
+                if cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump and not any(n == node for n in cfg.successors(succ)):
+                    candidate_end = succ
+                    else_node = succ
+
+                    # Candidate end is a buffer node, look further for another candidate end
+                    if cfg.in_degree(candidate_end) == 1:
+                        for ss in cfg.successors(candidate_end):
+                            if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
+                                candidate_end = ss
+                                break
+
+            # Add all edges that is connected to candidate end
+            for succ in encompassed_nodes:
+                if cfg.get_edge_data(succ, candidate_end) != None:
+                    edges_to_remove.append((succ, candidate_end))
+
+            # Matching Continue statements and removing edges to loop header
             for candidate in back_edges:
                 cont_node = ContinueTemplate.try_match(cfg, candidate)
                 if cont_node is not None and cfg.in_degree(node) > 2:
                     cfg.remove_edge(cont_node, node)
 
+            # Matching Break statements and removing edges to loop header
+            # Checking Else node candidates
             for pred, succ in edges_to_remove:
                 break_node = BreakTemplate.try_match(cfg, pred)
                 if break_node is not None:
                     cfg.remove_edge(break_node, succ)
-                    if succ != false_edge:
-                        LoopElse.try_match(cfg, false_edge)
+                    if succ != else_node and else_node not in else_candidates:
+                        else_candidates.append(else_node)
+        else:
+            # While loops
+            # Contains an extraneous header block (sometimes) which contains the while <condition>: line
+            # Harder to apply candidate end strategy due to inconsistent header blocks and false_jumps
+            loop_header = cfg.start
+
+            for candidate in cfg.predecessors(node):
+                # Finding loop header as help to find Else node
+                if candidate.offset < node.offset:
+                    loop_header = candidate
+                
+                # Finding Continue statement candidates 
+                for predecessor in cfg.predecessors(candidate):
+                    if cfg.dominates(node, predecessor):
+                        back_edges.append(predecessor)
+            
+            # Finding Else node candidate
+            if loop_header is not cfg.start and without_top_level_instructions("SETUP_LOOP")(cfg, loop_header):
+                # Version difference contains SETUP_LOOP
+                for succ in cfg.successors(loop_header):
+                    if succ != node and cfg.get_edge_data(loop_header, succ).get("kind") == EdgeKind.FalseJump:
+                        else_node = succ
+            else:
+                for succ in cfg.successors(node):
+                    if succ != node and cfg.get_edge_data(node, succ).get("kind") == EdgeKind.FalseJump:
+                        else_node = succ
+            
+            # Matching Continue statements and removing edges to loop header
+            for candidate in back_edges:
+                cont_node = ContinueTemplate.try_match(cfg, candidate)
+                if cont_node is not None:
+                    if cfg.has_edge(cont_node, node):
+                        cfg.remove_edge(cont_node, node)
+                    if cfg.has_edge(cont_node, loop_header):
+                        cfg.remove_edge(cont_node, loop_header)
+                        
+            # Finding all nodes encompassed by the loop excluding source node
+            dfs_edges = cfg.dfs_labeled_edges_no_loop(source=node)
+            candidates = [v for u, v, d in dfs_edges if d == "forward"][1:]
+
+            # Edge case check: Check through all candidates ensure they are not nodes that have 
+            # predecessors with only Exception edge types
+            # successors with only Exception edge types
+            for n in candidates:
+                for s in cfg.successors(n):
+                    if cfg.get_edge_data(n, s).get("kind") != EdgeKind.Exception and not all(cfg.get_edge_data(p, n).get("kind") == EdgeKind.Exception for p in cfg.predecessors(n)):
+                        edges_to_remove.append((n, s))
+            
+            # Matching Break statements and removing edges to the candidate end if applicable
+            for pred, succ in edges_to_remove:
+                break_node = BreakTemplate.try_match(cfg, pred)
+                if break_node is not None:
+                    # Only remove edge if there are more than 2 incoming edges to avoid breaking other control flow structures
+                    if cfg.in_degree(succ) > 2:
+                        cfg.remove_edge(break_node, succ)
+                    elif cfg.in_degree(succ) <= 2:
+                        # Broken: conflicting cases where removing the edge would strand blocks
+                        # but also match correctly to valid Break statement nodes
+                        continue
+
+                    # Finding Else node candidate
+                    if succ != else_node and else_node not in else_candidates:
+                        else_candidates.append(else_node)
+                    if pred in else_candidates:
+                        else_candidates.remove(pred)
+                        else_node = None
+
+        # Match Else node if applicable
+        if else_node in else_candidates:
+            LoopElse.try_match(cfg, else_node)
 
         cfg.iterate()
         return
