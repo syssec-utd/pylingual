@@ -356,7 +356,7 @@ class Decompiler:
         logger.info(f"Checking decompilation for {self.name}...")
         src = self.tmpfile()
         pyc = self.tmpfile()
-        src.write_text(source)
+        src.write_text(source, encoding='utf-8')
         try:
             compile_version(src, pyc, self.version)
         except CompileError as e:
@@ -479,6 +479,6 @@ def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Pat
     logger.info("Decompilation complete")
     logger.info(f"{result.calculate_success_rate():.2%} code object success rate")
     if save_to:
-        save_to.write_text(result.decompiled_source)
+        save_to.write_text(result.decompiled_source, encoding='utf-8')
         logger.info(f"Result saved to {save_to}")
     return result
