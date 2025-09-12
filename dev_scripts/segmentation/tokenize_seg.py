@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">= 3.12"
+# dependencies = [
+#   "pylingual",
+# ]
+# [tool.uv.sources]
+# pylingual = { path = "../../" }
+# ///
+
 import ast
 import functools
 import os
