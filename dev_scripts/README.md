@@ -4,7 +4,7 @@ PyLingual's accuracy is dependent on having accurate segmentation and statement 
 
 ## Dataset generation
 
-First install [pyenv](https://github.com/pyenv/pyenv) and the required Python versions for the dataset. Create a dataset JSON file based off the sample (`sample_jsons/py36-sample-data.json`).
+Create a dataset JSON file based off the sample (`sample_jsons/py36-sample-data.json`).
 
 The dataset directory should be structured like so, with only one `.py` file per directory:
 

@@ -1,16 +1,19 @@
-[tool.poetry]
-requires-poetry = ">=2.0"
-
 [project]
 name = "pylingual"
 version = "0.1.0"
 description = "A Python bytecode decompilation tool, supporting versions 3.6 - 3.13"
-authors = [ {name = "syssec-utd"} ]
-keywords = ["python", "decompilation", "pylingual", "reversing", "decompiler", "bytecode"]
-license = "GPL-3.0-only"
-
+authors = [{ name = "syssec-utd" }]
 readme = "README.md"
-requires-python = ">=3.12.0"
+requires-python = ">= 3.12"
+license = "GPL-3.0-only"
+keywords = [
+    "python",
+    "decompilation",
+    "pylingual",
+    "reversing",
+    "decompiler",
+    "bytecode",
+]
 dependencies = [
     "asttokens",
     "datasets",
@@ -28,7 +31,7 @@ dependencies = [
     "transformers==4.46.1",
     "transformers[torch]",
     "xdis>=6.1.4",
-    "click"
+    "click",
 ]
 
 [project.urls]
@@ -38,10 +41,9 @@ homepage = "https://pylingual.io"
 pylingual = "pylingual.main:main"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-# linter and formatter
 [tool.ruff]
 # Exclude commonly ignored directories.
 exclude = [
@@ -55,7 +57,6 @@ exclude = [
     ".mypy_cache",
     ".nox",
     ".pants.d",
-    ".pyenv",
     ".pytest_cache",
     ".pytype",
     ".ruff_cache",
@@ -94,3 +95,8 @@ skip-magic-trailing-comma = false
 # to be opt-out in the future.
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
+
+[tool.uv.workspace]
+members = [
+    "pylingual/tools",
+]

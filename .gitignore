@@ -1,5 +1,6 @@
 dataset/
 venv/
+.venv/
 *.pyc
 .idea/
 .python-version

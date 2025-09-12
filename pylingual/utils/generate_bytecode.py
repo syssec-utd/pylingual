@@ -5,9 +5,14 @@ import sys
 import py_compile
 import platform
 import os
+import re
 import shutil
 
+
 from pylingual.utils.version import PythonVersion
+
+
+UV_VERSIONS = {PythonVersion((3, x)) for x in range(8, 14)}
 
 
 class CompileError(Exception):
@@ -19,18 +24,32 @@ class PyenvError(Exception):
     pass
 
 
-def compile_version(py_file, out_file, version):
-    py_file = str(py_file)
-    out_file = str(out_file)
-    version = PythonVersion(version)
-    if version == sys.version_info:
-        try:
-            py_compile.compile(py_file, cfile=out_file, doraise=True, optimize=0)
-        except py_compile.PyCompileError as e:
-            raise CompileError(str(e))
-        return
+def _compile_native(py_file: str, out_file: str):
+    try:
+        py_compile.compile(py_file, cfile=out_file, doraise=True, optimize=0)
+    except py_compile.PyCompileError as e:
+        raise CompileError(str(e))
+    return
 
+
+def _compile_uv(py_file: str, out_file: str, version: PythonVersion):
+    compile_cmd = f"import py_compile, sys; assert sys.version_info[:2] == {version.as_tuple()!r}; py_compile.compile({py_file!r}, cfile={out_file!r})"
+
+    cmd = ["uvx", "--python", version.as_str(), "python", "-c", compile_cmd]
+
+    output = subprocess.run(cmd, shell=False, capture_output=True, text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"})
+
+    # Ignore stderr messages from uv downloading versions on demand
+    stderr = re.sub(r'Downloading .+\n', '', output.stderr)
+    if stderr:
+        raise CompileError(stderr)
+
+
+def _compile_pyenv(py_file: str, out_file: str, version: PythonVersion):
     which_pyenv = shutil.which("pyenv")
+    if not which_pyenv:
+        raise PyenvError(f"Could not find pyenv installation to compile in version {version.as_str()}. Try running with --init-pyenv to enable verification for end-of-life Python versions.")
+
     version_win = None
     if platform.system() == "Windows":  # workaround for pyenv-win being bugged when passing versions like 3.x not 3.x.y
 
@@ -62,3 +81,20 @@ def compile_version(py_file, out_file, version):
 
     if output.stderr:
         raise CompileError(output.stderr)
+
+
+def compile_version(py_file, out_file, version):
+    py_file = str(py_file)
+    out_file = str(out_file)
+    version = PythonVersion(version)
+
+    if version == sys.version_info:
+        _compile_native(py_file=py_file, out_file=out_file)
+    elif version in UV_VERSIONS:
+        _compile_uv(py_file=py_file, out_file=out_file, version=version)
+    else:
+        _compile_pyenv(py_file=py_file, out_file=out_file, version=version)
+    
+    
+
+
