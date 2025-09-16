@@ -134,7 +134,6 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
 
-
 def install_pyenv():
     if shutil.which("pyenv") is not None:
         logger.warning("pyenv seems to already be installed, ignoring --init-pyenv...")
@@ -164,7 +163,6 @@ def install_pyenv():
         logger.error("Error installing Python versions, exiting...")
         return False
     return True
-
 
 if __name__ == "__main__":
     main()

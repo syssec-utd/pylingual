@@ -4,7 +4,7 @@ PyLingual's accuracy is dependent on having accurate segmentation and statement 
 
 ## Dataset generation
 
-First install [pyenv](https://github.com/pyenv/pyenv) and the required Python versions for the dataset. Create a dataset JSON file based off the sample (`sample_jsons/py36-sample-data.json`).
+Create a dataset JSON file based off the sample (`sample_jsons/py36-sample-data.json`).
 
 The dataset directory should be structured like so, with only one `.py` file per directory:
 
@@ -24,7 +24,7 @@ dataset
 The names of the inner directories and files do not matter. Then create the dataset:
 
 ```
-python prepare_dataset.py <path to JSON>
+uv run prepare_dataset.py <path to JSON>
 ```
 
 ## Segmentation model
@@ -32,7 +32,7 @@ python prepare_dataset.py <path to JSON>
 Create a segmentation model JSON file based off the sample (`sample_jsons/py36-sample-segmentation.json`). Then train the model:
 
 ```
-python train_models.py --segmentation <path to JSON>
+uv run train_models.py --segmentation <path to JSON>
 ```
 
 ## Statement model
@@ -40,7 +40,7 @@ python train_models.py --segmentation <path to JSON>
 Create a statement model JSON file based off the sample (`sample_jsons/py36-sample-statement.json`). Then train the model:
 
 ```
-python train_models.py --statement <path to JSON>
+uv run train_models.py --statement <path to JSON>
 ```
 
 Once models are trained, update `../pylingual/decompiler_config.yaml` or create a separate config file by replacing the old models with the newly trained ones.

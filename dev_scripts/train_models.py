@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">= 3.12"
+# dependencies = [
+#   "pylingual",
+# ]
+# [tool.uv.sources]
+# pylingual = { path = "../" }
+# ///
+
 import logging
 import os
 import pathlib
@@ -12,12 +21,13 @@ def train_segmentation(segmentation_config_path: pathlib.Path, logger: logging.L
 
     # train tokenizer
     logger.info("training tokenizer...")
-    subprocess.run(["python", segmentation_root / "train_tokenizer.py", segmentation_config_path])
+    subprocess.run(["uv", "run", segmentation_root / "train_tokenizer.py", segmentation_config_path])
 
     # train mlm (single gpu to avoid conflicts with local tokenized data)
     logger.info("training masked language model...")
     subprocess.run(
         [
+            "uv", "run",
             "torchrun",
             f"--nnodes={nnodes}",
             f"--nproc-per-node={nproc_per_node}",
@@ -31,12 +41,13 @@ def train_segmentation(segmentation_config_path: pathlib.Path, logger: logging.L
 
     # tokenize dataset
     logger.info("tokenizing segmentation dataset...")
-    subprocess.run(["python", segmentation_root / "tokenize_seg.py", segmentation_config_path])
+    subprocess.run(["uv", "run", segmentation_root / "tokenize_seg.py", segmentation_config_path])
 
     # train segmentation model (4 gpus)
     logger.info("training segmentation model...")
     subprocess.run(
         [
+            "uv", "run",
             "torchrun",
             f"--nnodes={nnodes}",
             f"--nproc-per-node={nproc_per_node}",
@@ -53,16 +64,17 @@ def train_statement(statement_config_path: pathlib.Path, logger: logging.Logger,
     statement_root = pathlib.Path(__file__).parent / "statement"
 
     # manual tokenizer
-    subprocess.run(["python", statement_root / "train_tokenizer_auto.py", statement_config_path])
+    subprocess.run(["uv", "run", statement_root / "train_tokenizer_auto.py", statement_config_path])
 
     # tokenize statement dataset with salesforce tokenizer
     logger.info("tokenizing statement dataset...")
-    subprocess.run(["python", statement_root / "tokenize_seq2seq.py", statement_config_path])
+    subprocess.run(["uv", "run", statement_root / "tokenize_seq2seq.py", statement_config_path])
 
     # train statement model (4 gpus)
     logger.info("training statement model...")
     subprocess.run(
         [
+            "uv", "run",
             "torchrun",
             f"--nnodes={nnodes}",
             f"--nproc-per-node={nproc_per_node}",

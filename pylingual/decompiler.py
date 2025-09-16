@@ -41,7 +41,7 @@ from pylingual.control_flow_reconstruction.structure import bc_to_cft
 from pylingual.control_flow_reconstruction.cft import MetaTemplate
 from pylingual.equivalence_check import TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
-from pylingual.utils.generate_bytecode import CompileError, compile_version
+from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
 from pylingual.editable_bytecode import PYCFile
 from pylingual.segmentation.segmentation_search_strategies import get_top_k_predictions, m_deep_top_k, naive_confidence_priority, filter_subwords
@@ -121,10 +121,6 @@ class Decompiler:
             self.unmask_lines()
             self.run_cflow_reconstruction()
             self.reconstruct_source()
-
-            if shutil.which("pyenv") is None and self.version != sys.version_info:
-                logger.warning(f"pyenv is not installed so equivalence check cannot be performed. Please install pyenv manually along with the required Python version ({self.version}) or run PyLingual again with the --init-pyenv flag")
-                return DecompilerResult(self.indented_source, [TestResult(False, "Cannot compare equivalence without pyenv installed", bc, bc) for bc in self.pyc.iter_bytecodes()], self.pyc, self.version)
 
             self.equivalence_results = self.check_reconstruction(self.indented_source)
             self.correct_failures()
@@ -361,6 +357,9 @@ class Decompiler:
             compile_version(src, pyc, self.version)
         except CompileError as e:
             return [e]
+        except PyenvError as e:
+            logger.error(f"Could not check decompilation due to pyenv error: {e}")
+            return []
         else:
             return compare_pyc(self.pyc, pyc)
 
