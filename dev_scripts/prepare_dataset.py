@@ -45,27 +45,26 @@ def main(json_path: str):
     logger.debug(dataset_description)
 
     if dataset_description.code_dir.exists():
-        raise FileExistsError(f"{dataset_description.code_dir} already exists! The dataset name is probably already taken.")
+        logger.info(f"{dataset_description.code_dir} already exists, skipping dataset generation...")
+    else:
+        logger.info("Creating code dataset...")
+        if not (dataset_description.data_requests and dataset_description.code_dir and dataset_description.version):
+            logger.error("Dataset description is missing required fields")
+            exit(1)
+        create_code_dataset(
+            dataset_description.data_requests,
+            dataset_description.code_dir,
+            dataset_description.version,
+            logger,
+        )
 
-    logger.info("Creating code dataset...")
-    if not (dataset_description.data_requests and dataset_description.code_dir and dataset_description.version):
-        logger.error("Dataset description is missing required fields")
-        exit(1)
-    create_code_dataset(
-        dataset_description.data_requests,
-        dataset_description.code_dir,
-        dataset_description.version,
-        logger,
-    )
-
-    # create csv dataset
-    logger.info("Converting code dataset to csv...")
-    create_csv_dataset(
-        dataset_description.code_dir,
-        dataset_description.csv_dir,
-        dataset_description.data_requests,
-        logger,
-    )
+        logger.info("Converting code dataset to csv...")
+        create_csv_dataset(
+            dataset_description.code_dir,
+            dataset_description.csv_dir,
+            dataset_description.data_requests,
+            logger,
+        )
 
     logger.info(f"Uploading {dataset_description.name} to HuggingFace...")
     upload_dataset_to_huggingface(dataset_description)
