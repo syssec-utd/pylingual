@@ -7,67 +7,43 @@
 # pylingual = { path = "../", editable = true }
 # ///
 
-import json
-import logging
-import pathlib
-from typing import Union
 import click
 
-from dataset_generation.bytecode2csv import create_csv_dataset
-from dataset_generation.create_code_dataset import create_code_dataset
-from dataset_generation.DatasetDescription import DataRequest, DatasetDescription
-from dataset_generation.upload_raw_dataset import upload_dataset_to_huggingface
+from dataset_generation.generate_dataset import main as generate_dataset
+from dataset_generation.generate_csv import main as generate_csv
+from dataset_generation.validate_dataset import main as validate_dataset
+from dataset_generation.upload_dataset import main as upload_dataset
 from pylingual.utils.get_logger import get_logger
 
-
-def get_dataset_description_from_arg_json(json_path: str, logger: Union[logging.Logger, None] = None) -> DatasetDescription:
-    json_file_path = pathlib.Path(json_path)
-
-    if not json_file_path.exists():
-        raise FileNotFoundError(f"{json_file_path} does not exist")
-
-    if logger:
-        logger.info(f"Loading dataset description from {json_file_path}...")
-
-    with json_file_path.open() as json_file:
-        dataset_description_dict = json.load(json_file)
-
-    dataset_description_dict["data_requests"] = [DataRequest(**d) for d in dataset_description_dict["data_requests"]]
-    return DatasetDescription(**dataset_description_dict)
+STAGES = ["generate", "csv", "validate", "upload"]
 
 
-@click.command(help="Samples, splits, processes, and uploads a given dataset described by JSON.")
+@click.command(
+    help="Run the dataset preparation pipeline. By default all stages run in order. "
+    "Use --stage to run specific stages (e.g. --stage csv --stage upload)."
+)
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option(
+    "--stage",
+    multiple=True,
+    type=click.Choice(STAGES),
+    help="Stage(s) to run. May be specified multiple times. Defaults to all stages.",
+)
+def main(json_path: str, stage: tuple[str, ...]):
     logger = get_logger("prepare-dataset")
 
-    dataset_description = get_dataset_description_from_arg_json(json_path, logger)
-    logger.debug(dataset_description)
+    stages_to_run = list(stage) if stage else STAGES
 
-    if dataset_description.code_dir.exists():
-        logger.info(f"{dataset_description.code_dir} already exists, skipping dataset generation...")
-    else:
-        logger.info("Creating code dataset...")
-        if not (dataset_description.data_requests and dataset_description.code_dir and dataset_description.version):
-            logger.error("Dataset description is missing required fields")
-            exit(1)
-        create_code_dataset(
-            dataset_description.data_requests,
-            dataset_description.code_dir,
-            dataset_description.version,
-            logger,
-        )
-
-        logger.info("Converting code dataset to csv...")
-        create_csv_dataset(
-            dataset_description.code_dir,
-            dataset_description.csv_dir,
-            dataset_description.data_requests,
-            logger,
-        )
-
-    logger.info(f"Uploading {dataset_description.name} to HuggingFace...")
-    upload_dataset_to_huggingface(dataset_description)
+    for s in stages_to_run:
+        logger.info(f"Running stage: {s}")
+        if s == "generate":
+            generate_dataset([json_path], standalone_mode=False)
+        elif s == "csv":
+            generate_csv([json_path], standalone_mode=False)
+        elif s == "validate":
+            validate_dataset([json_path], standalone_mode=False)
+        elif s == "upload":
+            upload_dataset([json_path], standalone_mode=False)
 
 
 if __name__ == "__main__":
