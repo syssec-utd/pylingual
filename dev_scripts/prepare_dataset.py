@@ -10,12 +10,13 @@
 import click
 
 from dataset_generation.generate_dataset import main as generate_dataset
+from dataset_generation.compile_dataset import main as compile_dataset
 from dataset_generation.generate_csv import main as generate_csv
 from dataset_generation.validate_dataset import main as validate_dataset
 from dataset_generation.upload_dataset import main as upload_dataset
 from pylingual.utils.get_logger import get_logger
 
-STAGES = ["generate", "csv", "validate", "upload"]
+STAGES = ["generate", "compile", "csv", "validate", "upload"]
 
 
 @click.command(
@@ -38,6 +39,8 @@ def main(json_path: str, stage: tuple[str, ...]):
         logger.info(f"Running stage: {s}")
         if s == "generate":
             generate_dataset([json_path], standalone_mode=False)
+        elif s == "compile":
+            compile_dataset([json_path], standalone_mode=False)
         elif s == "csv":
             generate_csv([json_path], standalone_mode=False)
         elif s == "validate":
