@@ -42,7 +42,8 @@ def main(json_path: str):
         raise FileNotFoundError(f"{dataset_description.code_dir} does not exist. Run the generate stage first.")
 
     compile_args = []
-    for py_path in dataset_description.code_dir.rglob("*.py"):
+    all_py = list(tqdm.tqdm(dataset_description.code_dir.rglob("*.py"), desc="Scanning .py files"))
+    for py_path in tqdm.tqdm(all_py, desc="Checking .pyc"):
         pyc_path = py_path.with_suffix(".pyc")
         if not pyc_path.exists():
             compile_args.append((py_path, pyc_path, dataset_description.version))
