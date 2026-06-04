@@ -30,7 +30,8 @@ STAGES = ["generate", "compile", "csv", "validate", "upload"]
     type=click.Choice(STAGES),
     help="Stage(s) to run. May be specified multiple times. Defaults to all stages.",
 )
-def main(json_path: str, stage: tuple[str, ...]):
+@click.option("--public", is_flag=True, default=False, help="Upload as a public dataset instead of private.")
+def main(json_path: str, stage: tuple[str, ...], public: bool):
     logger = get_logger("prepare-dataset")
 
     stages_to_run = list(stage) if stage else STAGES
@@ -46,7 +47,7 @@ def main(json_path: str, stage: tuple[str, ...]):
         elif s == "validate":
             validate_dataset([json_path], standalone_mode=False)
         elif s == "upload":
-            upload_dataset([json_path], standalone_mode=False)
+            upload_dataset(["--public" if public else "", json_path], standalone_mode=False)
 
 
 if __name__ == "__main__":

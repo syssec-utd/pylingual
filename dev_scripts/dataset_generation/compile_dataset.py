@@ -68,13 +68,16 @@ def main(json_path: str):
         logger.info("All .py files already have corresponding .pyc files. Nothing to compile.")
         return
 
-    logger.info(f"Compiling {len(compile_args)} files...")
+    n_already = total_py - len(compile_args) + len(recent_pycs)
+    logger.info(f"Compiling {len(compile_args)} files ({n_already} already compiled)...")
     num_fails = 0
     with multiprocessing.Pool() as pool:
-        for error in tqdm.tqdm(pool.imap_unordered(star_compile_file, compile_args), total=len(compile_args)):
-            if error is not None:
-                num_fails += 1
-                logger.debug(error)
+        with tqdm.tqdm(total=total_py, initial=n_already, desc="Compiling") as pbar:
+            for error in pool.imap_unordered(star_compile_file, compile_args):
+                pbar.update(1)
+                if error is not None:
+                    num_fails += 1
+                    logger.debug(error)
 
     logger.info(f"Compilation complete. {num_fails} files failed to compile.")
 
