@@ -47,7 +47,7 @@ def main(json_path: str, stage: tuple[str, ...], public: bool):
         elif s == "validate":
             validate_dataset([json_path], standalone_mode=False)
         elif s == "upload":
-            upload_dataset(["--public" if public else "", json_path], standalone_mode=False)
+            upload_dataset((["--public"] if public else []) + [json_path], standalone_mode=False)
 
 
 if __name__ == "__main__":
