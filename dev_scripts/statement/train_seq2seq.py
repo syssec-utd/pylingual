@@ -25,7 +25,7 @@ def load_tokenized_train_dataset(dataset_repo_name: str, dataset_percentage: int
     return tokenized_train_dataset
 
 
-def train_statement_model(config: StatementConfiguration):
+def train_statement_model(config: StatementConfiguration, public: bool = False):
     # load model, Salesforce/codet5-base is a pretrained model solving the code generation task.
     tokenizer = RobertaTokenizer.from_pretrained(config.tokenizer_repo_name)
     model = T5ForConditionalGeneration.from_pretrained(config.pretrained_seq2seq_repo_name)
@@ -52,7 +52,7 @@ def train_statement_model(config: StatementConfiguration):
         predict_with_generate=True,
         push_to_hub=True,
         hub_model_id=model_repo_name,
-        hub_private_repo=True,
+        hub_private_repo=not public,
         ddp_backend="nccl",
         ddp_find_unused_parameters=False,
     )
@@ -83,10 +83,11 @@ def train_statement_model(config: StatementConfiguration):
 
 @click.command(help="Training script for the statement translation model given a statement json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     statement_config = parse_statement_config_json(json_file_path)
-    train_statement_model(statement_config)
+    train_statement_model(statement_config, public)
 
 
 if __name__ == "__main__":
