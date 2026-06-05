@@ -76,7 +76,7 @@ def load_tokenized_train_and_valid_dataset(dataset_repo_name: str, cache_dir: pa
     return tokenized_train_dataset, tokenized_validation_dataset
 
 
-def train_segmentation_model(config: SegmentationConfiguration):
+def train_segmentation_model(config: SegmentationConfiguration, public: bool = False):
     if repo_exists(config.base_repo_name):
         logging.error(f"{config.base_repo_name} has already exists")
         exit(1)
@@ -95,7 +95,7 @@ def train_segmentation_model(config: SegmentationConfiguration):
         fp16=True,
         push_to_hub=True,
         hub_model_id=config.segmenter_repo_name,
-        hub_private_repo=True,
+        hub_private_repo=not public,
         ddp_backend="nccl",
         ddp_find_unused_parameters=True,
         save_total_limit=5,
@@ -145,10 +145,11 @@ def train_segmentation_model(config: SegmentationConfiguration):
 
 @click.command(help="Training script for the segmentation model given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    train_segmentation_model(segmentation_config)
+    train_segmentation_model(segmentation_config, public)
 
 
 if __name__ == "__main__":

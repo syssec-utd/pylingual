@@ -127,7 +127,7 @@ def tokenize_and_align_labels(tokenizer: PreTrainedTokenizerFast, max_length: in
     return tokenized_inputs
 
 
-def tokenize_segmentation_dataset(config: SegmentationConfiguration):
+def tokenize_segmentation_dataset(config: SegmentationConfiguration, public: bool = False):
     raw_dataset = load_dataset(config.dataset_repo_name, token=True, cache_dir=str(config.dataset_dir))
 
     tokenizer = load_tokenizer(config.tokenizer_repo_name, config.cache_dir)
@@ -145,16 +145,17 @@ def tokenize_segmentation_dataset(config: SegmentationConfiguration):
 
     tokenized_datasets.push_to_hub(
         config.tokenized_dataset_repo_name,
-        private=True,
+        private=not public,
     )
 
 
 @click.command(help="Script to tokenize the segmentation dataset given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    tokenize_segmentation_dataset(segmentation_config)
+    tokenize_segmentation_dataset(segmentation_config, public)
 
 
 if __name__ == "__main__":
