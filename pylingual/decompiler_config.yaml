@@ -96,3 +96,14 @@ v3.14:
     REPO: syssec-utd/py314-pylingual-v4-statement
     REVISION: main
     TOKENIZER: syssec-utd/py314-pylingual-v4-tok
+
+v3.15:
+  SEGMENTATION_MODEL:
+    REPO: syssec-utd/py315-pylingual-v2-segmenter
+    REVISION: main
+    TOKENIZER: syssec-utd/py315-pylingual-v2-tokenizer
+
+  STATEMENT_MODEL:
+    REPO: syssec-utd/py315-pylingual-v2-statement
+    REVISION: main
+    TOKENIZER: syssec-utd/py315-pylingual-v2-tok
