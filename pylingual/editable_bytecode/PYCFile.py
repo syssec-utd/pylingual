@@ -33,6 +33,7 @@ class PYCFile(EditableBytecode):
             self.ispypy,
             self.source_size,
             self.sip_hash,
+            *_
         ) = source_tuple
 
         self.version = PythonVersion(version)

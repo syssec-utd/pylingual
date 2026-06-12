@@ -16,7 +16,7 @@ dependencies = [
     "datasets",
     "huggingface-hub",
     "matplotlib",
-    "networkx",
+    "networkx==3.5",
     "numpy",
     "pydot",
     "requests",

@@ -54,6 +54,18 @@ def print_result(title: str, results: list[TestResult]):
     if table.rows:
         rich.get_console().print(table, justify="center")
 
+def expand_files(files: list[str]) -> list[str]:
+    expanded: list[str] = []
+
+    for f in files:
+        path = Path(f)
+
+        if path.is_dir():
+            expanded.extend(str(p) for p in path.rglob("*.pyc"))
+        else:
+            expanded.append(str(path))
+
+    return expanded
 
 @click.command(help="End to end pipeline to decompile Python bytecode into source code.", context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("files", nargs=-1)
@@ -64,7 +76,14 @@ def print_result(title: str, results: list[TestResult]):
 @click.option("-q", "--quiet", is_flag=True, default=False, help="Suppress console output.")
 @click.option("--trust-lnotab", is_flag=True, default=False, help="Use the lnotab for segmentation instead of the segmentation model.")
 @click.option("--init-pyenv", is_flag=True, default=False, help="Install pyenv before decompiling.")
-def main(files: list[str], out_dir: Path | None, config_file: Path | None, version: PythonVersion | None, top_k: int, trust_lnotab: bool, init_pyenv: bool, quiet: bool):
+@click.option("--rm", is_flag=True, default=False, help="Remove the original file after decompile")
+
+def main(files: list[str], out_dir: Path | None, config_file: Path | None,
+         version: PythonVersion | None, top_k: int, trust_lnotab: bool,
+         init_pyenv: bool, quiet: bool, rm: bool):
+    
+    files = expand_files(list(files))
+    
     rich.reconfigure(markup=False, emoji=False, quiet=quiet, theme=Theme({"logging.keyword": "yellow not bold"}))
     console = rich.get_console()
     log_handler = RichHandler(console=console, rich_tracebacks=True)
@@ -121,13 +140,14 @@ def main(files: list[str], out_dir: Path | None, config_file: Path | None, versi
             try:
                 result = decompile(
                     pyc=pyc_path,
-                    save_to=Path(f"{out_dir}/decompiled_{pyc_path.with_suffix('.py').name}" if out_dir else f"decompiled_{pyc_path.with_suffix('.py').name}"),
+                    save_to=Path(f"{out_dir}/{pyc_path.with_suffix('.py').name}" if out_dir else f"{pyc_path.parent}/{pyc_path.with_suffix('.py').name}"),
                     config_file=Path(config_file) if config_file else None,
                     version=version,
                     top_k=top_k,
                     trust_lnotab=trust_lnotab,
                 )
                 pyc = result.original_pyc
+                if rm: os.remove(pyc_path)
                 print_result(f"Equivalence Results for {pyc.pyc_path.name if pyc.pyc_path else repr(pyc)}", result.equivalence_results)
             except Exception:
                 live.stop()
