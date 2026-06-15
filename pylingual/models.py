@@ -39,10 +39,13 @@ class CacheTranslator:
     :param maxsize : The maximum amount of cached items
     """
 
-    def __init__(self, translator: transformers.TranslationPipeline, maxsize=50000):
-        self.translator = translator
+    def __init__(self, model : transformers.T5ForConditionalGeneration, tokenizer: transformers.RobertaTokenizer, device = torch.device,maxsize=50000):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        self.model.to(self.device)
 
     def __getitem__(self, item):
         self.cache.move_to_end(item)
@@ -54,14 +57,22 @@ class CacheTranslator:
         batch_size: int = 32,
         **kwargs,
     ) -> list[str]:
-        # return_tensors=True prevents standard postprocessing which skips special tokens
-        translation_result = self.translator(translation_requests, return_tensors=True, batch_size=batch_size, **kwargs)
+
         decoded_results = []
-        for result in flatten(translation_result):
-            # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
-            filtered_tokens = [tok for tok in result["translation_token_ids"].tolist() if tok not in [0, 1, 2, 3, 4]]
-            # decode the remaining tokens
-            decoded_results.append(self.translator.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
+
+        # process in batches
+        for i in range(0, len(translation_requests), batch_size):
+            batch = translation_requests[i: i + batch_size]
+            encoded = self.tokenizer(batch, return_tensors= "pt", padding=True).to(self.device)
+
+            with torch.no_grad():
+                output = self.model.generate(**encoded, max_length=512)
+
+            for tokens in output:
+                # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
+                filtered_tokens = [tok for tok in tokens.tolist() if tok not in [0, 1, 2, 3, 4]]
+                # decode the remaining tokens
+                decoded_results.append(self.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
 
         return decoded_results
 
@@ -155,12 +166,5 @@ def load_models(
     #########################################
     translation_model = transformers.T5ForConditionalGeneration.from_pretrained(stmt_config["REPO"], revision=stmt_config["REVISION"], token=token)
     translation_tokenizer = transformers.RobertaTokenizer.from_pretrained(stmt_config["TOKENIZER"], token=token)
-    translator = transformers.TranslationPipeline(
-        model=translation_model,
-        tokenizer=translation_tokenizer,
-        max_length=512,
-        truncation=False,
-        device=device,
-    )
 
-    return segmenter, CacheTranslator(translator)
+    return segmenter, CacheTranslator(translation_model, translation_tokenizer, device)
