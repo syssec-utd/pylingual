@@ -1544,7 +1544,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "transformers" },
     { name = "transformers", extras = ["torch"] },
-    { name = "xdis", specifier = ">=6.1.4" },
+    { name = "xdis", git = "https://github.com/rocky/python-xdis" },
 ]
 
 [[package]]
@@ -2076,8 +2076,8 @@ wheels = [
 
 [[package]]
 name = "xdis"
-version = "6.3.0"
-source = { registry = "https://pypi.org/simple" }
+version = "6.3.1.dev0"
+source = { git = "https://github.com/rocky/python-xdis#9467975d189fd6ac76c24c9a7eadc44c8ea79f9f" }
 dependencies = [
     { name = "click" },
     { name = "six" },
