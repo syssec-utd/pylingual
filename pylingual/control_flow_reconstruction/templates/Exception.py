@@ -150,7 +150,7 @@ class TryElse3_11(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("try_else.", None, "except_body"),
         except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
-        try_else=N("tail.").with_in_deg(1).with_cond(has_some_lines) | ~N("tail.").with_in_deg(1).with_cond(has_some_lines),
+        try_else=N("tail.").with_in_deg(1).with_cond(has_some_lines) | ~N("tail.").with_in_deg(1).with_cond(has_some_lines) ,
         reraise=reraise,
         tail=N.tail(),
     )
@@ -192,7 +192,7 @@ class BareExcept3_11(Except3_11):
         except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")),
         reraise=reraise,
         tail=N(E.meta("end")).with_in_deg(1).with_cond(has_no_lines),
-        end=N.tail(),
+        end=N.tail()
     )
 
     @classmethod
