@@ -24,7 +24,7 @@ from ..utils import (
     to_indented_source,
     make_try_match,
     versions_from,
-    )
+)
 
 reraise = +N().with_cond(exact_instructions("COPY", "POP_EXCEPT", "RERAISE"))
 
@@ -844,6 +844,3 @@ class TryFinally3_6(ControlFlowTemplate):
             after = []
 
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
-
-
-
