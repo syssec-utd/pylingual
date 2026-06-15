@@ -1544,7 +1544,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "transformers" },
     { name = "transformers", extras = ["torch"] },
-    { name = "xdis", git = "https://github.com/quinntyx/python-xdis?rev=python-3.15-support" },
+    { name = "xdis", git = "https://github.com/rocky/python-xdis" },
 ]
 
 [[package]]
@@ -2077,7 +2077,7 @@ wheels = [
 [[package]]
 name = "xdis"
 version = "6.3.1.dev0"
-source = { git = "https://github.com/quinntyx/python-xdis?rev=python-3.15-support#ac3c8a44e2dddd259114c85057e06749c3baa848" }
+source = { git = "https://github.com/rocky/python-xdis#9467975d189fd6ac76c24c9a7eadc44c8ea79f9f" }
 dependencies = [
     { name = "click" },
     { name = "six" },

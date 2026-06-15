@@ -103,4 +103,5 @@ members = [
     "pylingual/tools",
 ]
 
-
+[tool.uv.sources]
+xdis = { git = "https://github.com/rocky/python-xdis" }
