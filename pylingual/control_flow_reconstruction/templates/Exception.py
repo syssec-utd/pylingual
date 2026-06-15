@@ -24,6 +24,7 @@ from ..utils import (
     to_indented_source,
     make_try_match,
     versions_from,
+    with_top_level_instructions,
 )
 
 reraise = +N().with_cond(exact_instructions("COPY", "POP_EXCEPT", "RERAISE"))
@@ -149,7 +150,7 @@ class TryElse3_11(ControlFlowTemplate):
         try_header=N("try_body"),
         try_body=N("try_else.", None, "except_body"),
         except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
-        try_else=N("tail.").with_in_deg(1).with_cond(has_some_lines) | ~N("tail.").with_in_deg(1).with_cond(has_some_lines) ,
+        try_else=N("tail.").with_in_deg(1).with_cond(has_some_lines) | ~N("tail.").with_in_deg(1).with_cond(has_some_lines),
         reraise=reraise,
         tail=N.tail(),
     )
@@ -191,7 +192,7 @@ class BareExcept3_11(Except3_11):
         except_footer=~N("tail.").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")),
         reraise=reraise,
         tail=N(E.meta("end")).with_in_deg(1).with_cond(has_no_lines),
-        end=N.tail()
+        end=N.tail(),
     )
 
     @classmethod
@@ -844,3 +845,54 @@ class TryFinally3_6(ControlFlowTemplate):
             after = []
 
         return list(chain(header, self.line("try:"), body, self.line("finally:"), in_finally, after))
+
+
+@register_template(0, -1, *versions_from(3, 14))
+class WhileTryExcept3_14(ControlFlowTemplate):
+    template = T(
+        loop_header=N("try_body").with_cond(starting_instructions("NOP")),
+        try_body=N("try_tail", None, "except_body"),
+        try_tail=N("loop_header").with_cond(ending_instructions("JUMP_BACKWARD")),
+        except_body=N("except_tail", None, "reraise").with_in_deg(1).with_cond(starting_instructions("PUSH_EXC_INFO")),
+        except_tail=N("loop_header").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")).with_cond(ending_instructions("JUMP_BACKWARD")),
+        reraise=reraise,
+    )
+
+    try_match = make_try_match({}, "loop_header", "try_body", "try_tail", "except_body", "except_tail", "reraise")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        while True:
+            {loop_header}
+            try:
+                {try_body}
+            except:
+                {except_body}
+        """
+
+
+@register_template(0, -1, *versions_from(3, 14))
+class WhileWith3_14(ControlFlowTemplate):
+    template = T(
+        loop_header=N("with_body").with_cond(starting_instructions("NOP")),
+        with_body=N("normal_cleanup", None, "exc_start").with_in_deg(1),
+        normal_cleanup=N("loop_header").with_cond(ending_instructions("JUMP_BACKWARD")),
+        exc_start=N("reraise_path", "handled_path", "reraise_out").with_cond(starting_instructions("PUSH_EXC_INFO", "WITH_EXCEPT_START")),
+        reraise_path=+N("reraise_out").with_cond(exact_instructions("RERAISE")),
+        handled_path=N("exc_cleanup", None, "reraise_out").with_cond(exact_instructions("POP_TOP")),
+        exc_cleanup=N("loop_header").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")).with_cond(ending_instructions("JUMP_BACKWARD")),
+        reraise_out=reraise,
+    )
+
+    try_match = make_try_match({}, "loop_header", "with_body", "normal_cleanup", "exc_start", "reraise_path", "handled_path", "exc_cleanup", "reraise_out")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        while True:
+            {loop_header}
+            with {with_body}:
+                pass
+            {exc_start}
+        """
