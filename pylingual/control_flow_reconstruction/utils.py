@@ -126,10 +126,8 @@ def is_not_type(*template_type: type[ControlFlowTemplate]):
 def no_back_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or not any(cfg.dominates(succ, node) for succ in cfg.successors(node))
 
-
 def no_self_edges(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
     return node is None or not any(cfg.has_edge(succ, node) and cfg.has_edge(node, succ) for succ in cfg.successors(node))
-
 
 def has_incoming_edge_of_categories(*categories: str):
     def check(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
@@ -446,21 +444,9 @@ def condense_mapping(
     template = cls(in_template)
 
     if in_edges is None:
-        in_edges = {}
-        for n in reversed(list(in_template.values())):
-            if n is None or n not in cfg:
-                continue
-            for src, _, prop in cfg.in_edges(n, data=True):
-                if src not in in_template.values():
-                    in_edges[src] = prop
+        in_edges = {src: prop for n in reversed(in_template.values()) for src, _, prop in cfg.in_edges(n, data=True) if src not in in_template.values() and n is not None}
     if out_edges is None:
-        out_edges = {}
-        for n in reversed(list(in_template.values())):
-            if n is None or n not in cfg:
-                continue
-            for _, dst, prop in cfg.out_edges(n, data=True):
-                if dst not in in_template.values():
-                    out_edges[dst] = prop
+        out_edges = {dst: prop for n in reversed(in_template.values()) for _, dst, prop in cfg.out_edges(n, data=True) if dst not in in_template.values() and n is not None}
     if cfg.end in out_edges:
         out_edges[cfg.end] = EdgeKind.Meta.prop()
     if not out_edges:

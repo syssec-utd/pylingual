@@ -879,7 +879,7 @@ class WhileWith3_14(ControlFlowTemplate):
         with_body=N("normal_cleanup", None, "exc_start").with_in_deg(1),
         normal_cleanup=N("loop_header").with_cond(ending_instructions("JUMP_BACKWARD")),
         exc_start=N("reraise_path", "handled_path", "reraise_out").with_cond(starting_instructions("PUSH_EXC_INFO", "WITH_EXCEPT_START")),
-        reraise_path=+N("reraise_out").with_cond(exact_instructions("RERAISE")),
+        reraise_path=N(None, None, "reraise_out").with_cond(ending_instructions("RERAISE")),
         handled_path=N("exc_cleanup", None, "reraise_out").with_cond(exact_instructions("POP_TOP")),
         exc_cleanup=N("loop_header").with_in_deg(1).with_cond(starting_instructions("POP_EXCEPT")).with_cond(ending_instructions("JUMP_BACKWARD")),
         reraise_out=reraise,
@@ -892,7 +892,7 @@ class WhileWith3_14(ControlFlowTemplate):
         """
         while True:
             {loop_header}
-            with {with_body}:
-                pass
+                {with_body}
+            {normal_cleanup}
             {exc_start}
         """

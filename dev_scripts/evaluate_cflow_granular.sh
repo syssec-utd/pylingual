@@ -22,10 +22,17 @@ for file in test/*.py; do
         
         echo "Processing: $file"
         
-        # Run cflow.py, grep for equivalence report lines, replace <module> with module name
-        uv run dev_scripts/cflow.py "$file" --version "$1" | \
-            grep '<module>' | \
-            sed "s/<module>/$modname/g" >> results.txt
+        # Run cflow.py, capture equivalence report lines, replace <module> with module name
+        output=$(uv run dev_scripts/cflow.py "$file" --version "$1" 2>&1)
+        
+        # Check for module-level result lines
+        module_lines=$(echo "$output" | grep '<module>')
+        if [ -n "$module_lines" ]; then
+            echo "$module_lines" | sed "s/<module>/$modname/g" >> results.txt
+        else
+            # No module lines means compile error - report module-level failure
+            echo "$modname: Failure: CompileError" >> results.txt
+        fi
     fi
 done
 
