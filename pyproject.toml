@@ -103,5 +103,4 @@ members = [
     "pylingual/tools",
 ]
 
-[tool.uv.sources]
-xdis = { git = "https://github.com/quinntyx/python-xdis", rev = "python-3.15-support" }
+
