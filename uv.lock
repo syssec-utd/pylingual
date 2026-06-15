@@ -2082,6 +2082,19 @@ dependencies = [
     { name = "click" },
     { name = "six" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/ed/afaed59bd95244f7f1552887aa33637fd8bd2c49ffbd6f5afc1c47d135e6/xdis-6.3.0.tar.gz", hash = "sha256:e78e3e7a0e2d31ac64c084afc782a0a233da06ac05002c42a0e17000ac51dcaa", size = 795994, upload-time = "2026-03-30T12:33:18.985Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/71/efa1b19edfd52b21cbb6763034985543f01ce5a3cbee1f5ff5d40bf96096/xdis-6.3.0-py310-none-any.whl", hash = "sha256:e05ba311d9b0b587f10f1a7b4e29ada0679b886a9e90d8a6047dc8780cf521a8", size = 297095, upload-time = "2026-03-30T12:31:49.083Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/f6/f556a63b78e462a15343afcece599720006c77863c056a35612da89a7b88/xdis-6.3.0-py311-none-any.whl", hash = "sha256:9c2d7ab3366c0373619b210c8ee6142702132054fcf95560154f2a653293ffcb", size = 279152, upload-time = "2026-03-30T12:31:50.115Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/70/537235a1ea27d0a57a9ee17b554e6cc39ccb208af9acf43442eda6e0c2a9/xdis-6.3.0-py312-none-any.whl", hash = "sha256:5eca081e4d33d077068d3da28330965ad4cc1f11da32f11773950aa492bad223", size = 279151, upload-time = "2026-03-30T12:31:51.26Z" },
+    { url = "https://files.pythonhosted.org/packages/74/d6/f8f6fff61f0bef6718c8ccd83b76fbe5a4813806168e3ff22eb983afbf8f/xdis-6.3.0-py313-none-any.whl", hash = "sha256:d799030c7da0869e52be2feee80a7a74eb17ab2648a734a54f3ad3e6c9ba003e", size = 279151, upload-time = "2026-03-30T12:31:52.564Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/a5/c1aa54b18cd35b49c754a5bab30be5fcbc283dd1611406f41fbcc81f2a86/xdis-6.3.0-py34-none-any.whl", hash = "sha256:2ef7eb83f9d8ddb1bd181bc3b875258b4e77b364a8581208a00cb095edb525d6", size = 300140, upload-time = "2026-03-30T12:33:11.616Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/ce/6ff0cfc1900e95c10aa3da84e61986fbdeea4f801bd46550474371af1a25/xdis-6.3.0-py35-none-any.whl", hash = "sha256:87eff2a650aeca03bb86417d810fe1e0a5a026f4b0af69e2ddc418dd1f11f768", size = 300141, upload-time = "2026-03-30T12:33:12.544Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/b5/eefccd4280b45e19391aa4fc815099d678c8dc2a7b00a18cbab8db62f598/xdis-6.3.0-py36-none-any.whl", hash = "sha256:cdeb705f47ee7a439ada5a36f16fccd9910afa3d62cfcf48d2a3b49580d52317", size = 297022, upload-time = "2026-03-30T12:33:13.832Z" },
+    { url = "https://files.pythonhosted.org/packages/28/cb/1f441924105bacdfb0993edf29338a8174f21ec411052a05fe84f4154810/xdis-6.3.0-py37-none-any.whl", hash = "sha256:15fab329c15b7e81954843fb2c9a1a6c2d054875f7f376cdd47041ed86805362", size = 297001, upload-time = "2026-03-30T12:33:15.185Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/24/ddd849f224539c1d168977fab74769665c3bc54427a95895d7f4e16a441b/xdis-6.3.0-py38-none-any.whl", hash = "sha256:6321c81113042dc2f835642c4d132d53eb6db87e65d06d02e5b979ecf7db7b08", size = 297007, upload-time = "2026-03-30T12:33:16.586Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/5c/a5efe0634a4d27318c841f0dc646137ecffb9f93d3ec0a6a4826a5bc6238/xdis-6.3.0-py39-none-any.whl", hash = "sha256:d58adf8629aaf7862411a0bf3e4666e4aa56790bdbb54760879224fbeb41c59a", size = 297095, upload-time = "2026-03-30T12:33:17.645Z" },
+]
 
 [[package]]
 name = "xxhash"

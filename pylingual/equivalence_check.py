@@ -126,7 +126,7 @@ class TestResult:
 
     @property
     def name_b(self) -> str:
-        return self.bc_a.name if self.bc_a is not None else "None"
+        return self.bc_b.name if self.bc_b is not None else "None"
 
     def names(self):
         if self.name_a == self.name_b:
