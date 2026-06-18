@@ -28,7 +28,7 @@ dependencies = [
     "tqdm",
     "rich",
     "seqeval",
-    "transformers",
+    "transformers<5",
     "transformers[torch]",
     "xdis>=6.1.4",
     "click",
