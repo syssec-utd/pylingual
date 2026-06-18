@@ -45,12 +45,12 @@ class Preprocessor:
     def _collapse_segment(self, bc: EditableBytecode, seg: Segment, expr: str) -> None:
         value = eval(expr, {"__builtins__": {}}, {})
 
-        if not value:
+        if len(value) == 0:
             return
 
         const_index = None
         for i, existing in enumerate(bc.co_consts):
-            if value is existing or value == existing:
+            if value is existing or (type(value) is type(existing) and value == existing):
                 const_index = i
                 break
         if const_index is None:
