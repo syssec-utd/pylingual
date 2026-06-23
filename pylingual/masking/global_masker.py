@@ -1,5 +1,5 @@
+import builtins
 from collections.abc import MutableMapping
-from copy import deepcopy
 from xdis import iscode
 from xdis.cross_types import UnicodeForPython3, LongTypeForPython3
 
@@ -45,10 +45,17 @@ class TypeSensitiveDict(MutableMapping):
             return (key.value.decode("utf-8"), str)
         if type(key) == LongTypeForPython3:
             return (key.value, int)
-        return (key, type(key))
+        try:
+            hash(key)
+            return (key, type(key))
+        except TypeError:
+            return (repr(key), type(key))
 
     def _key_restore(self, key):
-        return key[0]
+        value, typ = key
+        if type(value) is str and typ is not str:
+            return eval(value, {"__builtins__": builtins})
+        return value
 
 
 #### Main Masker
@@ -183,39 +190,8 @@ class Masker:
             elif isinstance(inst.argval, str) and inst.argval in self.global_tab:  # have to do this check incase string is varname of type annotation
                 view = f"{inst.opname} , {repr(self.mask(inst.argval))}"
 
-            elif type(inst.argval) in (list, tuple, frozenset, set):
-                # do recursive in-place replacement of list elems if they are strs or bytestrs
-
-                def replace_list(consts):
-                    """recursive replacement of elements in arbitrary list-like objects"""
-                    for idx, const in enumerate(consts):
-                        if isinstance(const, str):
-                            consts[idx] = repr(self.mask(inst.bytecode.resolve_namespace(const)))
-                        elif const is None:
-                            continue  # don't mask None
-                        elif type(const) in (list, tuple, frozenset):
-                            consts[idx] = type(const)(replace_list(list(const)))
-                        elif type(const) is slice:
-                            consts[idx] = f"{self.mask(const.start)} : {self.mask(const.stop)} : {self.mask(const.step)}"
-                        else:
-                            consts[idx] = self.mask(const)
-                    return consts
-
-                consts = list(deepcopy(inst.argval))
-                consts = replace_list(consts)
-
-                if inst.bytecode.version < (3, 11):
-                    # Format keyword argument list
-                    # We left pad the list of kwargs so the model doesnt have to "look ahead"
-                    next_insts = inst.next_instructions
-                    next_inst = next_insts[0] if next_insts != [] else None
-                    if next_inst is not None and inst.opname == "LOAD_CONST" and next_inst.opname == "CALL_FUNCTION_KW":
-                        consts = ["<KWARG_PAD>"] * (next_inst.argval - len(consts)) + consts
-
-                # cast back to original type and print repr
-                # demote quotes one layer
-                arg_repr = repr(type(inst.argval)(consts)).replace("'", "").replace('"', "'")
-                view = f"{inst.opname} , {arg_repr}"
+            elif type(inst.argval) in (list, tuple, frozenset, set, dict):
+                view = f"{inst.opname} , {type(inst.argval).__name__}({self.mask(inst.argval)})"
             elif type(inst.argval) is slice:
                 view = f"{inst.opname} , {self.mask(inst.argval.start)} : {self.mask(inst.argval.stop)} : {self.mask(inst.argval.step)}"
             else:
