@@ -36,6 +36,9 @@ dependencies = [
     "tensorboardx>=2.6.4",
 ]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.urls]
 homepage = "https://pylingual.io"
 
