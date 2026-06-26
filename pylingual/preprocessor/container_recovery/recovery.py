@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .segment import Recovery, Segment, INDENT
+from .segment import Recovery, Segment
 
 
 _strategies: dict[int, list] = defaultdict(list)
@@ -27,7 +27,7 @@ def recover(seg: Segment, indent: int = 0) -> Recovery:
         result = strategy(seg, indent)
         if result is not None:
             return result
-    return Recovery("", False)
+    return Recovery(None, False)
 
 
 from . import strategies  # noqa: E402,F401  — trigger strategy registration

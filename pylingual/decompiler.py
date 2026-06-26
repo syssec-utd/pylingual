@@ -44,7 +44,7 @@ from pylingual.equivalence_check import TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
 from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
-from pylingual.masking.container_recovery.preprocessor import Preprocessor
+from pylingual.preprocessor import Preprocessor
 from pylingual.editable_bytecode import PYCFile
 from pylingual.segmentation.segmentation_search_strategies import get_top_k_predictions, m_deep_top_k, naive_confidence_priority, filter_subwords
 from pylingual.segmentation.sliding_window import merge, sliding_window

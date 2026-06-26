@@ -7,6 +7,7 @@ VAR_STACK_SENTINEL = -3000
 
 
 def stack_effect(opc, opcode: int, oparg: int | None = None, *, jump: bool | None = None) -> int:
+    # xdis oppush/oppop tables are incorrect for null-pushing opcodes (LOAD_GLOBAL, LOAD_ATTR, LOAD_SUPER_ATTR, CALL) and variable-size opcodes (BUILD_MAP, BUILD_CONST_KEY_MAP) — the special cases below compensate.
     if oparg is None:
         oparg = 0
     push = opc.oppush[opcode]

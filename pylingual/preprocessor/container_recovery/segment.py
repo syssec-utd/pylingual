@@ -9,7 +9,7 @@ SIDE_OFFSET = " " * 14
 
 @dataclass
 class Recovery:
-    expr: str
+    value: object
     complete: bool
 
 

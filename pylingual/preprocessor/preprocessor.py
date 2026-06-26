@@ -3,9 +3,9 @@ from __future__ import annotations
 from xdis.cross_dis import instruction_size
 
 from pylingual.editable_bytecode import EditableBytecode
-from .recovery import recover
-from .segment import Segment
-from .stack_analysis import analyze_stack, parse_bytecode_recursive
+from .container_recovery.recovery import recover
+from .container_recovery.segment import Segment
+from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
 
 _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT", "LOAD_CONST_CONTAINER"}
 
@@ -37,15 +37,13 @@ class Preprocessor:
             if seg.start_offset is not None and seg.end_offset is not None:
                 recovery = recover(seg)
                 if recovery.complete:
-                    self._collapse_segment(bc, seg, recovery.expr)
+                    self._collapse_segment(bc, seg, recovery.value)
                     return
         for child in reversed(seg.ordered_children):
             if isinstance(child, Segment):
                 self._process_segment(bc, child)
 
-    def _collapse_segment(self, bc: EditableBytecode, seg: Segment, expr: str) -> None:
-        value = eval(expr, {"__builtins__": {}}, {})
-
+    def _collapse_segment(self, bc: EditableBytecode, seg: Segment, value) -> None:
         if len(value) == 0:
             return
 

@@ -72,12 +72,9 @@ def _single_instr(seg: Segment) -> tuple | None:
 
 def _recover_load_instr(instr) -> Recovery | None:
     if instr.opname == "LOAD_SMALL_INT":
-        return Recovery(str(instr.argval), True)
+        return Recovery(instr.argval, True)
     if instr.opname == "LOAD_CONST":
-        return Recovery(repr(instr.argval), True)
+        return Recovery(instr.argval, True)
     if instr.opname == "LOAD_COMMON_CONSTANT":
-        opc = instr.bytecode.opcode
-        fmt = opc.opcode_arg_fmt.get("LOAD_COMMON_CONSTANT")
-        if fmt is not None:
-            return Recovery(fmt(instr.arg), True)
+        return Recovery(instr.argval, True)
     return None

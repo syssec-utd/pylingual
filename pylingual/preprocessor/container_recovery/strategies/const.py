@@ -15,7 +15,7 @@ def recover_const_container(seg: Segment, indent: int) -> Recovery | None:
     val = instr[1].argval
     if isinstance(val, frozenset):
         val = set(val)
-    return Recovery(repr(val), True)
+    return Recovery(val, True)
 
 
 @register_recovery_strategy(8)
@@ -23,7 +23,7 @@ def recover_load_const(seg: Segment, indent: int) -> Recovery | None:
     instr = _single_instr(seg)
     if instr is None or instr[1].opname != "LOAD_CONST":
         return None
-    return Recovery(repr(instr[1].argval), True)
+    return Recovery(instr[1].argval, True)
 
 
 @register_recovery_strategy(9)
@@ -31,7 +31,7 @@ def recover_small_int(seg: Segment, indent: int) -> Recovery | None:
     instr = _single_instr(seg)
     if instr is None or instr[1].opname != "LOAD_SMALL_INT":
         return None
-    return Recovery(str(instr[1].argval), True)
+    return Recovery(instr[1].argval, True)
 
 
 @register_recovery_strategy(10)
@@ -39,11 +39,7 @@ def recover_common_constant(seg: Segment, indent: int) -> Recovery | None:
     instr = _single_instr(seg)
     if instr is None or instr[1].opname != "LOAD_COMMON_CONSTANT":
         return None
-    opc = instr[1].bytecode.opcode
-    fmt = opc.opcode_arg_fmt.get("LOAD_COMMON_CONSTANT")
-    if fmt is None:
-        return None
-    return Recovery(fmt(instr[1].arg), True)
+    return Recovery(instr[1].argval, True)
 
 
 @register_recovery_strategy(11)

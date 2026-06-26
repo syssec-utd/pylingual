@@ -8,7 +8,7 @@ import pytest
 from xdis import get_opcode
 
 from pylingual.editable_bytecode import EditableBytecode
-from pylingual.masking.container_recovery.preprocessor import Preprocessor
+from pylingual.preprocessor import Preprocessor
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

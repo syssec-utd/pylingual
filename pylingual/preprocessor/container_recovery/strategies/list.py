@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..recovery import register_recovery_strategy, recover
-from ..segment import Recovery, Segment, INDENT
+from ..segment import Recovery, Segment
 from ..utils import _non_empty_children, _recover_load_instr, _get_build_list_size, _has_list_append_pattern
 
 
@@ -12,23 +12,17 @@ def recover_build_list(seg: Segment, indent: int) -> Recovery | None:
         return None
     if _has_list_append_pattern(seg):
         return None
-    prefix = INDENT * indent
-    inner = INDENT * (indent + 1)
     elems = [c for c in seg.ordered_children if not (isinstance(c, Segment) and c.tag == "BUILD")]
     if not elems:
-        return Recovery("[]", True)
+        return Recovery([], True)
     items = []
     complete = True
     for elem in elems:
         r = recover(elem, indent + 1)
         if not r.complete:
             complete = False
-        if r.complete:
-            items.append(f"{inner}{r.expr}")
-        else:
-            items.append(r.expr)
-    body = ",\n".join(items)
-    return Recovery("[" + f"\n{body}\n{prefix}" + "]", complete)
+        items.append(r.value)
+    return Recovery(items, complete)
 
 
 @register_recovery_strategy(4)
@@ -53,7 +47,7 @@ def recover_list_extend(seg: Segment, indent: int) -> Recovery | None:
     if names != ["LOAD_CONST", "LIST_EXTEND"]:
         return None
     val = extend_instrs[0][1].argval
-    return Recovery(repr(list(val)) if isinstance(val, tuple) else repr(val), True)
+    return Recovery(list(val) if isinstance(val, tuple) else val, True)
 
 
 @register_recovery_strategy(6)
@@ -80,6 +74,6 @@ def recover_list_append(seg: Segment, indent: int) -> Recovery | None:
         load_instr = inner[0][1]
         r = _recover_load_instr(load_instr)
         if r is None:
-            return Recovery("", False)
-        items.append(r.expr)
-    return Recovery("[" + ", ".join(items) + "]", True)
+            return Recovery(None, False)
+        items.append(r.value)
+    return Recovery(items, True)
