@@ -190,8 +190,19 @@ class Masker:
             elif isinstance(inst.argval, str) and inst.argval in self.global_tab:  # have to do this check incase string is varname of type annotation
                 view = f"{inst.opname} , {repr(self.mask(inst.argval))}"
 
+            elif type(inst.argval) in (list, tuple, frozenset, set, dict) and inst.argval in self.global_tab:
+                # Container constants recovered by the preprocessor are masked atomically.
+                # TODO: Providing type information via type(inst.argval).__name__(<mask_N>) would
+                # give the model useful context, but the current model was not trained on that format
+                # and produces garbled output (e.g. splitting "dict" across a mask boundary). Reverting
+                # to a plain mask token matches the training data. Revisit this after model retraining.
+                view = f"{inst.opname} , {self.mask(inst.argval)}"
             elif type(inst.argval) in (list, tuple, frozenset, set, dict):
-                view = f"{inst.opname} , {type(inst.argval).__name__}({self.mask(inst.argval)})"
+                # Container argval not in global table (e.g. compiler-generated tuples for
+                # combined fast opcodes like STORE_FAST_STORE_FAST in 3.14+). Mask elements
+                # individually — they are typically local variable names that are in the table.
+                elems = [repr(self.mask(e)) if e in self.global_tab else repr(e) for e in inst.argval]
+                view = f"{inst.opname} , ({', '.join(elems)})"
             elif type(inst.argval) is slice:
                 view = f"{inst.opname} , {self.mask(inst.argval.start)} : {self.mask(inst.argval.stop)} : {self.mask(inst.argval.step)}"
             else:
