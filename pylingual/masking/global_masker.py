@@ -1,4 +1,4 @@
-import builtins
+import ast
 from collections.abc import MutableMapping
 from xdis import iscode
 from xdis.cross_types import UnicodeForPython3, LongTypeForPython3
@@ -45,16 +45,14 @@ class TypeSensitiveDict(MutableMapping):
             return (key.value.decode("utf-8"), str)
         if type(key) == LongTypeForPython3:
             return (key.value, int)
-        try:
-            hash(key)
-            return (key, type(key))
-        except TypeError:
+        if isinstance(key, (list, set, dict, tuple, frozenset)):
             return (repr(key), type(key))
+        return (key, type(key))
 
     def _key_restore(self, key):
         value, typ = key
         if type(value) is str and typ is not str:
-            return eval(value, {"__builtins__": builtins})
+            return ast.literal_eval(value)
         return value
 
 
