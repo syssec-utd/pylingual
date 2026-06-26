@@ -29,6 +29,7 @@ class Preprocessor:
         segments = parse_bytecode_recursive(depths)
         for seg in reversed(segments):
             self._process_segment(bc, seg)
+        bc._bake_jumps()
 
     def _process_segment(self, bc: EditableBytecode, seg: Segment) -> None:
         if seg.tag in _CONTAINER_TAGS:

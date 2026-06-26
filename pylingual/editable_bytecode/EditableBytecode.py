@@ -389,6 +389,7 @@ class EditableBytecode:
                                 instruction.argval = instruction.target.offset
                             else:
                                 instruction.arg = instruction.argval = instruction.target.offset
+                        instruction.refresh_argrepr()
                     if add_extended:
                         # count the number of necessary preceeding EXTENDED_ARG instructions
                         n_extendeds_needed = (instruction.arg > 0xFF) + (instruction.arg > 0xFFFF) + (instruction.arg > 0xFFFFFF)
