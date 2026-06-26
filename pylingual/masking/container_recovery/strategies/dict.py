@@ -34,3 +34,36 @@ def recover_dict(seg: Segment, indent: int) -> Recovery | None:
             pairs.append(f"{key_r.expr}\n{inner}:\n{val_r.expr}")
     body = ",\n".join(pairs)
     return Recovery("{" + f"\n{body}\n{prefix}" + "}", complete)
+
+
+@register_recovery_strategy(0)
+def recover_const_key_map(seg: Segment, indent: int) -> Recovery | None:
+    build_instr = None
+    for child in reversed(seg.ordered_children):
+        if isinstance(child, Segment) and child.tag == "BUILD":
+            if len(child.ordered_children) == 1 and isinstance(child.ordered_children[0], tuple):
+                instr = child.ordered_children[0][1]
+                if instr.opname == "BUILD_CONST_KEY_MAP":
+                    build_instr = instr
+                    break
+    if build_instr is None:
+        return None
+
+    key_tuple_seg = None
+    values = []
+    for child in seg.ordered_children:
+        if isinstance(child, Segment):
+            if child.tag == "KEY_TUPLE":
+                key_tuple_seg = child
+            elif child.tag.startswith("VALUE"):
+                values.append(child)
+    if key_tuple_seg is None:
+        return None
+
+    keys = key_tuple_seg.ordered_children[0][1].argval
+
+    value_recoveries = [recover(v, indent + 1) for v in values]
+    complete = all(r.complete for r in value_recoveries)
+
+    pairs = [f"{repr(keys[i])}: {value_recoveries[i].expr}" for i in range(min(len(keys), len(value_recoveries)))]
+    return Recovery("{" + ", ".join(pairs) + "}", complete)

@@ -16,6 +16,8 @@ def stack_effect(opc, opcode: int, oparg: int | None = None, *, jump: bool | Non
 
     if opname == "BUILD_MAP":
         return 1 - 2 * oparg
+    if opname == "BUILD_CONST_KEY_MAP":
+        return -oparg
     if opname == "CALL":
         return -(oparg + 1)
     if opname == "UNPACK_EX":
@@ -187,6 +189,41 @@ def parse_dict_recursive(remaining: list[tuple[int, object]]) -> Segment:
     return Segment("DICT", output_segs[::-1])
 
 
+def parse_const_key_map_recursive(remaining: list[tuple[int, object]]) -> Segment:
+    (post_base_depth, build_instr) = remaining.pop()
+    size = build_instr.arg
+    output_segs = [Segment("BUILD", [(post_base_depth, build_instr)])]
+
+    if size == 0:
+        return Segment("DICT", output_segs[::-1])
+
+    (key_depth, key_instr) = remaining.pop()
+    output_segs.append(Segment("KEY_TUPLE", [(key_depth, key_instr)]))
+
+    base_depth = remaining[-1][0] if remaining else post_base_depth
+    end_depth = base_depth - size
+    cur_elem_id = size
+    cur_seg = []
+
+    while remaining:
+        if base_depth == end_depth or cur_elem_id <= 0:
+            break
+        (stack_depth, instr) = remaining.pop()
+        if stack_depth < base_depth:
+            output_segs.append(Segment(f"VALUE {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
+            cur_elem_id -= 1
+            base_depth -= 1
+            cur_seg = []
+        cur_seg.append((stack_depth, instr))
+
+    if cur_seg and cur_elem_id > 0:
+        output_segs.append(Segment(f"VALUE {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
+    elif cur_seg:
+        remaining.extend(cur_seg)
+
+    return Segment("DICT", output_segs[::-1])
+
+
 def parse_bytecode_recursive(remaining: list[tuple[int, object]]) -> list[Segment]:
     output_segs = []
     cur_seg = []
@@ -197,6 +234,11 @@ def parse_bytecode_recursive(remaining: list[tuple[int, object]]) -> list[Segmen
             if cur_seg: output_segs.append(Segment("UNKNOWN", cur_seg[::-1]))
             cur_seg = []
             dict_seg = parse_dict_recursive(remaining)
+            output_segs.append(dict_seg)
+        elif instr.opname == "BUILD_CONST_KEY_MAP":
+            if cur_seg: output_segs.append(Segment("UNKNOWN", cur_seg[::-1]))
+            cur_seg = []
+            dict_seg = parse_const_key_map_recursive(remaining)
             output_segs.append(dict_seg)
         elif instr.opname in ("LIST_EXTEND", "LIST_APPEND"):
             if cur_seg: output_segs.append(Segment("UNKNOWN", cur_seg[::-1]))
