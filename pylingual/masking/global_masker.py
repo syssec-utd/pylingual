@@ -47,12 +47,19 @@ class TypeSensitiveDict(MutableMapping):
             return (key.value, int)
         if isinstance(key, (list, set, dict, tuple, frozenset)):
             return (repr(key), type(key))
+        try:
+            hash(key)
+        except TypeError:
+            return (repr(key), type(key))
         return (key, type(key))
 
     def _key_restore(self, key):
         value, typ = key
         if type(value) is str and typ is not str:
-            return ast.literal_eval(value)
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return value
         return value
 
 

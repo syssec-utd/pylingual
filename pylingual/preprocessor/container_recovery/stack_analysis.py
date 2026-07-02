@@ -1,50 +1,8 @@
 from __future__ import annotations
 
+from xdis.cross_dis import xstack_effect
+
 from .segment import Segment
-
-
-VAR_STACK_SENTINEL = -3000
-
-
-def stack_effect(opc, opcode: int, oparg: int | None = None, *, jump: bool | None = None) -> int:
-    # xdis oppush/oppop tables are incorrect for null-pushing opcodes (LOAD_GLOBAL, LOAD_ATTR, LOAD_SUPER_ATTR, CALL) and variable-size opcodes (BUILD_MAP, BUILD_CONST_KEY_MAP) — the special cases below compensate.
-    if oparg is None:
-        oparg = 0
-    push = opc.oppush[opcode]
-    pop = opc.oppop[opcode]
-
-    opname = opc.opname[opcode]
-
-    if opname == "BUILD_MAP":
-        return 1 - 2 * oparg
-    if opname == "BUILD_CONST_KEY_MAP":
-        return -oparg
-    if opname == "CALL":
-        return -(oparg + 1)
-    if opname == "UNPACK_EX":
-        return (oparg & 0xFF) + ((oparg >> 8) & 0xFF) - 1
-    if opname == "LOAD_GLOBAL" and oparg & 1:
-        return 2
-    if opname == "LOAD_ATTR" and oparg & 1:
-        return 1
-    if opname == "LOAD_SUPER_ATTR" and oparg & 1:
-        return -1
-
-    if push == VAR_STACK_SENTINEL:
-        if pop == VAR_STACK_SENTINEL:
-            return oparg
-        return oparg - pop
-
-    if pop == VAR_STACK_SENTINEL:
-        return push - oparg
-
-    if pop < 0:
-        return push + oparg * pop
-
-    if push < 0:
-        return oparg * (-push) - pop
-
-    return push - pop
 
 
 def analyze_stack(bytecode) -> list[tuple[int, object]]:
@@ -53,7 +11,9 @@ def analyze_stack(bytecode) -> list[tuple[int, object]]:
     results = []
     for instr in bytecode.instructions:
         arg = instr.arg if instr.arg is not None else 0
-        effect = stack_effect(opc, instr.opcode, arg)
+        effect = xstack_effect(instr.opcode, opc, arg)
+        if effect is None:
+            effect = opc.oppush[instr.opcode] - opc.oppop[instr.opcode]
         depth += effect
         results.append((depth, instr))
     return results
