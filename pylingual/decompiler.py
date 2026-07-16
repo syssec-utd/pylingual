@@ -362,6 +362,9 @@ class Decompiler:
 
     def update_source_lines(self):
         self.source_lines = list(itertools.chain.from_iterable(self.translation_results))
+        total_boundaries = sum(sum(1 for r in seg if r["entity"] == "B") for seg in self.segmentation_results)
+        if len(self.source_lines) < total_boundaries:
+            self.source_lines.extend([""] * (total_boundaries - len(self.source_lines)))
         if self.version == (3, 12):
             self.pyc.fix_while12(self.source_lines)
         elif self.version >= (3, 10):
