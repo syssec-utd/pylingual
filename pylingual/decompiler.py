@@ -169,7 +169,16 @@ class Decompiler:
                 if not self.correct_segmentation(bad_idx, from_comp_error=True):
                     return
                 corrected_comp_errors.add(bad_idx)
-            failed = TrackedList(CORRECTION_STEP, [i for i, result in enumerate(self.equivalence_results) if not result.success])
+            bc_idx = 0
+            failed = []
+            for result in self.equivalence_results:
+                if isinstance(result, Exception):
+                    continue
+                if result.bc_a is not None:
+                    if not result.success:
+                        failed.append(bc_idx)
+                    bc_idx += 1
+            failed = TrackedList(CORRECTION_STEP, failed)
             for i in failed:
                 if self.correct_segmentation(i):
                     continue
@@ -200,8 +209,11 @@ class Decompiler:
                 self.source_context.purge(bad_bc.codeobj)
                 equivalence_results = self.check_reconstruction(str(self.source_context))
             for i in purged:
-                r = equivalence_results[i]
-                equivalence_results[i] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
+                eq_idx = self.eq_idx_for_bc(i, equivalence_results)
+                if eq_idx is None:
+                    continue
+                r = equivalence_results[eq_idx]
+                equivalence_results[eq_idx] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
             self.source_context.purged_cfts = []
             return equivalence_results
         except:
@@ -376,6 +388,20 @@ class Decompiler:
             return compare_pyc(self.pyc, pyc)
 
     # try to correct the segmentation of the ith code object
+    def eq_idx_for_bc(self, bc_idx: int, equivalence_results=None) -> int | None:
+        """Map an ordered_bytecodes index to the corresponding equivalence_results index."""
+        if equivalence_results is None:
+            equivalence_results = self.equivalence_results
+        count = 0
+        for j, result in enumerate(equivalence_results):
+            if isinstance(result, Exception):
+                continue
+            if result.bc_a is not None:
+                if count == bc_idx:
+                    return j
+                count += 1
+        return None
+
     def correct_segmentation(self, i: int, from_comp_error=False) -> bool:
         if not self.segmentation_results[i]:
             return False
@@ -412,8 +438,10 @@ class Decompiler:
                     self.highest_k_used = max(self.highest_k_used, k)
                     logger.info(f"Updated segmentation for {self.ordered_bytecodes[i].name}")
                     return True
-            elif not has_comp_error(equivalence_results) and equivalence_results[i].success:
-                self.equivalence_results[i] = equivalence_results[i]
+            elif not has_comp_error(equivalence_results):
+                eq_idx = self.eq_idx_for_bc(i)
+                if eq_idx is not None and equivalence_results[eq_idx].success:
+                    self.equivalence_results[eq_idx] = equivalence_results[eq_idx]
                 self.highest_k_used = max(self.highest_k_used, k)
                 logger.info(f"Updated segmentation for {self.ordered_bytecodes[i].name}")
                 return True
