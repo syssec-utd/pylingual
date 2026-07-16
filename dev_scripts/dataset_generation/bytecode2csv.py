@@ -14,6 +14,7 @@ import multiprocessing
 import pathlib
 import re
 import signal
+import time
 from typing import Callable, Tuple
 
 import tqdm
@@ -28,6 +29,21 @@ bytecode_separator = " <SEP> "
 source_seperator = " <SEP> "
 CSV_SGMT_HEADER = ["source", "bytecode", "boundary", "file"]
 CSV_STMT_HEADER = ["source", "bytecode", "file"]
+
+
+def retry_on_nas_error(max_retries=3, base_delay=1):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except OSError as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(base_delay * (2 ** attempt))
+                    else:
+                        raise
+        return wrapper
+    return decorator
 
 
 def create_csv_dataset(code_dataset_path: pathlib.Path, csv_dataset_path: pathlib.Path, data_requests: list[DataRequest], logger: logging.Logger = None):
@@ -116,6 +132,7 @@ def bytecode2csv_exception_wrapper(paths=Tuple[pathlib.Path, pathlib.Path]) -> T
         return Exception(f"{type(error)}: {error} in file {paths}")
 
 
+@retry_on_nas_error()
 def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, list]:
     """Creates segmentation and statement csv rows for given bytecode and source file"""
     segmentation_rows = []
