@@ -94,6 +94,9 @@ class EditableBytecode:
         # inline __annotate__ functions, which were added in python 3.14
         if self.version >= (3, 14):
             self.inline_annotate_functions()
+        # inline <generic parameters of ...> code objects, which were added in python 3.12 (PEP 695)
+        if self.version >= (3, 12):
+            self.inline_generic_parameters()
 
         # updates attribute of instructions that contains information about the exception table
         self._add_inst_exception_attrs()
@@ -327,16 +330,6 @@ class EditableBytecode:
                     jump_target_mapping[inst] = inlinable_insts[0]
                     continue
 
-                if iscode(inst.argval) and inst.argval.co_name.startswith("<generic parameters of "):
-                    # fully inline generics
-                    # replace
-                    # LOAD_CONST <generic parameters of <function name>>
-                    # MAKE_FUNCTION
-                    generic_bc = EditableBytecode(inst.argval, self.opcode, self.version)
-                    inline_dict[(idx, tuple(self.instructions[idx : idx + 2]))] = generic_bc.instructions[:-1]
-                    jump_target_mapping[inst] = generic_bc.instructions[0]
-                    continue
-
             # handle inline variable annotations
             elif inst.opname in ("LOAD_NAME", "LOAD_DEREF") and inst.argval == "__conditional_annotations__":
                 load_annotation_identifier = self.instructions[idx + 1]
@@ -367,6 +360,37 @@ class EditableBytecode:
                 if inst.opname == "LOAD_CONST" and try_read_annotate_func(inst.argval):
                     assert self.co_consts[inst.arg] == inst.argval
                     self.co_consts[inst.arg] = None
+
+    def inline_generic_parameters(self):
+        """Inline <generic parameters of X> code objects added in Python 3.12 (PEP 695).
+
+        Splices the helper's body into the parent instruction stream so the LLM sees
+        the typevar dance, LOAD_BUILD_CLASS, and base subscription in one contiguous
+        view, and nulls the orphan's co_consts slot so it isn't separately segmented.
+        """
+        inline_dict: dict[tuple[int, tuple[Inst]], list[Inst]] = {}
+        jump_target_mapping = {}
+
+        for idx, inst in enumerate(self.instructions):
+            if inst.opname == "LOAD_CONST" and iscode(inst.argval) and inst.argval.co_name.startswith("<generic parameters of "):
+                # fully inline generics
+                # replace
+                # LOAD_CONST <generic parameters of <function name>>
+                # MAKE_FUNCTION
+                generic_bc = EditableBytecode(inst.argval, self.opcode, self.version)
+                inline_dict[(idx, tuple(self.instructions[idx : idx + 2]))] = generic_bc.instructions[:-1]
+                jump_target_mapping[inst] = generic_bc.instructions[0]
+
+        self.insert_insts({idx + len(insts_to_remove): insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
+        self._change_jump_targets(jump_target_mapping)
+        self.remove_instructions(set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
+
+        # remove the generic-parameters functions from co_consts, but don't impact co_consts offsets
+        # we don't remove these from child_bytecodes because this runs before child_bytecodes are populated
+        for idx, removed_insts in inline_dict.keys():
+            if (inst := removed_insts[0]).opname == "LOAD_CONST":
+                assert self.co_consts[inst.arg] == inst.argval
+                self.co_consts[inst.arg] = None
 
     def get_recursive_length(self):
         """Returns the recursive length of this bytecode and all its descendents"""
