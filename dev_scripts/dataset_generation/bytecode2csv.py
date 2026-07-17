@@ -87,17 +87,41 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
     statement_writer = csv_writer("statement", CSV_STMT_HEADER)
 
     # create dirs
-    code_dirs = (child for child in source_path.iterdir() if child.is_dir())
+    def safe_code_dirs():
+        try:
+            it = source_path.iterdir()
+        except OSError:
+            return
+        while True:
+            try:
+                child = next(it)
+            except OSError:
+                continue
+            except StopIteration:
+                return
+            try:
+                if child.is_dir():
+                    yield child
+            except OSError:
+                continue
+    code_dirs = safe_code_dirs()
 
     def bytecode2csv_args():
-        for dir in code_dirs:
-            py_path = next(dir.glob("*.py"), None)
-            pyc_path = next(dir.glob("*.pyc"), None)
-            if None in (py_path, pyc_path):
-                logging.debug(f"PY or PYC file not found in {dir}")
+        while True:
+            try:
+                try:
+                    dir = next(code_dirs)
+                except OSError:
+                    continue
+                except StopIteration:
+                    return
+                py_path = next(dir.glob("*.py"), None)
+                pyc_path = next(dir.glob("*.pyc"), None)
+            except OSError:
                 continue
-            else:
-                yield (py_path, pyc_path)
+            if None in (py_path, pyc_path):
+                continue
+            yield (py_path, pyc_path)
 
     num_fails = 0
     with multiprocessing.Pool() as pool:
