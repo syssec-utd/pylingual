@@ -69,11 +69,15 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
         out_dir.mkdir(exist_ok=True)
 
         for csv_idx in itertools.count():
-            new_path = out_dir.joinpath(f"{file_prefix}_{csv_idx}.csv")
-            new_path.touch()
+            @retry_on_nas_error()
+            def open_csv():
+                new_path = out_dir.joinpath(f"{file_prefix}_{csv_idx}.csv")
+                new_path.touch()
+                return new_path.open(mode="w")
+            csv_file = open_csv()
             if logger:
-                logger.info(f"Creating new csv {new_path.resolve()}...")
-            with new_path.open(mode="w") as csv_file:
+                logger.info(f"Creating new csv {csv_file.name}...")
+            with csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(csv_header)
                 for writer in itertools.repeat(writer, max_csv_rows):
