@@ -56,32 +56,86 @@ def create_csv_dataset(code_dataset_path: pathlib.Path, csv_dataset_path: pathli
 
 def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger: logging.Logger = None, max_csv_rows: int = 30000, progress_bar: tqdm.tqdm = None):
     # validate output directory
-    if csv_output_path.exists():
-        if not csv_output_path.is_dir():
-            raise OSError("CSV output path is not a directory")
-    else:
-        csv_output_path.mkdir(parents=True)
+    @retry_on_nas_error()
+    def ensure_csv_output_dir():
+        if csv_output_path.exists():
+            if not csv_output_path.is_dir():
+                raise OSError("CSV output path is not a directory")
+        else:
+            csv_output_path.mkdir(parents=True)
+
+    try:
+        ensure_csv_output_dir()
+    except OSError as error:
+        if logger:
+            logger.warning(f"Unable to access CSV output directory {csv_output_path}: {error}; skipping split")
+        return
 
     ##### csv write wrappers to preserve csv row limit
 
     def csv_writer(file_prefix: str, csv_header: list) -> Callable:
         out_dir = csv_output_path.joinpath(file_prefix)
-        out_dir.mkdir(exist_ok=True)
 
         for csv_idx in itertools.count():
             @retry_on_nas_error()
-            def open_csv():
+            def ensure_output_dir():
+                out_dir.mkdir(exist_ok=True)
+
+            @retry_on_nas_error()
+            def open_csv(mode="w"):
                 new_path = out_dir.joinpath(f"{file_prefix}_{csv_idx}.csv")
-                new_path.touch()
-                return new_path.open(mode="w")
-            csv_file = open_csv()
+                if mode == "w":
+                    new_path.touch()
+                return new_path.open(mode=mode)
+
+            def discard_row(_row):
+                return None
+
+            try:
+                ensure_output_dir()
+                csv_file = open_csv()
+            except OSError as error:
+                if logger:
+                    logger.warning(f"Unable to open {file_prefix}_{csv_idx}.csv: {error}; dropping rows")
+                for _ in itertools.repeat(None, max_csv_rows):
+                    yield discard_row
+                continue
+
             if logger:
                 logger.info(f"Creating new csv {csv_file.name}...")
-            with csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(csv_header)
-                for writer in itertools.repeat(writer, max_csv_rows):
-                    yield writer.writerow
+            writer = csv.writer(csv_file)
+
+            def close_csv():
+                try:
+                    csv_file.close()
+                except OSError as error:
+                    if logger:
+                        logger.warning(f"Unable to close {csv_file.name}: {error}")
+
+            def write_row(row):
+                nonlocal csv_file, writer
+                for attempt in range(3):
+                    try:
+                        return writer.writerow(row)
+                    except OSError as error:
+                        close_csv()
+                        if attempt == 2:
+                            if logger:
+                                logger.warning(f"Unable to write {file_prefix}_{csv_idx}.csv: {error}; dropping row")
+                            return None
+                        try:
+                            time.sleep(2**attempt)
+                            csv_file = open_csv(mode="a")
+                            writer = csv.writer(csv_file)
+                        except OSError:
+                            continue
+
+            try:
+                write_row(csv_header)
+                for _ in itertools.repeat(None, max_csv_rows):
+                    yield write_row
+            finally:
+                close_csv()
 
     segmentation_writer = csv_writer("segmentation", CSV_SGMT_HEADER)
     statement_writer = csv_writer("statement", CSV_STMT_HEADER)
@@ -124,7 +178,7 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             yield (py_path, pyc_path)
 
     num_fails = 0
-    with multiprocessing.Pool() as pool:
+    with multiprocessing.Pool(maxtasksperchild=1000) as pool:
         for result in pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args()):
             if isinstance(result, Exception):
                 num_fails += 1
