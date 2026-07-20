@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from xdis.cross_dis import instruction_size
+from xdis.cross_dis import instruction_size, xstack_effect
 
 from pylingual.editable_bytecode import EditableBytecode
 from .container_recovery.recovery import recover
 from .container_recovery.segment import Segment
 from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
 
-_CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT", "LOAD_CONST_CONTAINER"}
+_CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
 
 
 class Preprocessor:
@@ -37,6 +37,21 @@ class Preprocessor:
             if seg.start_offset is not None and seg.end_offset is not None:
                 recovery = recover(seg)
                 if recovery.complete:
+                    depth = 1
+                    for inst in bc.instructions[bc.instructions.index(bc.get_by_offset(seg.end_offset)) + 1:]:
+                        effect = xstack_effect(inst.opcode, bc.opcode, inst.arg or 0)
+                        if effect is None and inst.opname == "MAKE_FUNCTION":
+                            effect = -int(inst.arg or 0).bit_count()
+                        elif effect is None:
+                            effect = bc.opcode.oppush[inst.opcode] - bc.opcode.oppop[inst.opcode]
+                        push = 1 if inst.opname.startswith("BUILD_") else bc.opcode.oppush[inst.opcode]
+                        if push >= 0 and push - effect >= depth:
+                            if inst.opname in ("MAKE_FUNCTION", "SET_FUNCTION_ATTRIBUTE"):
+                                return
+                            break
+                        depth += effect
+                        if depth <= 0:
+                            break
                     self._collapse_segment(bc, seg, recovery.value)
                     return
         for child in reversed(seg.ordered_children):
@@ -76,5 +91,6 @@ class Preprocessor:
             False,
             False,
         )
+        new_inst.preprocessed_container = True
 
         bc[start_idx : end_idx + 1] = [new_inst]

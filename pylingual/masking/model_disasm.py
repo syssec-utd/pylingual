@@ -36,6 +36,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
 
     for bc in bytecode.iter_bytecodes():
         bc_co = bc.to_code(no_lnotab=True)
+        preprocessed = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
 
         # create consts
         consts = list(deepcopy(bc_co.co_consts))
@@ -54,7 +55,9 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
             # Don't needlessly increment the global_idx
             if const in global_tab:
                 continue
-            if type(const) is slice:
+            if type(const) in (list, tuple, frozenset, set) and not any(type(const) is type(value) and const == value for value in preprocessed):
+                consts.extend(const)
+            elif type(const) is slice:
                 # decompose slice constants for 3.14+
                 consts.extend([const.start, const.stop, const.step])
             else:
