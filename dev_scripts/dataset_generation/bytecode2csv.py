@@ -70,12 +70,40 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             logger.warning(f"Unable to access CSV output directory {csv_output_path}: {error}; skipping split")
         return
 
+    # Resume: load checkpoint of already-processed source files
+    checkpoint_file = csv_output_path / ".checkpoint"
+    processed_paths: set[str] = set()
+    if checkpoint_file.exists():
+        try:
+            for line in checkpoint_file.read_text().splitlines():
+                p = line.strip()
+                if p:
+                    processed_paths.add(p)
+            if logger and processed_paths:
+                logger.info(f"Resuming: {len(processed_paths)} source files already processed")
+        except OSError:
+            pass
+
+    def get_start_idx(prefix: str) -> int:
+        """Return the next CSV file index after the highest existing one."""
+        out_dir = csv_output_path.joinpath(prefix)
+        try:
+            files = list(out_dir.glob(f"{prefix}_*.csv"))
+        except OSError:
+            return 0
+        if not files:
+            return 0
+        try:
+            return max(int(f.stem.split("_")[-1]) for f in files) + 1
+        except (ValueError, IndexError):
+            return 0
+
     ##### csv write wrappers to preserve csv row limit
 
-    def csv_writer(file_prefix: str, csv_header: list) -> Callable:
+    def csv_writer(file_prefix: str, csv_header: list, start_idx: int = 0) -> Callable:
         out_dir = csv_output_path.joinpath(file_prefix)
 
-        for csv_idx in itertools.count():
+        for csv_idx in itertools.count(start_idx):
             @retry_on_nas_error()
             def ensure_output_dir():
                 out_dir.mkdir(exist_ok=True)
@@ -136,8 +164,10 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             finally:
                 close_csv()
 
-    segmentation_writer = csv_writer("segmentation", CSV_SGMT_HEADER)
-    statement_writer = csv_writer("statement", CSV_STMT_HEADER)
+    seg_start = get_start_idx("segmentation")
+    stmt_start = get_start_idx("statement")
+    segmentation_writer = csv_writer("segmentation", CSV_SGMT_HEADER, seg_start)
+    statement_writer = csv_writer("statement", CSV_STMT_HEADER, stmt_start)
 
     # create dirs
     def safe_code_dirs():
@@ -174,9 +204,14 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
                 continue
             if None in (py_path, pyc_path):
                 continue
+            if str(py_path) in processed_paths:
+                if progress_bar:
+                    progress_bar.update()
+                continue
             yield (py_path, pyc_path)
 
     num_fails = 0
+    checkpoint_counter = 0
     with multiprocessing.Pool(maxtasksperchild=100) as pool:
         iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
         while True:
@@ -200,9 +235,26 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             for row, writerow in zip(statement_rows, statement_writer):
                 writerow(row)
 
+            # Track processed source file for resume
+            if segmentation_rows:
+                processed_paths.add(str(segmentation_rows[-1][-1]))
+            checkpoint_counter += 1
+            if checkpoint_counter >= 200:
+                try:
+                    checkpoint_file.write_text("\n".join(sorted(processed_paths)))
+                except OSError:
+                    pass
+                checkpoint_counter = 0
+
             if progress_bar:
                 progress_bar.update()
                 progress_bar.set_postfix({"num_fails": num_fails})
+
+    # Write final checkpoint
+    try:
+        checkpoint_file.write_text("\n".join(sorted(processed_paths)))
+    except OSError:
+        pass
 
     logger.info(f"NUMBER OF FAILS !!! {num_fails}")
 
