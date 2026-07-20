@@ -13,6 +13,7 @@ import logging
 import multiprocessing
 import pathlib
 import re
+import sys
 import time
 from typing import Callable, Tuple
 
@@ -74,6 +75,7 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
     def load_processed_paths() -> set[str]:
         """Read the file column from existing segmentation CSVs to determine which sources are done."""
         processed = set()
+        csv.field_size_limit(sys.maxsize)
         seg_dir = csv_output_path.joinpath("segmentation")
         if not seg_dir.exists():
             return processed
@@ -83,11 +85,11 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             return processed
         for csv_path in csv_files:
             try:
-                with open(csv_path, "r") as f:
+                with open(csv_path, "r", newline="") as f:
                     reader = csv.reader(f)
                     next(reader, None)  # skip header
                     for row in reader:
-                        if row:
+                        if len(row) == len(CSV_SGMT_HEADER):
                             processed.add(row[-1])
             except (OSError, csv.Error, StopIteration):
                 continue
@@ -96,6 +98,8 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
     processed_paths = load_processed_paths()
     if logger and processed_paths:
         logger.info(f"Resuming: {len(processed_paths)} source files already in existing CSVs")
+    if progress_bar:
+        progress_bar.update(len(processed_paths))
 
     def get_start_idx(prefix: str) -> int:
         """Return the next CSV file index after the highest existing one."""
@@ -218,8 +222,6 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             if None in (py_path, pyc_path):
                 continue
             if str(py_path) in processed_paths:
-                if progress_bar:
-                    progress_bar.update()
                 continue
             yield (py_path, pyc_path)
 
