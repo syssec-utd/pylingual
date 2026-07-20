@@ -9,6 +9,7 @@ from pylingual.editable_bytecode import EditableBytecode
 from pylingual.masking.global_masker import Masker, TypeSensitiveDict
 from pylingual.masking.model_disasm import create_global_masker
 from pylingual.preprocessor import Preprocessor
+from pylingual.preprocessor.preprocessor import _make_function_stack_effect
 
 
 def _preprocess(source: str) -> EditableBytecode:
@@ -88,3 +89,8 @@ def test_call_function_kw_pads_positional_arguments():
     assert Masker(table).get_model_view(inst) == (
         "LOAD_CONST , (<KWARG_PAD>, <KWARG_PAD>, '<mask_1>', '<mask_2>')"
     )
+
+
+def test_pre311_make_function_effect_includes_qualname():
+    assert _make_function_stack_effect(0b1110, (3, 6)) == -4
+    assert _make_function_stack_effect(0b1110, (3, 12)) == -3

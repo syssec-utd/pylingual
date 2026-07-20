@@ -10,6 +10,10 @@ from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_rec
 _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
 
 
+def _make_function_stack_effect(arg, version) -> int:
+    return -int(arg or 0).bit_count() - (version < (3, 11))
+
+
 class Preprocessor:
     """Rewrites container construction bytecode into single LOAD_CONST instructions.
 
@@ -41,7 +45,7 @@ class Preprocessor:
                     for inst in bc.instructions[bc.instructions.index(bc.get_by_offset(seg.end_offset)) + 1:]:
                         effect = xstack_effect(inst.opcode, bc.opcode, inst.arg or 0)
                         if effect is None and inst.opname == "MAKE_FUNCTION":
-                            effect = -int(inst.arg or 0).bit_count()
+                            effect = _make_function_stack_effect(inst.arg, bc.version)
                         elif effect is None:
                             effect = bc.opcode.oppush[inst.opcode] - bc.opcode.oppop[inst.opcode]
                         push = 1 if inst.opname.startswith("BUILD_") else bc.opcode.oppush[inst.opcode]
