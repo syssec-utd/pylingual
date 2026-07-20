@@ -70,19 +70,32 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             logger.warning(f"Unable to access CSV output directory {csv_output_path}: {error}; skipping split")
         return
 
-    # Resume: load checkpoint of already-processed source files
-    checkpoint_file = csv_output_path / ".checkpoint"
-    processed_paths: set[str] = set()
-    if checkpoint_file.exists():
+    # Resume: scan existing CSV files to find already-processed source paths
+    def load_processed_paths() -> set[str]:
+        """Read the file column from existing segmentation CSVs to determine which sources are done."""
+        processed = set()
+        seg_dir = csv_output_path.joinpath("segmentation")
+        if not seg_dir.exists():
+            return processed
         try:
-            for line in checkpoint_file.read_text().splitlines():
-                p = line.strip()
-                if p:
-                    processed_paths.add(p)
-            if logger and processed_paths:
-                logger.info(f"Resuming: {len(processed_paths)} source files already processed")
+            csv_files = sorted(seg_dir.glob("segmentation_*.csv"))
         except OSError:
-            pass
+            return processed
+        for csv_path in csv_files:
+            try:
+                with open(csv_path, "r") as f:
+                    reader = csv.reader(f)
+                    next(reader, None)  # skip header
+                    for row in reader:
+                        if row:
+                            processed.add(row[-1])
+            except (OSError, csv.Error, StopIteration):
+                continue
+        return processed
+
+    processed_paths = load_processed_paths()
+    if logger and processed_paths:
+        logger.info(f"Resuming: {len(processed_paths)} source files already in existing CSVs")
 
     def get_start_idx(prefix: str) -> int:
         """Return the next CSV file index after the highest existing one."""
@@ -211,7 +224,6 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             yield (py_path, pyc_path)
 
     num_fails = 0
-    checkpoint_counter = 0
     with multiprocessing.Pool(maxtasksperchild=100) as pool:
         iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
         while True:
@@ -235,27 +247,9 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             for row, writerow in zip(statement_rows, statement_writer):
                 writerow(row)
 
-            # Track processed source file for resume
-            if segmentation_rows:
-                processed_paths.add(str(segmentation_rows[-1][-1]))
-            checkpoint_counter += 1
-            if checkpoint_counter >= 200:
-                try:
-                    checkpoint_file.write_text("\n".join(sorted(processed_paths)))
-                except OSError:
-                    pass
-                checkpoint_counter = 0
-
             if progress_bar:
                 progress_bar.update()
                 progress_bar.set_postfix({"num_fails": num_fails})
-
-    # Write final checkpoint
-    try:
-        checkpoint_file.write_text("\n".join(sorted(processed_paths)))
-    except OSError:
-        pass
-
     logger.info(f"NUMBER OF FAILS !!! {num_fails}")
 
 
