@@ -13,7 +13,6 @@ import logging
 import multiprocessing
 import pathlib
 import re
-import signal
 import time
 from typing import Callable, Tuple
 
@@ -178,11 +177,21 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             yield (py_path, pyc_path)
 
     num_fails = 0
-    with multiprocessing.Pool(maxtasksperchild=1000) as pool:
-        for result in pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args()):
+    with multiprocessing.Pool(maxtasksperchild=100) as pool:
+        iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
+        while True:
+            try:
+                result = iterator.next(timeout=300)
+            except StopIteration:
+                break
+            except multiprocessing.TimeoutError:
+                num_fails += 1
+                if logger:
+                    logger.warning(f"Task timed out after 300s (num_fails={num_fails})")
+                continue
             if isinstance(result, Exception):
                 num_fails += 1
-                logger.debug(f"DIR: {dir}\nERR: {result}\nTYPE ERR: {type(result)}\n")
+                logger.debug(f"ERR: {result}\nTYPE ERR: {type(result)}\n")
                 continue
 
             (segmentation_rows, statement_rows) = result
@@ -198,19 +207,10 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
     logger.info(f"NUMBER OF FAILS !!! {num_fails}")
 
 
-def timeout_handler(signum, frame):
-    raise TimeoutError()
-
-
 def bytecode2csv_exception_wrapper(paths=Tuple[pathlib.Path, pathlib.Path]) -> Tuple[list, list] | Exception:
-    signal.signal(signal.SIGALRM, timeout_handler)
     try:
-        signal.alarm(30)  # set 30 second timeout
-        results = bytecode2csv(*paths)
-        signal.alarm(0)  # success; disable timer
-        return results
+        return bytecode2csv(*paths)
     except Exception as error:
-        signal.alarm(0)  # disable timer in case another exception triggered the fail
         return Exception(f"{type(error)}: {error} in file {paths}")
 
 
