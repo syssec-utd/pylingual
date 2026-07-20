@@ -8,9 +8,11 @@
 # ///
 
 import csv
+import faulthandler
 import itertools
 import logging
 import multiprocessing
+import os
 import pathlib
 import re
 import sys
@@ -29,6 +31,7 @@ bytecode_separator = " <SEP> "
 source_seperator = " <SEP> "
 CSV_SGMT_HEADER = ["source", "bytecode", "boundary", "file"]
 CSV_STMT_HEADER = ["source", "bytecode", "file"]
+_active_tasks = None
 
 
 def retry_on_nas_error(max_retries=3, base_delay=1):
@@ -44,6 +47,21 @@ def retry_on_nas_error(max_retries=3, base_delay=1):
                         raise
         return wrapper
     return decorator
+
+
+def initialize_worker(active_tasks):
+    global _active_tasks
+    _active_tasks = active_tasks
+    faulthandler.enable()
+
+
+def update_worker_stage(stage: str):
+    if _active_tasks is None:
+        return
+    pid = os.getpid()
+    task = _active_tasks.get(pid)
+    if task is not None:
+        _active_tasks[pid] = (*task[:3], stage)
 
 
 def create_csv_dataset(code_dataset_path: pathlib.Path, csv_dataset_path: pathlib.Path, data_requests: list[DataRequest], logger: logging.Logger = None):
@@ -226,40 +244,84 @@ def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger:
             yield (py_path, pyc_path)
 
     num_fails = 0
-    with multiprocessing.Pool(maxtasksperchild=100) as pool:
-        iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
-        while True:
-            try:
-                result = iterator.next(timeout=300)
-            except StopIteration:
-                break
-            except multiprocessing.TimeoutError:
-                num_fails += 1
-                if logger:
-                    logger.warning(f"Task timed out after 300s (num_fails={num_fails})")
-                continue
-            if isinstance(result, Exception):
-                num_fails += 1
-                logger.debug(f"ERR: {result}\nTYPE ERR: {type(result)}\n")
-                continue
+    with multiprocessing.Manager() as manager:
+        active_tasks = manager.dict()
+        with multiprocessing.Pool(
+            maxtasksperchild=100,
+            initializer=initialize_worker,
+            initargs=(active_tasks,),
+        ) as pool:
+            iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
+            while True:
+                try:
+                    result = iterator.next(timeout=120)
+                except StopIteration:
+                    break
+                except multiprocessing.TimeoutError:
+                    tasks = dict(active_tasks)
+                    live_pids = {worker.pid for worker in multiprocessing.active_children() if worker.is_alive()}
+                    details = []
+                    now = time.time()
+                    for pid, (py_path, pyc_path, started_at, stage) in sorted(tasks.items()):
+                        status = "hung" if pid in live_pids else "crashed"
+                        details.append(
+                            f"PID {pid} ({status}, {now - started_at:.0f}s, {stage}): "
+                            f"{py_path} | {pyc_path}"
+                        )
+                    message = "No worker result for 120s; terminating wedged CSV pool."
+                    if details:
+                        message += "\nIn-flight tasks:\n" + "\n".join(details)
+                    if logger:
+                        logger.error(message)
+                    else:
+                        logging.error(message)
+                    num_fails += max(1, len(tasks))
+                    pool.terminate()
+                    break
 
-            (segmentation_rows, statement_rows) = result
-            for row, writerow in zip(segmentation_rows, segmentation_writer):
-                writerow(row)
-            for row, writerow in zip(statement_rows, statement_writer):
-                writerow(row)
+                live_pids = {worker.pid for worker in multiprocessing.active_children() if worker.is_alive()}
+                for pid, (py_path, pyc_path, started_at, stage) in list(active_tasks.items()):
+                    if pid in live_pids:
+                        continue
+                    active_tasks.pop(pid, None)
+                    num_fails += 1
+                    message = (
+                        f"Worker PID {pid} crashed after {time.time() - started_at:.0f}s during {stage}: "
+                        f"{py_path} | {pyc_path}"
+                    )
+                    if logger:
+                        logger.error(message)
+                    else:
+                        logging.error(message)
 
-            if progress_bar:
-                progress_bar.update()
-                progress_bar.set_postfix({"num_fails": num_fails})
+                if isinstance(result, Exception):
+                    num_fails += 1
+                    logger.debug(f"ERR: {result}\nTYPE ERR: {type(result)}\n")
+                    continue
+
+                (segmentation_rows, statement_rows) = result
+                for row, writerow in zip(segmentation_rows, segmentation_writer):
+                    writerow(row)
+                for row, writerow in zip(statement_rows, statement_writer):
+                    writerow(row)
+
+                if progress_bar:
+                    progress_bar.update()
+                    progress_bar.set_postfix({"num_fails": num_fails})
     logger.info(f"NUMBER OF FAILS !!! {num_fails}")
 
 
-def bytecode2csv_exception_wrapper(paths=Tuple[pathlib.Path, pathlib.Path]) -> Tuple[list, list] | Exception:
+def bytecode2csv_exception_wrapper(paths: Tuple[pathlib.Path, pathlib.Path]) -> Tuple[list, list] | Exception:
+    pid = os.getpid()
+    if _active_tasks is not None:
+        _active_tasks[pid] = (str(paths[0]), str(paths[1]), time.time(), "starting")
     try:
         return bytecode2csv(*paths)
     except Exception as error:
         return Exception(f"{type(error)}: {error} in file {paths}")
+    finally:
+        if _active_tasks is not None:
+            _active_tasks.pop(pid, None)
 
 
 @retry_on_nas_error()
@@ -268,13 +330,16 @@ def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, l
     segmentation_rows = []
     statement_rows = []
 
+    update_worker_stage("loading pyc")
     pyc = PYCFile(str(pyc_path.resolve()))
     if pyc.version == (3, 10):
         pyc.replace_duplicated_returns10(py_path.read_text().split("\n"))
     elif pyc.version >= (3, 12):
         pyc.replace_duplicated_returns12(py_path.read_text().split("\n"))
+    update_worker_stage("creating masker")
     global_masker = create_global_masker(pyc)
 
+    update_worker_stage("masking source")
     masked_source_text = mask_source(py_path, global_masker, pyc.version)
     masked_source_lines = masked_source_text.split("\n")
 
@@ -291,6 +356,7 @@ def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, l
 
     seen_lines = set()
 
+    update_worker_stage("building rows")
     # create rows for each bytecode
     for bc in pyc.iter_bytecodes():
         # we ignore comprehensions, hoisted later
