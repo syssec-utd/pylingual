@@ -219,6 +219,11 @@ class Masker:
                     return consts
 
                 consts = replace_list(list(deepcopy(inst.argval)))
+                if inst.bytecode.version < (3, 11):
+                    next_insts = inst.next_instructions
+                    next_inst = next_insts[0] if next_insts else None
+                    if next_inst is not None and inst.opname == "LOAD_CONST" and next_inst.opname == "CALL_FUNCTION_KW":
+                        consts = ["<KWARG_PAD>"] * (next_inst.argval - len(consts)) + consts
                 arg_repr = repr(type(inst.argval)(consts)).replace("'", "").replace('"', "'")
                 view = f"{inst.opname} , {arg_repr}"
             elif type(inst.argval) is slice:
