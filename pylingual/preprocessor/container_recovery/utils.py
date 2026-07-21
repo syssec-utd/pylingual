@@ -3,6 +3,28 @@ from __future__ import annotations
 from .segment import Recovery, Segment
 
 
+_COMMON_CONSTANTS = {
+    "AssertionError": AssertionError,
+    "NotImplementedError": NotImplementedError,
+    "tuple": tuple,
+    "all": all,
+    "any": any,
+    "list": list,
+    "set": set,
+    "None": None,
+    '""': "",
+    "True": True,
+    "False": False,
+    "-1": -1,
+    "frozenset": frozenset,
+    "()": (),
+}
+
+
+def _resolve_common_constant(instr):
+    return instr.argval if instr.argval != instr.arg else _COMMON_CONSTANTS[instr.argrepr]
+
+
 def _get_build_map_size(seg: Segment) -> int | None:
     for child in reversed(seg.ordered_children):
         if isinstance(child, Segment) and child.tag == "BUILD":
@@ -76,5 +98,5 @@ def _recover_load_instr(instr) -> Recovery | None:
     if instr.opname == "LOAD_CONST":
         return Recovery(instr.argval, True)
     if instr.opname == "LOAD_COMMON_CONSTANT":
-        return Recovery(instr.argval, True)
+        return Recovery(_resolve_common_constant(instr), True)
     return None

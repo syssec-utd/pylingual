@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..recovery import register_recovery_strategy, recover
 from ..segment import Recovery, Segment
-from ..utils import _non_empty_children, _single_instr
+from ..utils import _non_empty_children, _resolve_common_constant, _single_instr
 
 
 @register_recovery_strategy(7)
@@ -39,7 +39,7 @@ def recover_common_constant(seg: Segment, indent: int) -> Recovery | None:
     instr = _single_instr(seg)
     if instr is None or instr[1].opname != "LOAD_COMMON_CONSTANT":
         return None
-    return Recovery(instr[1].argval, True)
+    return Recovery(_resolve_common_constant(instr[1]), True)
 
 
 @register_recovery_strategy(11)

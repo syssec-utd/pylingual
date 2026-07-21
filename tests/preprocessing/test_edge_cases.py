@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 from xdis import get_opcode
 
 from pylingual.editable_bytecode import EditableBytecode
 from pylingual.preprocessor import Preprocessor
+from pylingual.preprocessor.container_recovery.utils import _resolve_common_constant
 
 
 def _preprocess(source: str) -> EditableBytecode:
@@ -119,3 +121,19 @@ def test_preprocessor_rebases_exception_table_offsets():
         entry.start in bc.offsets and entry.end in bc.offsets and entry.target in bc.offsets
         for entry in bc.named_exception_table
     )
+
+
+@pytest.mark.parametrize(
+    ("arg", "argrepr", "expected"),
+    [(0, "AssertionError", AssertionError), (7, "None", None), (9, "True", True), (10, "False", False), (11, "-1", -1)],
+)
+def test_resolve_raw_common_constant(arg, argrepr, expected):
+    instr = SimpleNamespace(arg=arg, argval=arg, argrepr=argrepr)
+
+    assert _resolve_common_constant(instr) is expected
+
+
+def test_preserve_xdis_resolved_common_constant():
+    instr = SimpleNamespace(arg=9, argval=True, argrepr="True")
+
+    assert _resolve_common_constant(instr) is True
