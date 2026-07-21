@@ -97,4 +97,5 @@ class Preprocessor:
         )
         new_inst.preprocessed_container = True
 
-        bc[start_idx : end_idx + 1] = [new_inst]
+        bc.remove_instructions(bc.instructions[start_idx : end_idx + 1])
+        bc.insert_instruction(start_idx, new_inst)

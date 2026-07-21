@@ -851,6 +851,10 @@ class EditableBytecode:
 
         return len(to_insert)
 
+    def insert_instruction(self, index: int, instruction: Inst) -> int:
+        """Inserts one instruction at the specified index."""
+        return self.insert_insts({index: [instruction]})
+
     def new_instruction(self, *args, **kwargs):
         """Creates a new instruction for use with this EditableBytecode object. This function does NOT automatically insert the instruction."""
         return Inst(self, *args, **kwargs)

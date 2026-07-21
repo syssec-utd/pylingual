@@ -96,3 +96,26 @@ def test_no_dedup_different_type_same_value():
     lists = [v for v in values if type(v) is list and v == [1, 2]]
     assert len(tuples) == 1, f"Expected 1 tuple (1,2), got {tuples!r}"
     assert len(lists) == 1, f"Expected 1 list [1,2], got {lists!r}"
+
+
+def test_preprocessor_rebases_exception_table_offsets():
+    code = compile(
+        "def f():\n"
+        "    try:\n"
+        "        value = {'a': 1, 'b': 2, 'c': 3}\n"
+        "    finally:\n"
+        "        value = None\n",
+        "<test>",
+        "exec",
+    )
+    root = EditableBytecode(code, get_opcode(sys.version_info[:2], False), sys.version_info[:3])
+    bc = root.bytecode_lookup["f"]
+    targets = [bc.get_by_offset(entry.target) for entry in bc.named_exception_table]
+
+    Preprocessor().preprocess(root)
+
+    assert [entry.target for entry in bc.named_exception_table] == [target.offset for target in targets]
+    assert all(
+        entry.start in bc.offsets and entry.end in bc.offsets and entry.target in bc.offsets
+        for entry in bc.named_exception_table
+    )
