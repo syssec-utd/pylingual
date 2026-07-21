@@ -20,13 +20,12 @@ def save_and_upload_tokenizer(
     tokenizer_json_path: pathlib.Path,
     tokenizer_repo_name: str,
     dataset_name: str,
+    public: bool = False,
 ):
-    # Save the tokenizer locally
     tokenizer.save_pretrained(str(tokenizer_json_path.parent.resolve()))
 
-    # Upload files to Hugging Face Hub
     api = HfApi()
-    api.create_repo(tokenizer_repo_name, exist_ok=True, private=True)
+    api.create_repo(tokenizer_repo_name, exist_ok=True, private=not public)
     api.upload_file(
         path_in_repo="tokenizer_config.json",
         path_or_fileobj=str(tokenizer_json_path.parent / "tokenizer_config.json"),
@@ -59,7 +58,7 @@ def save_and_upload_tokenizer(
     )
 
 
-def train_tokenizer(config: StatementConfiguration, tokenizer_json_path: pathlib.Path):
+def train_tokenizer(config: StatementConfiguration, tokenizer_json_path: pathlib.Path, public: bool = False):
     if repo_exists(config.base_repo_name):
         logging.error(f"{config.base_repo_name} has already exists")
         exit(1)
@@ -78,15 +77,17 @@ def train_tokenizer(config: StatementConfiguration, tokenizer_json_path: pathlib
         tokenizer_json_path,
         config.tokenizer_repo_name,
         config.dataset_repo_name,
+        public,
     )
 
 
 @click.command(help="Training script for the bytecode tokenizer for the statement model given a statement json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     statement_config = parse_statement_config_json(json_file_path)
-    train_tokenizer(statement_config, json_file_path)
+    train_tokenizer(statement_config, json_file_path, public)
 
 
 if __name__ == "__main__":

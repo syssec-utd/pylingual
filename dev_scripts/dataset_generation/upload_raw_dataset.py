@@ -9,9 +9,9 @@ from .DatasetDescription import DatasetDescription
 LOCAL_DATASET = Dict[Literal["train", "test", "valid"], List[str]]
 
 
-def upload_single_dataset(data_files: LOCAL_DATASET, dataset_name: str, dataset_card: str):
+def upload_single_dataset(data_files: LOCAL_DATASET, dataset_name: str, dataset_card: str, public: bool = False):
     local_datasets = load_dataset("csv", data_files=data_files)
-    local_datasets.push_to_hub(dataset_name, private=True)
+    local_datasets.push_to_hub(dataset_name, private=not public)
 
     dataset_card_with_stats = dataset_card + f"\n\nDataset Statistics:\n\n```\n{local_datasets}\n```"
 
@@ -24,7 +24,7 @@ def upload_single_dataset(data_files: LOCAL_DATASET, dataset_name: str, dataset_
     )
 
 
-def upload_dataset_to_huggingface(dataset_description: DatasetDescription):
+def upload_dataset_to_huggingface(dataset_description: DatasetDescription, public: bool = False):
     formatted_data_requests = "\n".join(f"{str(req.source_path.resolve())}: (train: {req.num_train}, test: {req.num_test}, valid: {req.num_valid})" for req in dataset_description.data_requests)
     dataset_card = f"""
 # {dataset_description.name}
@@ -55,6 +55,6 @@ Python version: `{".".join(map(str, dataset_description.version))}`
 
     # upload datasets
     segmentation_dataset_name = f"{dataset_description.huggingface_user}/segmentation-{dataset_description.name}"
-    upload_single_dataset(segmentation_data_files, segmentation_dataset_name, dataset_card)
+    upload_single_dataset(segmentation_data_files, segmentation_dataset_name, dataset_card, public)
     statement_dataset_name = f"{dataset_description.huggingface_user}/statement-{dataset_description.name}"
-    upload_single_dataset(statement_data_files, statement_dataset_name, dataset_card)
+    upload_single_dataset(statement_data_files, statement_dataset_name, dataset_card, public)

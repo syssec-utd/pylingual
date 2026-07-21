@@ -136,7 +136,7 @@ def initialize_untrained_mlm(
     return model
 
 
-def train_mlm(config: SegmentationConfiguration):
+def train_mlm(config: SegmentationConfiguration, public: bool = False):
     if repo_exists(config.base_repo_name):
         logging.error(f"{config.base_repo_name} has already exists")
         exit(1)
@@ -152,7 +152,7 @@ def train_mlm(config: SegmentationConfiguration):
         prediction_loss_only=True,
         push_to_hub=True,
         hub_model_id=config.mlm_repo_name,
-        hub_private_repo=True,
+        hub_private_repo=not public,
         ddp_backend="nccl",
         ddp_find_unused_parameters=using_pretrained_model,  # only look for unused parameters in pretrained models
         remove_unused_columns=False,
@@ -194,10 +194,11 @@ def train_mlm(config: SegmentationConfiguration):
 
 @click.command(help="Training script for the masked language model pretraining for the segmentation model given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    train_mlm(segmentation_config)
+    train_mlm(segmentation_config, public)
 
 
 if __name__ == "__main__":

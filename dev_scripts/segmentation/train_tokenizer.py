@@ -43,14 +43,13 @@ def save_and_upload_tokenizer(
     tokenizer_json_path: pathlib.Path,
     tokenizer_repo_name: str,
     dataset_name: str,
+    public: bool = False,
 ):
-    # save the tokenizer locally
     tokenizer_json_path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(tokenizer_json_path.resolve()))
 
-    # upload tokenizer to huggingface
     api = HfApi()
-    create_repo(tokenizer_repo_name, exist_ok=True, private=True)
+    create_repo(tokenizer_repo_name, exist_ok=True, private=not public)
     api.upload_file(
         path_in_repo="tokenizer.json",
         path_or_fileobj=str(tokenizer_json_path.resolve()),
@@ -59,7 +58,7 @@ def save_and_upload_tokenizer(
     )
 
 
-def train_tokenizer(config: SegmentationConfiguration):
+def train_tokenizer(config: SegmentationConfiguration, public: bool = False):
     if repo_exists(config.base_repo_name):
         logging.error(f"{config.base_repo_name} has already exists")
         exit(1)
@@ -81,15 +80,17 @@ def train_tokenizer(config: SegmentationConfiguration):
         config.tokenizer_json_path,
         config.tokenizer_repo_name,
         config.dataset_repo_name,
+        public,
     )
 
 
 @click.command(help="Training script for the bytecode tokenizer for the segmentation model given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    train_tokenizer(segmentation_config)
+    train_tokenizer(segmentation_config, public)
 
 
 if __name__ == "__main__":
