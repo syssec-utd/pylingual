@@ -137,3 +137,23 @@ def test_preserve_xdis_resolved_common_constant():
     instr = SimpleNamespace(arg=9, argval=True, argrepr="True")
 
     assert _resolve_common_constant(instr) is True
+
+
+def test_preprocessor_preserves_container_line_start():
+    root = _preprocess(
+        "def f(flag):\n"
+        "    if flag:\n"
+        "        value = 1\n"
+        "    else:\n"
+        "        value = 2\n"
+        "    result = [[0, 0], [0, 0]]\n"
+        "    return result\n"
+    )
+    bc = root.bytecode_lookup["f"]
+    folded = next(inst for inst in bc.instructions if getattr(inst, "preprocessed_container", False))
+    store = bc.instructions[bc.instructions.index(folded) + 1]
+
+    assert folded.starts_line == 6
+    assert store.opname == "STORE_FAST"
+    assert store.starts_line is None
+    assert any(inst.is_jump and inst.target is folded for inst in bc.instructions)

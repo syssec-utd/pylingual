@@ -853,6 +853,14 @@ class EditableBytecode:
 
     def insert_instruction(self, index: int, instruction: Inst) -> int:
         """Inserts one instruction at the specified index."""
+        if index < len(self.instructions):
+            displaced = self.instructions[index]
+            if instruction.starts_line is None:
+                instruction.starts_line = displaced.starts_line
+                displaced.starts_line = None
+            for inst in self.instructions:
+                if inst.is_jump and inst.target is displaced:
+                    inst._target = instruction
         return self.insert_insts({index: [instruction]})
 
     def new_instruction(self, *args, **kwargs):
