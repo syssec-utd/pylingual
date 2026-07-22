@@ -22,6 +22,9 @@ def recover_dict(seg: Segment, indent: int) -> Recovery | None:
             complete = False
         if not val_r.complete:
             complete = False
+        # Duplicate keys affect source construction even though the runtime dict overwrites them.
+        if key_r.value in result:
+            complete = False
         result[key_r.value] = val_r.value
     return Recovery(result, complete)
 
@@ -56,4 +59,7 @@ def recover_const_key_map(seg: Segment, indent: int) -> Recovery | None:
     complete = all(r.complete for r in value_recoveries)
 
     result = {keys[i]: value_recoveries[i].value for i in range(min(len(keys), len(value_recoveries)))}
+    # Duplicate keys affect source construction even though the runtime dict overwrites them.
+    if len(result) != min(len(keys), len(value_recoveries)):
+        complete = False
     return Recovery(result, complete)

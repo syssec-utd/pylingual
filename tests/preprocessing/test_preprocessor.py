@@ -18,6 +18,22 @@ def _extract_container_literals(source: str) -> list:
     containers = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.List, ast.Set, ast.Tuple, ast.Dict)):
+            if isinstance(node, ast.Dict):
+                keys = []
+                duplicate = False
+                for key_node in node.keys:
+                    if key_node is None:
+                        continue
+                    try:
+                        key = ast.literal_eval(key_node)
+                    except (ValueError, SyntaxError):
+                        continue
+                    if key in keys:
+                        duplicate = True
+                        break
+                    keys.append(key)
+                if duplicate:
+                    continue
             try:
                 val = ast.literal_eval(node)
             except (ValueError, SyntaxError):
@@ -100,4 +116,21 @@ def test_container_values_in_co_consts(fixture: Path) -> None:
         f"{len(missing)} container value(s) not found in co_consts:\n"
         f"  missing: {missing!r}\n"
         f"  co_consts: {bc.co_consts!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "value = {'key': 1, 'key': 2}",
+        "first = object()\nsecond = object()\nvalue = {'key': first, 'key': second}",
+    ],
+)
+def test_duplicate_dict_keys_are_not_folded(source: str) -> None:
+    bc = _preprocess_source(source)
+
+    assert any(inst.opname in ("BUILD_MAP", "BUILD_CONST_KEY_MAP") and inst.arg == 2 for inst in bc.instructions)
+    assert not any(
+        getattr(inst, "preprocessed_container", False) and inst.argval == {"key": 2}
+        for inst in bc.instructions
     )
