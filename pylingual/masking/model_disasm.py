@@ -179,7 +179,15 @@ def fix_jump_targets(disasm: str) -> str:
 def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
     """Creates a large regex of all the tokens and their respective values
     Replaces everything in file text in one pass."""
-    replacements = {re.escape(v): format_source_replacement(k) for k, v in masker.global_tab.items()}
+    replacements = {}
+    for value, mask in masker.global_tab.items():
+        replacement = format_source_replacement(value)
+        if type(value) in (list, tuple, frozenset, set, dict):
+            # The model sometimes quotes an atomic container mask as though it were a string.
+            # Consume those wrapper quotes rather than escaping the container's contents.
+            replacements[re.escape(f"'{mask}'")] = replacement
+            replacements[re.escape(f'"{mask}"')] = replacement
+        replacements[re.escape(mask)] = replacement
     re_pattern = re.compile("|".join(replacements.keys()))
     return [unmask(x, replacements, re_pattern) for x in lines]
 
