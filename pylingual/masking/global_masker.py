@@ -1,4 +1,3 @@
-import ast
 from collections.abc import MutableMapping
 from copy import deepcopy
 from xdis import iscode
@@ -12,19 +11,24 @@ from pylingual.editable_bytecode.utils import comprehension_names, find_loadcons
 class TypeSensitiveDict(MutableMapping):
     def __init__(self, *args, **kwargs):
         self.store = dict()
+        self.original_keys = dict()
         self.update(dict(*args, **kwargs))  # use the free update to set keys
 
     def __getitem__(self, key):
         return self.store[self._key_transform(key)]
 
     def __setitem__(self, key, value):
-        self.store[self._key_transform(key)] = value
+        transformed = self._key_transform(key)
+        self.store[transformed] = value
+        self.original_keys[transformed] = key
 
     def __delitem__(self, key):
-        del self.store[self._key_transform(key)]
+        transformed = self._key_transform(key)
+        del self.store[transformed]
+        del self.original_keys[transformed]
 
     def __iter__(self):
-        return iter(self.store)
+        return iter(self.original_keys.values())
 
     def __len__(self):
         return len(self.store)
@@ -33,10 +37,10 @@ class TypeSensitiveDict(MutableMapping):
         return self._key_transform(key) in self.store
 
     def keys(self) -> list:
-        return [self._key_restore(key) for key in self.store.keys()]
+        return list(self.original_keys.values())
 
     def items(self):
-        return ((self._key_restore(key), value) for key, value in self.store.items())
+        return ((self.original_keys[key], value) for key, value in self.store.items())
 
     def values(self):
         return self.store.values()
@@ -46,22 +50,20 @@ class TypeSensitiveDict(MutableMapping):
             return (key.value.decode("utf-8"), str)
         if type(key) == LongTypeForPython3:
             return (key.value, int)
-        if isinstance(key, (list, set, dict, tuple, frozenset)):
-            return (repr(key), type(key))
+        if type(key) in (list, tuple):
+            return (tuple(self._key_transform(value) for value in key), type(key))
+        if type(key) in (set, frozenset):
+            return (frozenset(self._key_transform(value) for value in key), type(key))
+        if type(key) is dict:
+            return (
+                frozenset((self._key_transform(k), self._key_transform(v)) for k, v in key.items()),
+                dict,
+            )
         try:
             hash(key)
         except TypeError:
             return (repr(key), type(key))
         return (key, type(key))
-
-    def _key_restore(self, key):
-        value, typ = key
-        if type(value) is str and typ is not str:
-            try:
-                return ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                return value
-        return value
 
 
 #### Main Masker
