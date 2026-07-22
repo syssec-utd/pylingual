@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from xdis.cross_dis import instruction_size, xstack_effect
 
-from pylingual.editable_bytecode import EditableBytecode
+from pylingual.editable_bytecode import EditableBytecode, Inst
 from .container_recovery.recovery import recover
 from .container_recovery.segment import Segment
 from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
@@ -12,6 +12,42 @@ _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
 
 def _make_function_stack_effect(arg, version) -> int:
     return -int(arg or 0).bit_count() - (version < (3, 11))
+
+
+class Tracer:
+    """Trace an object placed on the stack before an instruction sequence."""
+
+    def __init__(self, instructions: list[Inst]):
+        self.instructions = instructions
+
+    def trace(self) -> tuple[int, int] | None:
+        """Return the consuming instruction index and its zero-based TOS argument."""
+        depth = 1
+        for index, inst in enumerate(self.instructions):
+            effect = xstack_effect(inst.opcode, inst.bytecode.opcode, inst.arg or 0)
+            if effect is None and inst.opname == "MAKE_FUNCTION":
+                effect = _make_function_stack_effect(inst.arg, inst.bytecode.version)
+            elif effect is None:
+                effect = inst.bytecode.opcode.oppush[inst.opcode] - inst.bytecode.opcode.oppop[inst.opcode]
+
+            push = 1 if inst.opname.startswith("BUILD_") else inst.bytecode.opcode.oppush[inst.opcode]
+            pop = push - effect
+            if push >= 0 and pop >= depth:
+                return index, depth - 1
+            depth += effect
+            if depth <= 0:
+                break
+        return None
+
+
+def _preserve_container(consumer: Inst, argnum: int) -> bool:
+    if consumer.opname in ("MAKE_FUNCTION", "SET_FUNCTION_ATTRIBUTE"):
+        return True
+    if consumer.opname == "DICT_MERGE" and argnum in (0, 1):
+        return True
+    if consumer.opname == "CALL_FUNCTION_EX" and argnum == 0:
+        return consumer.arg is None or isinstance(consumer.arg, int) and bool(consumer.arg & 1)
+    return False
 
 
 class Preprocessor:
@@ -41,23 +77,12 @@ class Preprocessor:
             if seg.start_offset is not None and seg.end_offset is not None:
                 recovery = recover(seg)
                 if recovery.complete:
-                    depth = 1
-                    for inst in bc.instructions[bc.instructions.index(bc.get_by_offset(seg.end_offset)) + 1:]:
-                        effect = xstack_effect(inst.opcode, bc.opcode, inst.arg or 0)
-                        if effect is None and inst.opname == "MAKE_FUNCTION":
-                            effect = _make_function_stack_effect(inst.arg, bc.version)
-                        elif effect is None:
-                            effect = bc.opcode.oppush[inst.opcode] - bc.opcode.oppop[inst.opcode]
-                        push = 1 if inst.opname.startswith("BUILD_") else bc.opcode.oppush[inst.opcode]
-                        if push >= 0 and push - effect >= depth:
-                            if inst.opname in ("MAKE_FUNCTION", "SET_FUNCTION_ATTRIBUTE"):
-                                return
-                            break
-                        depth += effect
-                        if depth <= 0:
-                            break
-                    self._collapse_segment(bc, seg, recovery.value)
-                    return
+                    end_index = bc.instructions.index(bc.get_by_offset(seg.end_offset))
+                    following = bc.instructions[end_index + 1:]
+                    consumption = Tracer(following).trace()
+                    if consumption is None or not _preserve_container(following[consumption[0]], consumption[1]):
+                        self._collapse_segment(bc, seg, recovery.value)
+                        return
         for child in reversed(seg.ordered_children):
             if isinstance(child, Segment):
                 self._process_segment(bc, child)

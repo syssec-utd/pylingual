@@ -8,7 +8,7 @@ from xdis import get_opcode
 from pylingual.editable_bytecode import EditableBytecode
 from pylingual.masking.global_masker import Masker, TypeSensitiveDict
 from pylingual.masking.model_disasm import create_global_masker
-from pylingual.preprocessor import Preprocessor
+from pylingual.preprocessor import Preprocessor, Tracer
 from pylingual.preprocessor.preprocessor import _make_function_stack_effect
 
 
@@ -94,3 +94,51 @@ def test_call_function_kw_pads_positional_arguments():
 def test_pre311_make_function_effect_includes_qualname():
     assert _make_function_stack_effect(0b1110, (3, 6)) == -4
     assert _make_function_stack_effect(0b1110, (3, 12)) == -3
+
+
+def test_explicit_keyword_map_before_kwargs_remains_visible_to_model():
+    bytecode = _preprocess(
+        "def f(foo, value, options):\n"
+        "    return foo(value, conditional=True, **options)\n"
+    )
+    function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
+
+    assert any(inst.opname == "BUILD_MAP" and inst.arg == 1 for inst in function.instructions)
+    assert not any(
+        inst.opname == "LOAD_CONST"
+        and inst.argval == {"conditional": True}
+        and getattr(inst, "preprocessed_container", False)
+        for inst in function.instructions
+    )
+
+
+def test_dict_used_as_keyword_value_can_still_fold():
+    bytecode = _preprocess(
+        "def f(foo, options):\n"
+        "    return foo(value={'nested': 2}, **options)\n"
+    )
+    function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
+
+    assert any(
+        inst.opname == "LOAD_CONST"
+        and inst.argval == {"nested": 2}
+        and getattr(inst, "preprocessed_container", False)
+        for inst in function.instructions
+    )
+
+
+def test_tracer_reports_consumer_argument_from_top_of_stack():
+    bytecode = _preprocess(
+        "def f(foo, value, options):\n"
+        "    return foo(value, conditional=True, **options)\n"
+    )
+    function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
+    keyword_map = next(inst for inst in function.instructions if inst.opname == "BUILD_MAP" and inst.arg == 1)
+    following = function.instructions[function.instructions.index(keyword_map) + 1:]
+
+    consumption = Tracer(following).trace()
+
+    assert consumption is not None
+    index, argnum = consumption
+    assert following[index].opname == "DICT_MERGE"
+    assert argnum == 1
