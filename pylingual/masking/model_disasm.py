@@ -151,10 +151,12 @@ def format_source_replacement(mask_value: str) -> str:
 re_rel_pattern = re.compile(r"^(\s*)(import|from)\s*(\d+)(.*)", re.MULTILINE)
 
 
-def unmask(source_line: str, replacements: dict, re_pattern: Pattern[str]):
+def unmask(source_line: str, replacements: dict, container_masks: set[str], re_pattern: Pattern[str]):
     def m(match):
         s = match.span()
         r = replacements[match.group()]
+        if match.group() in container_masks:
+            return r
         if s[0] == 0 or s[1] >= len(match.string) or match.string[s[0] - 1] not in "\"'{}" and match.string[s[1]] not in "\"'{}":
             return r
         return use_escape_sequences(r)
@@ -180,6 +182,7 @@ def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
     """Creates a large regex of all the tokens and their respective values
     Replaces everything in file text in one pass."""
     replacements = {}
+    container_masks = set()
     for value, mask in masker.global_tab.items():
         replacement = format_source_replacement(value)
         if type(value) in (list, tuple, frozenset, set, dict):
@@ -187,9 +190,10 @@ def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
             # Consume those wrapper quotes rather than escaping the container's contents.
             replacements[re.escape(f"'{mask}'")] = replacement
             replacements[re.escape(f'"{mask}"')] = replacement
+            container_masks.update((f"'{mask}'", f'"{mask}"', mask))
         replacements[re.escape(mask)] = replacement
     re_pattern = re.compile("|".join(replacements.keys()))
-    return [unmask(x, replacements, re_pattern) for x in lines]
+    return [unmask(x, replacements, container_masks, re_pattern) for x in lines]
 
 
 # replace mask values to start at 0 and count up

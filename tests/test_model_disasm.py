@@ -17,3 +17,13 @@ def test_quoted_string_mask_keeps_literal_quotes():
     masker.global_tab["it's"] = "<mask_0>"
 
     assert restore_masked_source_text(["value = '<mask_0>'"], masker) == ["value = 'it\\'s'"]
+
+
+def test_container_mask_before_closing_brace_is_not_escaped():
+    masker = Masker()
+    masker.global_tab[{"size": (32, 32), "crop": True}] = "<mask_0>"
+
+    source = "value = {'first': <mask_0>, 'last': <mask_0>}"
+    expected = "value = {'first': {'size': (32, 32), 'crop': True}, 'last': {'size': (32, 32), 'crop': True}}"
+
+    assert restore_masked_source_text([source], masker) == [expected]
