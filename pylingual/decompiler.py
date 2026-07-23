@@ -44,6 +44,7 @@ from pylingual.equivalence_check import TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
 from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
+from pylingual.preprocessor import Preprocessor
 from pylingual.editable_bytecode import PYCFile
 from pylingual.segmentation.segmentation_search_strategies import get_top_k_predictions, m_deep_top_k, naive_confidence_priority, filter_subwords
 from pylingual.segmentation.sliding_window import merge, sliding_window
@@ -122,6 +123,8 @@ class Decompiler:
         with tempfile.TemporaryDirectory() as tmp:
             self.tmp = Path(tmp)
 
+            self.preprocess_bytecode()
+            self.check_timeout()
             self.mask_bytecode()
             self.check_timeout()
             self.run_segmentation()
@@ -207,6 +210,13 @@ class Decompiler:
         except:
             self.source_context.purged_cfts = []
             return []
+
+    def preprocess_bytecode(self):
+        logger.info(f"Preprocessing bytecode for {self.name}...")
+        try:
+            Preprocessor().preprocess(self.pyc)
+        except Exception as e:
+            logger.warning(f"Preprocessing failed for {self.name}, continuing without container recovery: {e}")
 
     def mask_bytecode(self):
         logger.info(f"Masking bytecode for {self.name}...")

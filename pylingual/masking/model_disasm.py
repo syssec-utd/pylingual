@@ -36,6 +36,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
 
     for bc in bytecode.iter_bytecodes():
         bc_co = bc.to_code(no_lnotab=True)
+        preprocessed = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
 
         # create consts
         consts = list(deepcopy(bc_co.co_consts))
@@ -54,13 +55,13 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
             # Don't needlessly increment the global_idx
             if const in global_tab:
                 continue
-            if type(const) in (list, tuple, frozenset, set):
+            if type(const) in (list, tuple, frozenset, set) and not any(type(const) is type(value) and const == value for value in preprocessed):
                 consts.extend(const)
             elif type(const) is slice:
                 # decompose slice constants for 3.14+
                 consts.extend([const.start, const.stop, const.step])
             else:
-                global_tab.update({bc.resolve_namespace(const): f"<mask_{global_idx}>"})
+                global_tab[bc.resolve_namespace(const)] = f"<mask_{global_idx}>"
                 global_idx += 1
 
         # create names
@@ -69,25 +70,25 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 for n in name:
                     if n in global_tab:
                         continue
-                    global_tab.update({bc.resolve_namespace(n): f"<mask_{global_idx}>"})
+                    global_tab[bc.resolve_namespace(n)] = f"<mask_{global_idx}>"
                     global_idx += 1
             else:
                 if name in global_tab:
                     continue
-                global_tab.update({bc.resolve_namespace(name): f"<mask_{global_idx}>"})
+                global_tab[bc.resolve_namespace(name)] = f"<mask_{global_idx}>"
                 global_idx += 1
 
         for free in bc_co.co_freevars:
             if free in global_tab:
                 continue
-            global_tab.update({free: f"<mask_{global_idx}>"})
+            global_tab[free] = f"<mask_{global_idx}>"
             global_idx += 1
 
         if bc.version >= (3, 11):
             for cell in bc_co.co_cellvars:
                 if cell in global_tab:
                     continue
-                global_tab.update({cell: f"<mask_{global_idx}>"})
+                global_tab[cell] = f"<mask_{global_idx}>"
                 global_idx += 1
 
         for local in bc_co.co_varnames:
@@ -95,15 +96,15 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 for local_item in local:
                     if local_item in global_tab:
                         continue
-                    global_tab.update({bc.resolve_namespace(local_item): f"<mask_{global_idx}>"})
+                    global_tab[bc.resolve_namespace(local_item)] = f"<mask_{global_idx}>"
                     global_idx += 1
             else:
                 if local in global_tab:
                     continue
-                global_tab.update({bc.resolve_namespace(local): f"<mask_{global_idx}>"})
+                global_tab[bc.resolve_namespace(local)] = f"<mask_{global_idx}>"
                 global_idx += 1
 
-        global_tab.update({bc_co.co_name: f"<mask_{global_idx}>"})
+        global_tab[bc_co.co_name] = f"<mask_{global_idx}>"
         global_idx += 1
 
     return global_masker
@@ -136,6 +137,15 @@ def restore_masked_source(file_path: pathlib.Path, masker: Masker, python_versio
 
 
 def format_source_replacement(mask_value: str) -> str:
+    if type(mask_value) is slice:
+        start = "" if mask_value.start is None else format_source_replacement(mask_value.start)
+        stop = "" if mask_value.stop is None else format_source_replacement(mask_value.stop)
+        if mask_value.step is None:
+            return f"{start}:{stop}"
+        step = format_source_replacement(mask_value.step)
+        return f"{start}:{stop}:{step}"
+    if type(mask_value) in (list, tuple) and any(type(value) is slice for value in mask_value):
+        return ", ".join(format_source_replacement(value) for value in mask_value)
     if mask_value is ...:
         return "..."
     if mask_value == 9e999:  # infinity
@@ -150,10 +160,12 @@ def format_source_replacement(mask_value: str) -> str:
 re_rel_pattern = re.compile(r"^(\s*)(import|from)\s*(\d+)(.*)", re.MULTILINE)
 
 
-def unmask(source_line: str, replacements: dict, re_pattern: Pattern[str]):
+def unmask(source_line: str, replacements: dict, container_masks: set[str], re_pattern: Pattern[str]):
     def m(match):
         s = match.span()
         r = replacements[match.group()]
+        if match.group() in container_masks:
+            return r
         if s[0] == 0 or s[1] >= len(match.string) or match.string[s[0] - 1] not in "\"'{}" and match.string[s[1]] not in "\"'{}":
             return r
         return use_escape_sequences(r)
@@ -178,9 +190,19 @@ def fix_jump_targets(disasm: str) -> str:
 def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
     """Creates a large regex of all the tokens and their respective values
     Replaces everything in file text in one pass."""
-    replacements = {re.escape(v): format_source_replacement(k) for k, v in masker.global_tab.items()}
+    replacements = {}
+    container_masks = set()
+    for value, mask in masker.global_tab.items():
+        replacement = format_source_replacement(value)
+        if type(value) in (list, tuple, frozenset, set, dict):
+            # The model sometimes quotes an atomic container mask as though it were a string.
+            # Consume those wrapper quotes rather than escaping the container's contents.
+            replacements[re.escape(f"'{mask}'")] = replacement
+            replacements[re.escape(f'"{mask}"')] = replacement
+            container_masks.update((f"'{mask}'", f'"{mask}"', mask))
+        replacements[re.escape(mask)] = replacement
     re_pattern = re.compile("|".join(replacements.keys()))
-    return [unmask(x, replacements, re_pattern) for x in lines]
+    return [unmask(x, replacements, container_masks, re_pattern) for x in lines]
 
 
 # replace mask values to start at 0 and count up

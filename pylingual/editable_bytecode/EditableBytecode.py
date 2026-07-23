@@ -18,6 +18,20 @@ from .control_flow_graph import bytecode_to_control_flow_graph
 from typing import Callable
 
 
+def _encode_name_arg(opname: str, name_index: int, original_arg: int | None, version: PythonVersion) -> int:
+    shifts = {
+        "LOAD_GLOBAL": 1 if version >= (3, 11) else 0,
+        "LOAD_ATTR": 1 if version >= (3, 12) else 0,
+        "LOAD_SUPER_ATTR": 2 if version >= (3, 12) else 0,
+        "IMPORT_NAME": 2 if version >= (3, 15) else 0,
+    }
+    shift = shifts.get(opname, 0)
+    if not shift:
+        return name_index
+    flags = int(original_arg or 0) & ((1 << shift) - 1)
+    return (name_index << shift) | flags
+
+
 class EditableBytecode:
     """
     An editable representation of Pythonic bytecode. Many values in it, including its instructions, may be incorrect
@@ -389,6 +403,7 @@ class EditableBytecode:
                                 instruction.argval = instruction.target.offset
                             else:
                                 instruction.arg = instruction.argval = instruction.target.offset
+                        instruction.refresh_argrepr()
                     if add_extended:
                         # count the number of necessary preceeding EXTENDED_ARG instructions
                         n_extendeds_needed = (instruction.arg > 0xFF) + (instruction.arg > 0xFFFF) + (instruction.arg > 0xFFFFFF)
@@ -820,7 +835,8 @@ class EditableBytecode:
             elif inst.optype == "name":
                 if inst.argval not in self.co_names:
                     self.co_names.append(inst.argval)
-                inst.arg = self.co_names.index(inst.argval)
+                name_index = self.co_names.index(inst.argval)
+                inst.arg = _encode_name_arg(inst.opname, name_index, inst.arg, self.version)
             elif inst.optype == "free" or inst.optype == "local":
                 if inst.argval not in self.co_varnames:
                     self.co_varnames.append(inst.argval)
@@ -849,6 +865,18 @@ class EditableBytecode:
         self._edited = True
 
         return len(to_insert)
+
+    def insert_instruction(self, index: int, instruction: Inst) -> int:
+        """Inserts one instruction at the specified index."""
+        if index < len(self.instructions):
+            displaced = self.instructions[index]
+            if instruction.starts_line is None:
+                instruction.starts_line = displaced.starts_line
+                displaced.starts_line = None
+            for inst in self.instructions:
+                if inst.is_jump and inst.target is displaced:
+                    inst._target = instruction
+        return self.insert_insts({index: [instruction]})
 
     def new_instruction(self, *args, **kwargs):
         """Creates a new instruction for use with this EditableBytecode object. This function does NOT automatically insert the instruction."""
