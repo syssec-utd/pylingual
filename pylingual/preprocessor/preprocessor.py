@@ -14,6 +14,27 @@ _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
 logger = logging.getLogger(__name__)
 
 
+def _constants_match(left, right) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(left) in (list, tuple):
+        return len(left) == len(right) and all(_constants_match(a, b) for a, b in zip(left, right))
+    if type(left) is dict:
+        return len(left) == len(right) and all(
+            _constants_match(a_key, b_key) and _constants_match(a_value, b_value)
+            for (a_key, a_value), (b_key, b_value) in zip(left.items(), right.items())
+        )
+    if type(left) in (set, frozenset):
+        return len(left) == len(right) and all(any(_constants_match(a, b) for b in right) for a in left)
+    if type(left) is slice:
+        return (
+            _constants_match(left.start, right.start)
+            and _constants_match(left.stop, right.stop)
+            and _constants_match(left.step, right.step)
+        )
+    return left is right or left == right
+
+
 def _make_function_stack_effect(arg, version) -> int:
     return -int(arg or 0).bit_count() - (version < (3, 11))
 
@@ -105,7 +126,7 @@ class Preprocessor:
 
         const_index = None
         for i, existing in enumerate(bc.co_consts):
-            if value is existing or (type(value) is type(existing) and value == existing):
+            if _constants_match(value, existing):
                 const_index = i
                 break
         if const_index is None:
@@ -136,3 +157,4 @@ class Preprocessor:
 
         bc.remove_instructions(bc.instructions[start_idx : end_idx + 1])
         bc.insert_instruction(start_idx, new_inst)
+        new_inst.arg = const_index

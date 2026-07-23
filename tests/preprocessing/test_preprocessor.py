@@ -8,6 +8,7 @@ import pytest
 from xdis import get_opcode
 
 from pylingual.editable_bytecode import EditableBytecode
+from pylingual.masking.model_disasm import create_global_masker
 from pylingual.preprocessor import Preprocessor
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -134,3 +135,19 @@ def test_duplicate_dict_keys_are_not_folded(source: str) -> None:
         getattr(inst, "preprocessed_container", False) and inst.argval == {"key": 2}
         for inst in bc.instructions
     )
+
+
+def test_recovered_containers_distinguish_nested_numeric_types() -> None:
+    bc = _preprocess_source("integers = [1, 2, 3]\nfloats = [1, 2, 3.0]")
+    recovered = [inst for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
+    integer_list = next(inst for inst in recovered if all(type(value) is int for value in inst.argval))
+    float_list = next(inst for inst in recovered if type(inst.argval[-1]) is float)
+
+    assert integer_list.arg != float_list.arg
+    assert bc.co_consts[integer_list.arg] == [1, 2, 3]
+    assert all(type(value) is int for value in bc.co_consts[integer_list.arg])
+    assert bc.co_consts[float_list.arg] == [1, 2, 3.0]
+    assert type(bc.co_consts[float_list.arg][-1]) is float
+
+    masker = create_global_masker(bc)
+    assert masker.get_model_view(integer_list) != masker.get_model_view(float_list)
