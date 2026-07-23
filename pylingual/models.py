@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import redis
 import yaml
 import logging
 
@@ -39,13 +40,20 @@ class CacheTranslator:
     :param maxsize : The maximum amount of cached items
     """
 
-    def __init__(self, model : transformers.T5ForConditionalGeneration, tokenizer: transformers.RobertaTokenizer, device = torch.device,maxsize=50000):
+    def __init__(self, model: transformers.T5ForConditionalGeneration, tokenizer: transformers.RobertaTokenizer, python_version: str, redis_cache_server_ip: str = None, redis_port: int = 1679, device=torch.device, maxsize=50000):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
         self.model.to(self.device)
+
+        # Redis Caching
+        self.redis_enabled = redis_cache_server_ip is not None
+
+        if self.redis_enabled:
+            self.redis_db = redis.StrictRedis(host=redis_cache_server_ip, port=redis_port, db=0, charset="utf-8", decode_responses=True)
+            self.redis_namespace_prefix = f"{python_version}:"
 
     def __getitem__(self, item):
         self.cache.move_to_end(item)
@@ -62,8 +70,8 @@ class CacheTranslator:
 
         # process in batches
         for i in range(0, len(translation_requests), batch_size):
-            batch = translation_requests[i: i + batch_size]
-            encoded = self.tokenizer(batch, return_tensors= "pt", padding=True).to(self.device)
+            batch = translation_requests[i : i + batch_size]
+            encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
 
             with torch.no_grad():
                 output = self.model.generate(**encoded, max_length=512)
@@ -99,6 +107,14 @@ class CacheTranslator:
     def __call__(self, args: list, check_timeout: callable = None, **_):
         normalized_args = [normalize_masks(fix_jump_targets(x)) for x in args]
 
+        if self.redis_enabled:
+            # Update local cache from redis
+            to_fetch_from_redis = list({norm for norm, _ in normalized_args if norm not in self.cache})
+            redis_results = {key: self.redis_db.get(f"{self.redis_namespace_prefix}{key}") for key in to_fetch_from_redis}
+            for translation_key, translation_result in redis_results.items():
+                if translation_result:
+                    self.cache[translation_key] = translation_result
+
         # New are those not in the local cache
         new = TrackedDataset(
             TRANSLATION_STEP,
@@ -107,8 +123,10 @@ class CacheTranslator:
         )
 
         # Now, "new" has been updated to those not in local
-        for arg, result in zip(new.x, self._translate_with_backoff(new)):
+        for arg, result in zip(new.x, self._translate_with_backoff(new.x)):
             self.cache[arg] = result
+            if self.redis_enabled:
+                self.redis_db.set(f"{self.redis_namespace_prefix}{arg}", self.cache[arg])
 
         results = [restore_masks(self[norm], order) for norm, order in normalized_args]
         while len(self.cache) > self.maxsize:
@@ -120,6 +138,8 @@ class CacheTranslator:
 def load_models(
     config_file: Path = Path("pylingual/decompiler_config.yaml"),
     version: PythonVersion = PythonVersion(3.9),
+    redis_cache_server_ip: str = None,
+    redis_port: int = 1679,
     token=False,
 ) -> tuple[transformers.Pipeline, CacheTranslator]:
     logger.info(f"Loading models for {version}...")
@@ -167,4 +187,4 @@ def load_models(
     translation_model = transformers.T5ForConditionalGeneration.from_pretrained(stmt_config["REPO"], revision=stmt_config["REVISION"], token=token)
     translation_tokenizer = transformers.RobertaTokenizer.from_pretrained(stmt_config["TOKENIZER"], token=token)
 
-    return segmenter, CacheTranslator(translation_model, translation_tokenizer, device)
+    return segmenter, CacheTranslator(translation_model, translation_tokenizer, python_version=version.as_str(), redis_cache_server_ip=redis_cache_server_ip, redis_port=redis_port, device=device)

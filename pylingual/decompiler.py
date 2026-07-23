@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from xdis import Code3
 
-Code3.__eq__ = (
-    lambda self, o: isinstance(o, Code3)
+Code3.__eq__ = lambda self, o: (
+    isinstance(o, Code3)
     and self.co_argcount == o.co_argcount
     and self.co_nlocals == o.co_nlocals
     and self.co_flags == o.co_flags
@@ -440,7 +440,17 @@ class Decompiler:
                     inst.starts_line = None
 
 
-def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Path | None = None, version: str | None = None, top_k: int = 10, trust_lnotab: bool = False, timeout: int | None = None) -> DecompilerResult:
+def decompile(
+    pyc: PYCFile | Path,
+    save_to: Path | None = None,
+    config_file: Path | None = None,
+    version: str | None = None,
+    top_k: int = 10,
+    trust_lnotab: bool = False,
+    timeout: int | None = None,
+    redis_cache_server_ip: str = None,
+    redis_port: int = 1679,
+) -> DecompilerResult:
     """
     Decompile a PYC file.
 
@@ -451,6 +461,8 @@ def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Pat
     :param top_k: Max number of pyc segmentations to consider.
     :param trust_lnotab: Trust the lnotab in the input PYC for segmentation (False recommended).
     :param timeout: Maximum time in seconds to allow decompilation to run.
+    :param redis_cache_server_ip: IP for the Redis cache server.
+    :param redis_port: Port for the Redis cache server.
     :return: DecompilerResult class including important information about decompilation
     """
     logger.info(f"Loading {pyc}...")
@@ -479,7 +491,7 @@ def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Pat
     if not config_file.exists():
         raise FileNotFoundError(f"Decompiler config {config_file} not found")
 
-    segmenter, translator = load_models(config_file, pversion)
+    segmenter, translator = load_models(config_file, pversion, redis_cache_server_ip, redis_port)
 
     if save_to:
         logger.info(f"Decompiling pyc {pyc.pyc_path.resolve() if pyc.pyc_path else repr(pyc)} to {save_to.resolve()}")
