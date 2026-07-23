@@ -123,7 +123,7 @@ class CacheTranslator:
         )
 
         # Now, "new" has been updated to those not in local
-        for arg, result in zip(new.x, self._translate_with_backoff(new.x)):
+        for arg, result in zip(new.x, self._translate_with_backoff(new)):
             self.cache[arg] = result
             if self.redis_enabled:
                 self.redis_db.set(f"{self.redis_namespace_prefix}{arg}", self.cache[arg])
