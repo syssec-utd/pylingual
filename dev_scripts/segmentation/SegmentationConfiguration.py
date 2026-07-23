@@ -36,6 +36,10 @@ class SegmentationConfiguration:
         return self.dataset_repo_name + "-tokenized"
 
     @property
+    def tokenized_dataset_dir(self):
+        return self.cache_dir / "datasets" / self.tokenized_dataset_repo_name
+
+    @property
     def mlm_repo_name(self):
         return self.base_repo_name + "-mlm"
 
