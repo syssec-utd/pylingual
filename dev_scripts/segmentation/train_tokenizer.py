@@ -48,14 +48,17 @@ def save_and_upload_tokenizer(
     tokenizer_json_path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(tokenizer_json_path.resolve()))
 
-    api = HfApi()
-    create_repo(tokenizer_repo_name, exist_ok=True, private=not public)
-    api.upload_file(
-        path_in_repo="tokenizer.json",
-        path_or_fileobj=str(tokenizer_json_path.resolve()),
-        repo_id=tokenizer_repo_name,
-        commit_message=f"Trained tokenizer using {dataset_name}",
-    )
+    try:
+        api = HfApi()
+        create_repo(tokenizer_repo_name, exist_ok=True, private=not public)
+        api.upload_file(
+            path_in_repo="tokenizer.json",
+            path_or_fileobj=str(tokenizer_json_path.resolve()),
+            repo_id=tokenizer_repo_name,
+            commit_message=f"Trained tokenizer using {dataset_name}",
+        )
+    except Exception as error:
+        logging.warning(f"Tokenizer saved locally but could not be uploaded to {tokenizer_repo_name}: {error}")
 
 
 def train_tokenizer(config: SegmentationConfiguration, public: bool = False):

@@ -5,7 +5,7 @@ import click
 
 import evaluate
 import numpy as np
-from datasets import ReadInstruction, load_dataset
+from datasets import ReadInstruction, load_dataset, load_from_disk
 from huggingface_hub import hf_hub_download, repo_exists
 from SegmentationConfiguration import SegmentationConfiguration, parse_segmentation_config_json
 from transformers import AutoModelForTokenClassification, DataCollatorForTokenClassification, PreTrainedTokenizerFast, Trainer, TrainingArguments
@@ -35,15 +35,17 @@ def compute_metrics(eval_preds):
     }
 
 
-def load_tokenizer(tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
-    tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
-
-    tokenizer_file = hf_hub_download(
-        repo_id=tokenizer_repo_name,
-        filename="tokenizer.json",
-        token=True,
-        cache_dir=str(tokenizer_dir),
-    )
+def load_tokenizer(tokenizer_json_path: pathlib.Path, tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
+    if tokenizer_json_path.exists():
+        tokenizer_file = str(tokenizer_json_path)
+    else:
+        tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
+        tokenizer_file = hf_hub_download(
+            repo_id=tokenizer_repo_name,
+            filename="tokenizer.json",
+            token=True,
+            cache_dir=str(tokenizer_dir),
+        )
     tokenizer = PreTrainedTokenizerFast(
         tokenizer_file=tokenizer_file,
         unk_token="[UNK]",
@@ -56,7 +58,14 @@ def load_tokenizer(tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrai
     return tokenizer
 
 
-def load_tokenized_train_and_valid_dataset(dataset_repo_name: str, cache_dir: pathlib.Path, dataset_percentage: int = 100):
+def load_tokenized_train_and_valid_dataset(dataset_repo_name: str, cache_dir: pathlib.Path, dataset_percentage: int = 100, dataset_dir: pathlib.Path | None = None):
+    if dataset_dir is not None and dataset_dir.exists():
+        tokenized_dataset = load_from_disk(dataset_dir)
+        tokenized_train_dataset = tokenized_dataset["train"]
+        if dataset_percentage < 100:
+            tokenized_train_dataset = tokenized_train_dataset.select(range(len(tokenized_train_dataset) * dataset_percentage // 100))
+        return tokenized_train_dataset, tokenized_dataset["valid"]
+
     dataset_dir = cache_dir / "datasets" / dataset_repo_name
     # Load the tokenized dataset
     tokenized_train_dataset = load_dataset(
@@ -83,7 +92,6 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
     # training arguments.
     training_args = TrainingArguments(
         output_dir=str(config.segmenter_dir),
-        overwrite_output_dir=True,
         eval_strategy="epoch",
         logging_strategy="epoch",
         save_strategy="epoch",
@@ -93,7 +101,7 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
         save_steps=1000,
         weight_decay=0.01,
         fp16=True,
-        push_to_hub=True,
+        push_to_hub=False,
         hub_model_id=config.segmenter_repo_name,
         hub_private_repo=not public,
         ddp_backend="nccl",
@@ -102,21 +110,27 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
     )
 
     # load a basic pretrained BERT model
+    mlm_source = str(config.mlm_dir) if config.mlm_dir.exists() else config.mlm_repo_name
     model = AutoModelForTokenClassification.from_pretrained(
-        pretrained_model_name_or_path=config.mlm_repo_name,
+        pretrained_model_name_or_path=mlm_source,
         id2label=id2label,
         label2id=label2id,
         token=True,
     )
 
     # Set DataCollator for DataCollatorForTokenClassification
-    tokenizer = load_tokenizer(config.tokenizer_repo_name, config.cache_dir)
+    tokenizer = load_tokenizer(config.tokenizer_json_path, config.tokenizer_repo_name, config.cache_dir)
     data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer, max_length=config.max_token_length)
 
     (
         tokenized_train_dataset,
         tokenized_validation_dataset,
-    ) = load_tokenized_train_and_valid_dataset(config.tokenized_dataset_repo_name, config.cache_dir, config.dataset_percentage)
+    ) = load_tokenized_train_and_valid_dataset(
+        config.tokenized_dataset_repo_name,
+        config.cache_dir,
+        config.dataset_percentage,
+        config.tokenized_dataset_dir,
+    )
 
     # Hugging face trainer: a Trainer class to fine-tune pretrained models
     trainer = Trainer(
@@ -126,21 +140,26 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
         train_dataset=tokenized_train_dataset,
         eval_dataset=tokenized_validation_dataset,
         compute_metrics=compute_metrics,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
 
     # Training
     trainer.train()
 
-    if int(os.environ["LOCAL_RANK"]) == 0:
+    if int(os.environ.get("LOCAL_RANK", "0")) == 0:
         # Save the model
         trainer.save_model(str(config.segmenter_dir))
 
-        trainer.push_to_hub(
-            finetuned_from=config.mlm_repo_name,
-            dataset=config.tokenized_dataset_repo_name,
-            commit_message=f"Trained on {config.tokenized_dataset_repo_name} using {config.mlm_repo_name}",
-        )
+        try:
+            trainer.push_to_hub(
+                finetuned_from=config.mlm_repo_name,
+                dataset=config.tokenized_dataset_repo_name,
+                commit_message=f"Trained on {config.tokenized_dataset_repo_name} using {config.mlm_repo_name}",
+            )
+        except Exception as error:
+            logging.warning(
+                f"Segmenter saved locally but could not be uploaded to {config.segmenter_repo_name}: {error}"
+            )
 
 
 @click.command(help="Training script for the segmentation model given a segmentation json.")
