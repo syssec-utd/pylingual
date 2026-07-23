@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from xdis.cross_dis import instruction_size, xstack_effect
 
 from pylingual.editable_bytecode import EditableBytecode, Inst
@@ -8,6 +10,8 @@ from .container_recovery.segment import Segment
 from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
 
 _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
+
+logger = logging.getLogger(__name__)
 
 
 def _make_function_stack_effect(arg, version) -> int:
@@ -80,7 +84,15 @@ class Preprocessor:
                     end_index = bc.instructions.index(bc.get_by_offset(seg.end_offset))
                     following = bc.instructions[end_index + 1:]
                     consumption = Tracer(following).trace()
-                    if consumption is None or not _preserve_container(following[consumption[0]], consumption[1]):
+                    crosses_merge = consumption is not None and any(
+                        inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
+                    )
+                    if crosses_merge:
+                        logger.warning(
+                            "Tracer does not support tracing consumers through *_MERGE instructions; "
+                            "skipping container folding"
+                        )
+                    elif consumption is None or not _preserve_container(following[consumption[0]], consumption[1]):
                         self._collapse_segment(bc, seg, recovery.value)
                         return
         for child in reversed(seg.ordered_children):

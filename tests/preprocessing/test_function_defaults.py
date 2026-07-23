@@ -96,7 +96,7 @@ def test_pre311_make_function_effect_includes_qualname():
     assert _make_function_stack_effect(0b1110, (3, 12)) == -3
 
 
-def test_explicit_keyword_map_before_kwargs_remains_visible_to_model():
+def test_explicit_keyword_map_before_kwargs_remains_visible_to_model(caplog):
     bytecode = _preprocess(
         "def f(foo, value, options):\n"
         "    return foo(value, conditional=True, **options)\n"
@@ -110,6 +110,24 @@ def test_explicit_keyword_map_before_kwargs_remains_visible_to_model():
         and getattr(inst, "preprocessed_container", False)
         for inst in function.instructions
     )
+    assert "Tracer does not support tracing consumers through *_MERGE instructions" in caplog.text
+
+
+def test_keyword_map_before_dynamic_kwargs_is_not_folded(caplog):
+    bytecode = _preprocess(
+        "def f(foo, options):\n"
+        "    return foo(class_='error', **options())\n"
+    )
+    function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
+
+    assert any(inst.opname == "BUILD_MAP" and inst.arg == 1 for inst in function.instructions)
+    assert not any(
+        inst.opname == "LOAD_CONST"
+        and inst.argval == {"class_": "error"}
+        and getattr(inst, "preprocessed_container", False)
+        for inst in function.instructions
+    )
+    assert "Tracer does not support tracing consumers through *_MERGE instructions" in caplog.text
 
 
 def test_dict_used_as_keyword_value_can_still_fold():
