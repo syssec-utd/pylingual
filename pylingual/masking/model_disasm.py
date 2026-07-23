@@ -137,6 +137,15 @@ def restore_masked_source(file_path: pathlib.Path, masker: Masker, python_versio
 
 
 def format_source_replacement(mask_value: str) -> str:
+    if type(mask_value) is slice:
+        start = "" if mask_value.start is None else format_source_replacement(mask_value.start)
+        stop = "" if mask_value.stop is None else format_source_replacement(mask_value.stop)
+        if mask_value.step is None:
+            return f"{start}:{stop}"
+        step = format_source_replacement(mask_value.step)
+        return f"{start}:{stop}:{step}"
+    if type(mask_value) in (list, tuple) and any(type(value) is slice for value in mask_value):
+        return ", ".join(format_source_replacement(value) for value in mask_value)
     if mask_value is ...:
         return "..."
     if mask_value == 9e999:  # infinity

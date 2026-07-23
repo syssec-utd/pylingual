@@ -27,3 +27,22 @@ def test_container_mask_before_closing_brace_is_not_escaped():
     expected = "value = {'first': {'size': (32, 32), 'crop': True}, 'last': {'size': (32, 32), 'crop': True}}"
 
     assert restore_masked_source_text([source], masker) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ([slice(None)], ":"),
+        ([slice(1, None)], "1:"),
+        ([slice(None, 5)], ":5"),
+        ([slice(None, None, -1)], "::(-1)"),
+        ([slice(None), None], ":, None"),
+    ],
+)
+def test_slice_container_masks_restore_as_subscript_syntax(value, expected):
+    masker = Masker()
+    masker.global_tab[value] = "<mask_0>"
+
+    source = "value = array[<mask_0>, *tail]"
+
+    assert restore_masked_source_text([source], masker) == [f"value = array[{expected}, *tail]"]
