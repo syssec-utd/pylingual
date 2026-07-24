@@ -52,7 +52,7 @@ class CacheTranslator:
         self.redis_enabled = redis_cache_server_ip is not None
 
         if self.redis_enabled:
-            self.redis_db = redis.StrictRedis(host=redis_cache_server_ip, port=redis_port, db=0, charset="utf-8", decode_responses=True)
+            self.redis_db = redis.StrictRedis(host=redis_cache_server_ip, port=redis_port, db=0, encoding="utf-8", decode_responses=True)
             self.redis_namespace_prefix = f"{python_version}:"
 
     def __getitem__(self, item):
