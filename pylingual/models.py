@@ -29,6 +29,9 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# real statements decode to a few dozen tokens; anything near this length is a stuck greedy decode
+RUNAWAY_TOKENS = 100
+
 
 # translator with caching
 class CacheTranslator:
@@ -54,14 +57,32 @@ class CacheTranslator:
         batch_size: int = 32,
         **kwargs,
     ) -> list[str]:
+        # every batch pads to its longest member, so group similar lengths together and undo the order after
+        items = translation_requests.x if isinstance(translation_requests, TrackedDataset) else list(translation_requests)
+        tokenizer = self.translator.tokenizer
+        order = sorted(range(len(items)), key=lambda i: len(tokenizer(items[i])["input_ids"]))
+        sorted_items = [items[i] for i in order]
+        if isinstance(translation_requests, TrackedDataset):
+            sorted_items = TrackedDataset(translation_requests.name, sorted_items, translation_requests.check_timeout)
+
         # return_tensors=True prevents standard postprocessing which skips special tokens
-        translation_result = self.translator(translation_requests, return_tensors=True, batch_size=batch_size, **kwargs)
-        decoded_results = []
-        for result in flatten(translation_result):
+        translation_result = self.translator(sorted_items, return_tensors=True, batch_size=batch_size, **kwargs)
+        decoded_results = [None] * len(items)
+        runaway = []
+        for i, result in zip(order, flatten(translation_result)):
             # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
             filtered_tokens = [tok for tok in result["translation_token_ids"].tolist() if tok not in [0, 1, 2, 3, 4]]
+            if len(filtered_tokens) >= RUNAWAY_TOKENS and kwargs.get("num_beams", 1) == 1:
+                runaway.append(i)
             # decode the remaining tokens
-            decoded_results.append(self.translator.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
+            decoded_results[i] = self.translator.tokenizer.decode(filtered_tokens, skip_special_tokens=False)
+
+        # greedy decoding can fall into a repetition loop on deeply nested expressions; beam search recovers those
+        if runaway:
+            logger.info(f"Retranslating {len(runaway)} runaway statement(s) with beam search")
+            retried = self._translate_and_decode([items[i] for i in runaway], batch_size=batch_size, **{**kwargs, "num_beams": 4})
+            for i, text in zip(runaway, retried):
+                decoded_results[i] = text
 
         return decoded_results
 
@@ -137,11 +158,10 @@ def load_models(
     if torch.cuda.is_available():
         logger.info("Using CUDA GPU for models")
         device = torch.device("cuda:0")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        logger.info("Using MPS (Metal Performance Shaders) GPU for models")
-        device = torch.device("mps")
     else:
-        logger.warning("Using CPU for models")
+        # MPS recompiles its Metal graph on every T5 decode step, which makes it far slower than
+        # CPU for this workload, so it is not used even when available.
+        logger.info("Using CPU for models")
         device = torch.device("cpu")
     segmenter = transformers.pipeline(
         "token-classification",
@@ -161,6 +181,8 @@ def load_models(
         max_length=512,
         truncation=False,
         device=device,
+        # the pipeline class defaults to num_beams=4, overriding the num_beams=1 the model ships with
+        num_beams=1,
     )
 
     return segmenter, CacheTranslator(translator)
