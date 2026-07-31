@@ -377,7 +377,7 @@ class Decompiler:
 
     # try to correct the segmentation of the ith code object
     def correct_segmentation(self, i: int, from_comp_error=False) -> bool:
-        if not self.segmentation_results[i]:
+        if len(self.segmentation_results) <= i or not self.segmentation_results[i]:
             return False
         if isinstance(self.source_context.cfts[self.ordered_bytecodes[i].codeobj], MetaTemplate):
             return False

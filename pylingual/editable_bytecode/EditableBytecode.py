@@ -121,52 +121,34 @@ class EditableBytecode:
 
     def inline_annotate_functions(self):
         """In Python 3.14, type annotations are stored in implicit __annotate__ functions. This function inlines them."""
-        #  (opname, argval) pairs
-        # fmt: off
-        # appears at the start of all __annotate__ functions
-        ANNOTATE_FUNC_PREAMBLE = (
-            ("LOAD_FAST_BORROW", "format"),
-            ("LOAD_SMALL_INT", 2),
-            ("COMPARE_OP", ">"),
-            ("POP_JUMP_IF_FALSE", 12),
-            ("LOAD_COMMON_CONSTANT", 1), # NotImplementedError
-            ("RAISE_VARARGS", 1), # exception instance
-        )
 
-        # appears at the start of a <module> code object that has annotations
-        MODULE_ANNOTATE_FUNC_LOAD_SEQUENCE = (
-            ("LOAD_CONST", "__annotate__"), # code object
-            ("MAKE_FUNCTION", 0),
-            ("STORE_NAME", "__annotate__"),
-            ("BUILD_SET", 0),
-            ("STORE_NAME", "__conditional_annotations__"),
-        )
-
-        # appears at the end of class object that has annotations, right before storing the static attributes
-        CLASS_ANNOTATE_FUNC_LOAD_SEQUENCE = (
-            ("LOAD_FAST_BORROW", "__classdict__"),
-            ("LOAD_FAST_BORROW", "__conditional_annotations__"),
-            ("BUILD_TUPLE", 2),
-            ("LOAD_CONST", "__annotate__"), # code object
-            ("MAKE_FUNCTION", 8),
-            ("SET_FUNCTION_ATTRIBUTE", 8), # closure
-            ("STORE_NAME", "__annotate_func__"),
-        )
-
-        # fmt: on
+        annotate_func_cache = {}
 
         def try_read_annotate_func(codeobj) -> EditableBytecode | None:
+
             if not iscode(codeobj):
                 return None
-            target_bc = EditableBytecode(codeobj, self.opcode, self.version)
 
+            # check cache
+            if codeobj in annotate_func_cache:
+                return annotate_func_cache[codeobj]
+
+            # if it's not named "__annotate__", only treat it as an annotation function
+            # if it starts with the type-definition pattern .format
+            if codeobj.co_name != "__annotate__":
+                first_inst = next(iter(Bytecode(codeobj, self.opcode)), None)
+                if not first_inst or first_inst.argval != ".format":
+                    return None
+
+            # make edititable bytecode now
+            target_bc = EditableBytecode(codeobj, self.opcode, self.version)
+            target_bc._idx_map = {id(inst): i for i, inst in enumerate(target_bc.instructions)}
             # type definitions use annotate-style functions, but they are named based on the type and use .format instead of format
-            if not codeobj.co_name == "__annotate__" and target_bc.instructions[0].argval == ".format":
+            if target_bc.instructions and target_bc.instructions[0].argval == ".format":
                 target_bc.instructions[0].argval = "format"
 
-            target_preamble = tuple((inst.opname, inst.argval) for inst in target_bc.instructions[: len(ANNOTATE_FUNC_PREAMBLE)])
-            if target_preamble != ANNOTATE_FUNC_PREAMBLE:
-                return None
+            # cache and return
+            annotate_func_cache[codeobj] = target_bc
             return target_bc
 
         # this applies to __annotate__ functions at the top of the <module> codeobj
@@ -186,22 +168,37 @@ class EditableBytecode:
             # STORE_SUBSCR
 
             conditional_annotation_map: dict[int, list[Inst]] = dict()
-
-            cursor_idx = annotate_bytecode.instructions.index(annotate_bytecode[3].target.next_instructions[0])  # start of the first annotation definition
+            cursor_idx = annotate_bytecode._idx_map[id(annotate_bytecode[3].target.next_instructions[0])] # start of the first annotation definition
             while (cursor_inst := annotate_bytecode[cursor_idx]).opname != "RETURN_VALUE":
                 if cursor_inst.opname.startswith("LOAD_") and cursor_inst.argval == "__classdict__":
                     annotation_identifier = -1
                     next_cursor_idx = next(idx + 1 for idx in range(cursor_idx, len(annotate_bytecode)) if annotate_bytecode[idx].opname == "STORE_SUBSCR")
-                    inlinable_insts = (conditional_annotation_map.get(-1) or list()) + annotate_bytecode[cursor_idx + 1 : next_cursor_idx]
+
+                    load_classdict = self.new_instruction(
+                        opname="LOAD_FAST_BORROW",
+                        opcode=self.opcode.LOAD_FAST_BORROW,
+                        optype="local",
+                        inst_size=cursor_inst.inst_size,
+                        arg=-1,
+                        argval="__classdict__",
+                        argrepr="__classdict__",
+                        has_arg=True,
+                        offset=cursor_inst.offset,
+                        starts_line=None,
+                        is_jump_target=False,
+                        has_extended_arg=False,
+                    )
+
+                    inlinable_insts = (conditional_annotation_map.get(-1) or list()) + [load_classdict] + annotate_bytecode[cursor_idx + 1 : next_cursor_idx]
                 elif cursor_inst.opname.startswith("LOAD_") and isinstance(cursor_inst.argval, int):
                     annotation_identifier = cursor_inst.argval
 
                     conditional_annotation_guard_jump = annotate_bytecode[cursor_idx + 3]
-                    next_cursor_idx = annotate_bytecode.instructions.index(conditional_annotation_guard_jump.target)
+                    next_cursor_idx = annotate_bytecode._idx_map[id(conditional_annotation_guard_jump.target)]
 
                     inlinable_insts = annotate_bytecode[cursor_idx + 4 : next_cursor_idx]
                 else:
-                    raise AssertionError("Misaligned 3.14 annotation inlining")
+                    return (False, dict())
 
                 # to help translation, we replace COPY 2 with LOAD_GLOBAL (__annotations__)
                 copy_annotations_inst = inlinable_insts[-3]
@@ -232,7 +229,10 @@ class EditableBytecode:
             annotate_bytecode = try_read_annotate_func(codeobj)
             if annotate_bytecode is None:
                 return (False, [])
-            return (True, annotate_bytecode.instructions[len(ANNOTATE_FUNC_PREAMBLE) : -1])  # skip the RETURN_VALUE at the end
+
+            # find the idx after the preamble
+            idx = next((idx for idx, inst in enumerate(annotate_bytecode.instructions) if inst.opname == "LOAD_CONST"), 0)
+            return (True, annotate_bytecode.instructions[idx:-1])  # skip the RETURN_VALUE at the end
 
         # iterate over all instructions
         # replace any load_consts that load __annotate__ functions with the function's instructions, minus the return and the prefix
@@ -240,28 +240,82 @@ class EditableBytecode:
         inline_dict: dict[tuple[int, tuple[Inst]], list[Inst]] = {}
         jump_target_mapping = {}
         conditional_annotation_map = {}
+        handled_instructions: set[Inst] = set()
+        extra_removes = set()  # avoid removing mid loop
 
         # eat the <module> level conditional __annotate__ object
-        my_module_preamble = tuple((inst.opname, getattr(inst.argval, "co_name", inst.argval)) for inst in self.instructions[: len(MODULE_ANNOTATE_FUNC_LOAD_SEQUENCE)])
-        if my_module_preamble == MODULE_ANNOTATE_FUNC_LOAD_SEQUENCE:
-            sanity_check, conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(self.instructions[0].argval)
-            assert sanity_check, "Improperly matched annotation function load sequence"
+        sanity_check, conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(self.instructions[0].argval)
+
+        if sanity_check:
+            to_remove = []
+
+            # it was probably fine to hardcode a preamble
+            # but if the preamble changes it may not be picked up in later versions.
+            for inst in self.instructions:
+                to_remove.append(inst)
+                if inst.opname.startswith("STORE_") and inst.argval == "__conditional_annotations__":
+                    break
             self.co_consts[self.instructions[0].arg] = None
-            self.remove_instructions(self.instructions[: len(MODULE_ANNOTATE_FUNC_LOAD_SEQUENCE)])
+            extra_removes.update(to_remove)
+
+        # get the first idx to prepend the class level annotation
+        first: int = None
 
         # handle class object __annotate_func__
-        store_static_attributes = next((inst for inst in self.instructions if inst.opname == "STORE_NAME" and inst.argval == "__static_attributes__"), None)
-        if store_static_attributes:
-            preamble_end_idx = self.instructions.index(store_static_attributes) - 1
-            my_class_preamble = tuple((inst.opname, getattr(inst.argval, "co_name", inst.argval)) for inst in self.instructions[preamble_end_idx - len(CLASS_ANNOTATE_FUNC_LOAD_SEQUENCE) : preamble_end_idx])
-            if my_class_preamble == CLASS_ANNOTATE_FUNC_LOAD_SEQUENCE:
-                sanity_check, class_conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(self.instructions[preamble_end_idx - 4].argval)
-                assert sanity_check, "Improperly matched annotation function load sequence"
-                conditional_annotation_map |= class_conditional_annotation_map
-                self.co_consts[self.instructions[preamble_end_idx - 4].arg] = None
-                self.remove_instructions(self.instructions[preamble_end_idx - len(CLASS_ANNOTATE_FUNC_LOAD_SEQUENCE) : preamble_end_idx])
-
         for idx, inst in enumerate(self.instructions):
+            if inst.opname.startswith("LOAD_") and inst.argval == "__classdict__":
+                to_remove = []
+                annotate_func = False
+                annotate_codeobj = None
+                is_class = False
+
+                # go to the annotate function
+                for i in range(idx, len(self.instructions)):
+                    # check for annotate func remove LOAD_CONST, MAKE_FUNCTION and SET_FUNCTION_ATTRIBUTE afterwards
+                    if not annotate_func:
+                        annotate_func = try_read_annotate_func(self.instructions[i].argval)
+
+                        if annotate_func:
+                            annotate_codeobj = self.instructions[i].argval
+                            to_remove.extend(self.instructions[i : i + 3])
+
+                    # remove from  LOAD_FAST_BORROW __classdict__ to LOAD_CONST codeobj __annotate__
+                    if not annotate_func:
+                        to_remove.append(self.instructions[i])
+
+                    # stopping conditions either SET_FUNCTION_ATTRIBUTE 0x10 or STORE_NAME __annotate_func__
+                    if self.instructions[i].opname == "SET_FUNCTION_ATTRIBUTE" and self.instructions[i].arg == 0x10:
+                        to_remove.append(self.instructions[i])
+                        break
+
+                    if self.instructions[i].opname.startswith("STORE_") and self.instructions[i].argval == "__annotate_func__":
+                        to_remove.extend(self.instructions[i : i + 1])
+                        is_class = True
+                        break
+
+                if not first:
+                    first = idx - 1
+
+                # check if its the end of a class
+                if is_class:
+                    sanity_check, class_conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(annotate_codeobj)
+                    assert sanity_check, "Improperly matched annotation function load sequence"
+                    direct_annotations = class_conditional_annotation_map.pop(-1, None)
+
+                    if direct_annotations:
+                        inline_dict[(first, tuple(to_remove))] = direct_annotations
+                    else:
+                        extra_removes.update(to_remove)
+                    conditional_annotation_map |= class_conditional_annotation_map
+                else:
+                    sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
+                    if sanity_check:
+                        inline_dict[(idx, tuple(to_remove))] = inline_insts
+
+                handled_instructions.update(to_remove)
+        for idx, inst in enumerate(self.instructions):
+            if inst in handled_instructions:
+                continue
             # handle function definition annotations
             if inst.opname == "LOAD_CONST":
                 is_annotate_func, inlinable_insts = is_annotate_func_and_get_inlinable_insts(inst.argval)
@@ -302,16 +356,17 @@ class EditableBytecode:
                 inline_dict[(idx, tuple(self.instructions[idx - 1 : idx + 1]))] = conditional_annotation_map[-1]
                 del conditional_annotation_map[-1]
 
-        self.insert_insts({idx + len(insts_to_remove): insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
+        self.insert_insts({idx: insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
         self._change_jump_targets(jump_target_mapping)
-        self.remove_instructions(set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
+        self.remove_instructions(extra_removes | set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
 
         # remove the __annotate__ functions from co_consts, but don't impact co_consts offsets
         # we don't remove these from child_bytecodes because this runs before child_bytecodes are populated
         for idx, removed_insts in inline_dict.keys():
-            if (inst := removed_insts[0]).opname == "LOAD_CONST":
-                assert self.co_consts[inst.arg] == inst.argval
-                self.co_consts[inst.arg] = None
+            for inst in removed_insts:
+                if inst.opname == "LOAD_CONST" and try_read_annotate_func(inst.argval):
+                    assert self.co_consts[inst.arg] == inst.argval
+                    self.co_consts[inst.arg] = None
 
     def get_recursive_length(self):
         """Returns the recursive length of this bytecode and all its descendents"""
@@ -583,10 +638,11 @@ class EditableBytecode:
         co_consts = tuple((const.to_code(no_lnotab=no_lnotab) if isinstance(const, EditableBytecode) else const) for const in self.co_consts)
 
         replacement_args = {
-            "co_code": self.to_bytecode(),
-            "co_consts": tuple(co_consts),
-            "co_names": tuple(self.co_names),
-            "co_varnames": tuple(self.co_varnames),
+            "co_code": self.to_bytecode(), 
+            "co_consts": tuple(co_consts), 
+            "co_names": tuple(self.co_names), 
+            "co_varnames": tuple(self.co_varnames), 
+            "co_nlocals": len(self.co_varnames)
         }
 
         # co_lnotab deprecated in python >= 3.10
