@@ -194,7 +194,7 @@ def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
     container_masks = set()
     for value, mask in masker.global_tab.items():
         replacement = format_source_replacement(value)
-        if type(value) in (list, tuple, frozenset, set, dict):
+        if isinstance(value, (list, tuple, frozenset, set, dict)):
             # The model sometimes quotes an atomic container mask as though it were a string.
             # Consume those wrapper quotes rather than escaping the container's contents.
             replacements[re.escape(f"'{mask}'")] = replacement

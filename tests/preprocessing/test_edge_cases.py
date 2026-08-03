@@ -54,13 +54,13 @@ def test_falsy_non_empty_tuple_in_co_consts():
 def test_falsy_non_empty_set_in_co_consts():
     bc = _preprocess("a = {0}\n")
     values = _co_const_values(bc)
-    assert any(type(v) is set and v == {0} for v in values), f"{{0}} not in co_consts values {values!r}"
+    assert any(isinstance(v, set) and v == {0} for v in values), f"{{0}} not in co_consts values {values!r}"
 
 
 def test_set_recovered_from_frozenset():
     bc = _preprocess("a = {1, 2, 3}\n")
     values = _co_const_values(bc)
-    sets = [v for v in values if type(v) is set]
+    sets = [v for v in values if isinstance(v, set)]
     assert any(v == {1, 2, 3} for v in sets), f"set {{1,2,3}} not in {values!r}"
 
 
@@ -157,3 +157,13 @@ def test_preprocessor_preserves_container_line_start():
     assert store.opname == "STORE_FAST"
     assert store.starts_line is None
     assert any(inst.is_jump and inst.target is folded for inst in bc.instructions)
+
+
+def test_set_literal_order_preserved_in_co_consts():
+    # A set literal used in a non-membership context compiles to an order-sensitive
+    # BUILD_SET; folding must preserve source element order (regression: hash-iteration
+    # order leaked into the folded constant and recompiled to a different BUILD_SET).
+    bc = _preprocess("x = set(self.dims) != {'levels', 'frequency'}\n")
+    ordered = [c for c in bc.co_consts if isinstance(c, set) and not isinstance(c, frozenset)]
+    assert any(getattr(c, "_ordered", None) == ("levels", "frequency") for c in ordered), f"props {ordered!r}"
+    assert any(repr(c) == "{'levels', 'frequency'}" for c in ordered), f"repr {[repr(c) for c in ordered]}"

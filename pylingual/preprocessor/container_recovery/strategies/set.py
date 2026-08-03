@@ -1,8 +1,41 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 from ..recovery import register_recovery_strategy, recover
 from ..segment import Recovery, Segment
 from ..utils import _non_empty_children, _get_build_set_size
+
+
+class _OrderedSet(set):
+    """A set that preserves the source element order, including duplicates.
+
+    Used when folding a ``BUILD_SET {a, b, c}`` literal so that decompilation
+    reproduces the original element order instead of mangling it via hash-iteration
+    order (and so that a literal like ``{1, 2, 1}`` is not collapsed into ``{1, 2}``).
+    Underlying set semantics (membership, equality, len, iteration) are unchanged;
+    only :func:`repr`/:func:`str` reflect the source order, and ``_ordered`` carries
+    the full source sequence (with duplicates).
+    """
+
+    __slots__ = ("_ordered",)
+
+    def __init__(self, iterable=()):
+        super().__init__(iterable)
+        self._ordered = tuple(iterable)
+
+    def __repr__(self):
+        return "{" + ", ".join(repr(item) for item in self._ordered) + "}"
+
+    __str__ = __repr__
+
+    def __deepcopy__(self, memo):
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        result.update(self)
+        result._ordered = deepcopy(self._ordered, memo)
+        return result
 
 
 @register_recovery_strategy(2)
@@ -12,7 +45,7 @@ def recover_build_set(seg: Segment, indent: int) -> Recovery | None:
         return None
     elems = [c for c in seg.ordered_children if not (isinstance(c, Segment) and c.tag == "BUILD")]
     if not elems:
-        return Recovery(set(), True)
+        return Recovery(_OrderedSet(), True)
     items = []
     complete = True
     for elem in elems:
@@ -20,7 +53,7 @@ def recover_build_set(seg: Segment, indent: int) -> Recovery | None:
         if not r.complete:
             complete = False
         items.append(r.value)
-    return Recovery(set(items), complete)
+    return Recovery(_OrderedSet(items), complete)
 
 
 @register_recovery_strategy(5)
@@ -46,5 +79,5 @@ def recover_set_update(seg: Segment, indent: int) -> Recovery | None:
         return None
     val = extend_instrs[0][1].argval
     if isinstance(val, (tuple, frozenset, set)):
-        return Recovery(set(val), True)
+        return Recovery(_OrderedSet(tuple(val)), True)
     return Recovery(val, True)

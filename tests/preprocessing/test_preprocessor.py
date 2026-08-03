@@ -72,6 +72,11 @@ def _values_match(expected, actual) -> bool:
         if type(actual) is frozenset and actual == expected:
             return True
         return False
+    if isinstance(expected, set):
+        # _OrderedSet is a set subclass preserving source order; match by set equality
+        if isinstance(actual, set) and actual == expected:
+            return True
+        return False
     if type(expected) is not type(actual):
         return False
     return expected == actual

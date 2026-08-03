@@ -8,6 +8,7 @@ from pylingual.editable_bytecode import EditableBytecode, Inst
 from .container_recovery.recovery import recover
 from .container_recovery.segment import Segment
 from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
+from .container_recovery.strategies.set import _OrderedSet
 
 _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
 
@@ -26,6 +27,10 @@ def _constants_match(left, right) -> bool:
         )
     if type(left) in (set, frozenset):
         return len(left) == len(right) and all(any(_constants_match(a, b) for b in right) for a in left)
+    if type(left) is _OrderedSet:
+        return len(left._ordered) == len(right._ordered) and all(
+            _constants_match(a, b) for a, b in zip(left._ordered, right._ordered)
+        )
     if type(left) is slice:
         return (
             _constants_match(left.start, right.start)
