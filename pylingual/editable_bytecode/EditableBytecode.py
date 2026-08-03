@@ -364,7 +364,7 @@ class EditableBytecode:
     def inline_generic_parameters(self):
         """Inline <generic parameters of X> code objects added in Python 3.12 (PEP 695).
 
-        Splices the helper's body into the parent instruction stream so the LLM sees
+        Splices the helper's body into the parent instruction stream so the transformer model sees
         the typevar dance, LOAD_BUILD_CLASS, and base subscription in one contiguous
         view, and nulls the orphan's co_consts slot so it isn't separately segmented.
         """
