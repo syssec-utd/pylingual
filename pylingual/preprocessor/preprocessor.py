@@ -109,7 +109,7 @@ class Preprocessor:
                         inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
                     )
                     if crosses_merge:
-                        logger.warning(
+                        logger.debug(
                             "Tracer does not support tracing consumers through *_MERGE instructions; "
                             "skipping container folding"
                         )
