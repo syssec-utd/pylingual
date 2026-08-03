@@ -167,3 +167,11 @@ def test_set_literal_order_preserved_in_co_consts():
     ordered = [c for c in bc.co_consts if isinstance(c, set) and not isinstance(c, frozenset)]
     assert any(getattr(c, "_ordered", None) == ("levels", "frequency") for c in ordered), f"props {ordered!r}"
     assert any(repr(c) == "{'levels', 'frequency'}" for c in ordered), f"repr {[repr(c) for c in ordered]}"
+
+
+def test_stararg_tuple_recovered_as_tuple():
+    # A list directly followed by a list->tuple conversion is a *-arg tuple; it
+    # must fold as a TUPLE (not leave a dangling LIST_TO_TUPLE after a list const).
+    bc = _preprocess("f(a, *(1, '2'))\n")
+    folded = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
+    assert (1, '2') in folded, f"star-arg tuple not folded as tuple: {folded!r}"

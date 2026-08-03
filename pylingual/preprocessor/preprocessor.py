@@ -80,6 +80,19 @@ def _preserve_container(consumer: Inst, argnum: int) -> bool:
     return False
 
 
+def _is_list_to_tuple(inst) -> bool:
+    """True when the instruction converts the container on the TOS to a tuple."""
+    if inst.opname == "LIST_TO_TUPLE":
+        return True
+    if inst.opname == "CALL_INTRINSIC_1":
+        # 3.12+ emits CALL_INTRINSIC_1 (INTRINSIC_LIST_TO_TUPLE) after building a
+        # *-arg tuple; argrepr names it and arg==6 is the stable 3.12 value.
+        argrepr = getattr(inst, "argrepr", "") or ""
+        if argrepr == "INTRINSIC_LIST_TO_TUPLE" or getattr(inst, "arg", None) == 6:
+            return True
+    return False
+
+
 class Preprocessor:
     """Rewrites container construction bytecode into single LOAD_CONST instructions.
 
@@ -119,13 +132,21 @@ class Preprocessor:
                             "skipping container folding"
                         )
                     elif consumption is None or not _preserve_container(following[consumption[0]], consumption[1]):
-                        self._collapse_segment(bc, seg, recovery.value)
+                        value = recovery.value
+                        fold_through = None
+                        if consumption is not None and consumption[0] == 0 and _is_list_to_tuple(following[0]):
+                            # A list directly followed by a list->tuple conversion is
+                            # actually a tuple (e.g. a *-arg target); fold both into a single
+                            # tuple constant rather than leaving a dangling LIST_TO_TUPLE.
+                            value = tuple(value)
+                            fold_through = following[0]
+                        self._collapse_segment(bc, seg, value, fold_through)
                         return
         for child in reversed(seg.ordered_children):
             if isinstance(child, Segment):
                 self._process_segment(bc, child)
 
-    def _collapse_segment(self, bc: EditableBytecode, seg: Segment, value) -> None:
+    def _collapse_segment(self, bc: EditableBytecode, seg: Segment, value, fold_through: Inst | None = None) -> None:
         if len(value) == 0:
             return
 
@@ -139,7 +160,7 @@ class Preprocessor:
             const_index = len(bc.co_consts) - 1
 
         start_inst = bc.get_by_offset(seg.start_offset)
-        end_inst = bc.get_by_offset(seg.end_offset)
+        end_inst = fold_through if fold_through is not None else bc.get_by_offset(seg.end_offset)
         start_idx = bc.instructions.index(start_inst)
         end_idx = bc.instructions.index(end_inst)
 
