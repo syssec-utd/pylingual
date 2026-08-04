@@ -146,6 +146,11 @@ def format_source_replacement(mask_value: str) -> str:
         return f"{start}:{stop}:{step}"
     if type(mask_value) in (list, tuple) and any(type(value) is slice for value in mask_value):
         return ", ".join(format_source_replacement(value) for value in mask_value)
+    if type(mask_value) is tuple and any(value is ... for value in mask_value):
+        # a folded subscript tuple containing Ellipsis must restore as comma-joined
+        # subscript syntax (x[[0], ...]), not a parenthesized repr (x[([0], Ellipsis)])
+        # which would recompile to a LOAD_NAME Ellipsis instead of LOAD_CONST Ellipsis
+        return ", ".join(format_source_replacement(value) for value in mask_value)
     if mask_value is ...:
         return "..."
     if mask_value == 9e999:  # infinity

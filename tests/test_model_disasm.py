@@ -46,3 +46,22 @@ def test_slice_container_masks_restore_as_subscript_syntax(value, expected):
     source = "value = array[<mask_0>, *tail]"
 
     assert restore_masked_source_text([source], masker) == [f"value = array[{expected}, *tail]"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (([0], ...), "[0], ..."),
+        ((['nominal'], ...), "['nominal'], ..."),
+        ((slice(None), ...), ":, ..."),
+        ((1, ...), "1, ..."),
+    ],
+)
+def test_ellipsis_subscript_tuple_masks_restore_as_subscript_syntax(value, expected):
+    # A folded subscript tuple containing Ellipsis must restore as comma-joined
+    # subscript syntax (x[[0], ...]) rather than the repr (x[([0], Ellipsis)]) which
+    # recompiles to LOAD_NAME Ellipsis instead of LOAD_CONST Ellipsis.
+    masker = Masker()
+    masker.global_tab[value] = "<mask_0>"
+    source = "value = array[<mask_0>]"
+    assert restore_masked_source_text([source], masker) == [f"value = array[{expected}]"]
