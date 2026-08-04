@@ -59,8 +59,17 @@ class Tracer:
                 effect = _make_function_stack_effect(inst.arg, inst.bytecode.version)
             elif effect is None:
                 effect = inst.bytecode.opcode.oppush[inst.opcode] - inst.bytecode.opcode.oppop[inst.opcode]
-
-            push = 1 if inst.opname.startswith("BUILD_") else inst.bytecode.opcode.oppush[inst.opcode]
+            if inst.opname.startswith("BUILD_"):
+                push = 1
+            elif inst.opname in ("CALL", "CALL_KW"):
+                # CALL/CALL_KW each push a single result; oppush[opcode] is
+                # unreliable for these dynamic-push instructions (e.g. oppush[CALL] is
+                # 0 on 3.12 and 2 on 3.14 while xstack_effect models it as pushing one
+                # return value), so use the same push count xstack_effect's net-effect
+                # formula implies.
+                push = 1
+            else:
+                push = inst.bytecode.opcode.oppush[inst.opcode]
             pop = push - effect
             if push >= 0 and pop >= depth:
                 return index, depth - 1
