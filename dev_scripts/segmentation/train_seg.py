@@ -83,7 +83,6 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
     # training arguments.
     training_args = TrainingArguments(
         output_dir=str(config.segmenter_dir),
-        overwrite_output_dir=True,
         eval_strategy="epoch",
         logging_strategy="epoch",
         save_strategy="epoch",
@@ -126,9 +125,9 @@ def train_segmentation_model(config: SegmentationConfiguration, public: bool = F
         train_dataset=tokenized_train_dataset,
         eval_dataset=tokenized_validation_dataset,
         compute_metrics=compute_metrics,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
-
+    
     # Training
     trainer.train()
 

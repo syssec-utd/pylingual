@@ -26,6 +26,7 @@ def save_and_upload_tokenizer(
 
     api = HfApi()
     api.create_repo(tokenizer_repo_name, exist_ok=True, private=not public)
+
     api.upload_file(
         path_in_repo="tokenizer_config.json",
         path_or_fileobj=str(tokenizer_json_path.parent / "tokenizer_config.json"),
@@ -33,16 +34,10 @@ def save_and_upload_tokenizer(
         commit_message=f"Trained tokenizer using {dataset_name}",
     )
     api.upload_file(
-        path_in_repo="vocab.json",
-        path_or_fileobj=str(tokenizer_json_path.parent / "vocab.json"),
+        path_in_repo="special_tokens_map.json",
+        path_or_fileobj=str(tokenizer_json_path.parent / "special_tokens_map.json"),
         repo_id=tokenizer_repo_name,
-        commit_message="Extracted vocabulary from tokenizer",
-    )
-    api.upload_file(
-        path_in_repo="merges.txt",
-        path_or_fileobj=str(tokenizer_json_path.parent / "merges.txt"),
-        repo_id=tokenizer_repo_name,
-        commit_message="Extracted merges from tokenizer",
+        commit_message="Extracted special tokens map",
     )
     api.upload_file(
         path_in_repo="tokenizer.json",
@@ -50,13 +45,6 @@ def save_and_upload_tokenizer(
         repo_id=tokenizer_repo_name,
         commit_message="Extracted tokenizer",
     )
-    api.upload_file(
-        path_in_repo="special_tokens_map.json",
-        path_or_fileobj=str(tokenizer_json_path.parent / "special_tokens_map.json"),
-        repo_id=tokenizer_repo_name,
-        commit_message="Extracted special tokens map",
-    )
-
 
 def train_tokenizer(config: StatementConfiguration, tokenizer_json_path: pathlib.Path, public: bool = False):
     if repo_exists(config.base_repo_name):
