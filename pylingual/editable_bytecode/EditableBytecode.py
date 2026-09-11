@@ -128,7 +128,7 @@ class EditableBytecode:
         annotate_func_cache = {}
 
         def try_read_annotate_func(codeobj) -> EditableBytecode | None:
-
+            
             if not iscode(codeobj):
                 return None
 
@@ -187,7 +187,7 @@ class EditableBytecode:
                         argrepr="__classdict__",
                         has_arg=True,
                         offset=cursor_inst.offset,
-                        starts_line=None,
+                        starts_line=cursor_inst.starts_line,
                         is_jump_target=False,
                         has_extended_arg=False,
                     )
@@ -245,6 +245,7 @@ class EditableBytecode:
         conditional_annotation_map = {}
         handled_instructions: set[Inst] = set()
         extra_removes = set()  # avoid removing mid loop
+        classdict_store_idx = next((i for i, inst in enumerate(self.instructions) if inst.opname == "STORE_DEREF" and inst.argval == "__classdict__"), None,)
 
         # eat the <module> level conditional __annotate__ object
         sanity_check, conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(self.instructions[0].argval)
@@ -261,9 +262,6 @@ class EditableBytecode:
             self.co_consts[self.instructions[0].arg] = None
             extra_removes.update(to_remove)
 
-        # get the first idx to prepend the class level annotation
-        first: int = None
-
         # handle class object __annotate_func__
         for idx, inst in enumerate(self.instructions):
             if inst.opname.startswith("LOAD_") and inst.argval == "__classdict__":
@@ -271,7 +269,7 @@ class EditableBytecode:
                 annotate_func = False
                 annotate_codeobj = None
                 is_class = False
-
+                
                 # go to the annotate function
                 for i in range(idx, len(self.instructions)):
                     # check for annotate func remove LOAD_CONST, MAKE_FUNCTION and SET_FUNCTION_ATTRIBUTE afterwards
@@ -282,22 +280,14 @@ class EditableBytecode:
                             annotate_codeobj = self.instructions[i].argval
                             to_remove.extend(self.instructions[i : i + 3])
 
-                    # remove from  LOAD_FAST_BORROW __classdict__ to LOAD_CONST codeobj __annotate__
-                    if not annotate_func:
-                        to_remove.append(self.instructions[i])
-
                     # stopping conditions either SET_FUNCTION_ATTRIBUTE 0x10 or STORE_NAME __annotate_func__
                     if self.instructions[i].opname == "SET_FUNCTION_ATTRIBUTE" and self.instructions[i].arg == 0x10:
-                        to_remove.append(self.instructions[i])
                         break
 
                     if self.instructions[i].opname.startswith("STORE_") and self.instructions[i].argval == "__annotate_func__":
                         to_remove.extend(self.instructions[i : i + 1])
                         is_class = True
                         break
-
-                if not first:
-                    first = idx - 1
 
                 # check if its the end of a class
                 if is_class:
@@ -306,14 +296,15 @@ class EditableBytecode:
                     direct_annotations = class_conditional_annotation_map.pop(-1, None)
 
                     if direct_annotations:
-                        inline_dict[(first, tuple(to_remove))] = direct_annotations
+                        splice_idx = (classdict_store_idx + 1) if classdict_store_idx is not None else (idx - 1)
+                        inline_dict[(splice_idx, tuple(to_remove))] = direct_annotations
                     else:
                         extra_removes.update(to_remove)
                     conditional_annotation_map |= class_conditional_annotation_map
                 else:
                     sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
                     if sanity_check:
-                        inline_dict[(idx, tuple(to_remove))] = inline_insts
+                        inline_dict[(idx + 1, tuple(to_remove))] = inline_insts
 
                 handled_instructions.update(to_remove)
         for idx, inst in enumerate(self.instructions):
@@ -348,7 +339,7 @@ class EditableBytecode:
             elif inst.opname == "STORE_DEREF" and inst.argval == "__conditional_annotations__" and -1 in conditional_annotation_map:
                 inline_dict[(idx, tuple(self.instructions[idx - 1 : idx + 1]))] = conditional_annotation_map[-1]
                 del conditional_annotation_map[-1]
-
+        
         self.insert_insts({idx: insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
         self._change_jump_targets(jump_target_mapping)
         self.remove_instructions(extra_removes | set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
