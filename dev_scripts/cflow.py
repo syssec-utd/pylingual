@@ -72,7 +72,11 @@ def run(file: Path, out_dir: Path, version: PythonVersion, print=False):
         if file.is_dir():
             file = next(file.iterdir())
 
-        in_src = normalize_source(file.read_text(), replace_docstrings=True)
+        raw_src = file.read_text()
+        try:
+            in_src = normalize_source(raw_src, replace_docstrings=True, version=version.as_tuple())
+        except SyntaxError:
+            in_src = raw_src
         src_lines = sanitize_lines(in_src.split("\n"))
         in_path = out_dir / "a.py"
         in_path.write_text(in_src, encoding="utf-8")

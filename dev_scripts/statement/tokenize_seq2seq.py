@@ -20,7 +20,7 @@ def preprocess_function(tokenizer: RobertaTokenizer, max_token_length: int, inpu
     return tokenizer(text=inputs, text_target=targets, max_length=max_token_length, truncation=True)
 
 
-def tokenize_seq2seq_dataset(config: StatementConfiguration):
+def tokenize_seq2seq_dataset(config: StatementConfiguration, public: bool = False):
     # ref: https://huggingface.co/Salesforce/codet5-base
     tokenizer = RobertaTokenizer.from_pretrained(config.tokenizer_repo_name)
     raw_datasets = load_dataset(config.dataset_repo_name, token=True)
@@ -36,15 +36,16 @@ def tokenize_seq2seq_dataset(config: StatementConfiguration):
         desc="Tokenizing datasets",
     )
 
-    tokenized_datasets.push_to_hub(config.tokenized_dataset_repo_name, private=True)
+    tokenized_datasets.push_to_hub(config.tokenized_dataset_repo_name, private=not public)
 
 
 @click.command(help="Tokenization script for Statement Translation model given a statement json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     statement_config = parse_statement_config_json(json_file_path)
-    tokenize_seq2seq_dataset(statement_config)
+    tokenize_seq2seq_dataset(statement_config, public)
 
 
 if __name__ == "__main__":

@@ -9,8 +9,10 @@
 
 import ast
 import functools
+import logging
 import os
 import pathlib
+import shutil
 import click
 
 from datasets import load_dataset
@@ -22,10 +24,12 @@ from transformers import PreTrainedTokenizerFast
 bytecode_separator = " <SEP> "
 
 
-def load_tokenizer(tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
-    tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
-
-    tokenizer_file = hf_hub_download(repo_id=tokenizer_repo_name, filename="tokenizer.json", token=True, cache_dir=str(tokenizer_dir))
+def load_tokenizer(tokenizer_json_path: pathlib.Path, tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
+    if tokenizer_json_path.exists():
+        tokenizer_file = str(tokenizer_json_path)
+    else:
+        tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
+        tokenizer_file = hf_hub_download(repo_id=tokenizer_repo_name, filename="tokenizer.json", token=True, cache_dir=str(tokenizer_dir))
     tokenizer = PreTrainedTokenizerFast(
         tokenizer_file=tokenizer_file,
         unk_token="[UNK]",
@@ -127,10 +131,10 @@ def tokenize_and_align_labels(tokenizer: PreTrainedTokenizerFast, max_length: in
     return tokenized_inputs
 
 
-def tokenize_segmentation_dataset(config: SegmentationConfiguration):
+def tokenize_segmentation_dataset(config: SegmentationConfiguration, public: bool = False):
     raw_dataset = load_dataset(config.dataset_repo_name, token=True, cache_dir=str(config.dataset_dir))
 
-    tokenizer = load_tokenizer(config.tokenizer_repo_name, config.cache_dir)
+    tokenizer = load_tokenizer(config.tokenizer_json_path, config.tokenizer_repo_name, config.cache_dir)
     prepped_tokenize_and_align_labels = functools.partial(tokenize_and_align_labels, tokenizer, config.max_token_length)
 
     # tokenize input dataset
@@ -143,18 +147,29 @@ def tokenize_segmentation_dataset(config: SegmentationConfiguration):
         desc="Tokenizing datasets",
     )
 
-    tokenized_datasets.push_to_hub(
-        config.tokenized_dataset_repo_name,
-        private=True,
-    )
+    if config.tokenized_dataset_dir.exists():
+        shutil.rmtree(config.tokenized_dataset_dir)
+    tokenized_datasets.save_to_disk(config.tokenized_dataset_dir)
+
+    try:
+        tokenized_datasets.push_to_hub(
+            config.tokenized_dataset_repo_name,
+            private=not public,
+        )
+    except Exception as error:
+        logging.warning(
+            f"Tokenized dataset saved locally but could not be uploaded to "
+            f"{config.tokenized_dataset_repo_name}: {error}"
+        )
 
 
 @click.command(help="Script to tokenize the segmentation dataset given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    tokenize_segmentation_dataset(segmentation_config)
+    tokenize_segmentation_dataset(segmentation_config, public)
 
 
 if __name__ == "__main__":

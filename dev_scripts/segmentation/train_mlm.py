@@ -22,15 +22,17 @@ from pylingual.segmentation.sliding_window import sliding_window
 bytecode_separator = " <SEP> "
 
 
-def load_tokenizer(tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
-    tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
-
-    tokenizer_file = hf_hub_download(
-        repo_id=tokenizer_repo_name,
-        filename="tokenizer.json",
-        token=True,
-        cache_dir=str(tokenizer_dir),
-    )
+def load_tokenizer(tokenizer_json_path: pathlib.Path, tokenizer_repo_name: str, cache_dir: pathlib.Path) -> PreTrainedTokenizerFast:
+    if tokenizer_json_path.exists():
+        tokenizer_file = str(tokenizer_json_path)
+    else:
+        tokenizer_dir = cache_dir / "tokenizers" / tokenizer_repo_name
+        tokenizer_file = hf_hub_download(
+            repo_id=tokenizer_repo_name,
+            filename="tokenizer.json",
+            token=True,
+            cache_dir=str(tokenizer_dir),
+        )
     tokenizer = PreTrainedTokenizerFast(
         tokenizer_file=tokenizer_file,
         unk_token="[UNK]",
@@ -136,7 +138,7 @@ def initialize_untrained_mlm(
     return model
 
 
-def train_mlm(config: SegmentationConfiguration):
+def train_mlm(config: SegmentationConfiguration, public: bool = False):
     if repo_exists(config.base_repo_name):
         logging.error(f"{config.base_repo_name} has already exists")
         exit(1)
@@ -150,15 +152,15 @@ def train_mlm(config: SegmentationConfiguration):
         save_steps=1000,
         save_total_limit=5,
         prediction_loss_only=True,
-        push_to_hub=True,
+        push_to_hub=False,
         hub_model_id=config.mlm_repo_name,
-        hub_private_repo=True,
+        hub_private_repo=not public,
         ddp_backend="nccl",
         ddp_find_unused_parameters=using_pretrained_model,  # only look for unused parameters in pretrained models
         remove_unused_columns=False,
     )
 
-    tokenizer = load_tokenizer(config.tokenizer_repo_name, config.cache_dir)
+    tokenizer = load_tokenizer(config.tokenizer_json_path, config.tokenizer_repo_name, config.cache_dir)
 
     # Set DataCollator for MLM task, set the probability of masking.
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=0.15)
@@ -181,23 +183,27 @@ def train_mlm(config: SegmentationConfiguration):
     # Training
     trainer.train()
 
-    if int(os.environ["LOCAL_RANK"]) == 0:
+    if int(os.environ.get("LOCAL_RANK", "0")) == 0:
         # Save the model
         trainer.save_model(config.mlm_dir)
 
-        trainer.push_to_hub(
-            finetuned_from=config.pretrained_mlm_repo_name,
-            dataset=config.dataset_repo_name,
-            commit_message=f"Trained on {config.dataset_repo_name} using {config.tokenizer_repo_name}",
-        )
+        try:
+            trainer.push_to_hub(
+                finetuned_from=config.pretrained_mlm_repo_name,
+                dataset=config.dataset_repo_name,
+                commit_message=f"Trained on {config.dataset_repo_name} using {config.tokenizer_repo_name}",
+            )
+        except Exception as error:
+            logging.warning(f"MLM saved locally but could not be uploaded to {config.mlm_repo_name}: {error}")
 
 
 @click.command(help="Training script for the masked language model pretraining for the segmentation model given a segmentation json.")
 @click.argument("json_path", type=str)
-def main(json_path: str):
+@click.option("--public", is_flag=True, default=False, help="Make uploaded HuggingFace repos public (default: private)")
+def main(json_path: str, public: bool):
     json_file_path = pathlib.Path(json_path)
     segmentation_config = parse_segmentation_config_json(json_file_path)
-    train_mlm(segmentation_config)
+    train_mlm(segmentation_config, public)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,24 @@
-from dataclasses import dataclass
+import json
+import logging
 import pathlib
+from dataclasses import dataclass
+from typing import List, Tuple, Union
 
-from typing import Tuple, List
+
+def get_dataset_description_from_arg_json(json_path: str, logger: Union[logging.Logger, None] = None) -> "DatasetDescription":
+    json_file_path = pathlib.Path(json_path)
+
+    if not json_file_path.exists():
+        raise FileNotFoundError(f"{json_file_path} does not exist")
+
+    if logger:
+        logger.info(f"Loading dataset description from {json_file_path}...")
+
+    with json_file_path.open() as json_file:
+        dataset_description_dict = json.load(json_file)
+
+    dataset_description_dict["data_requests"] = [DataRequest(**d) for d in dataset_description_dict["data_requests"]]
+    return DatasetDescription(**dataset_description_dict)
 
 
 @dataclass

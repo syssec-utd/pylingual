@@ -34,6 +34,7 @@ dependencies = [
     "click",
     "evaluate",
     "tensorboardx>=2.6.4",
+    "redis",
 ]
 
 [project.urls]
@@ -103,3 +104,5 @@ members = [
     "pylingual/tools",
 ]
 
+[tool.uv.sources]
+xdis = { git = "https://github.com/rocky/python-xdis" }

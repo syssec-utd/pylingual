@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import redis
 import yaml
 import logging
 
@@ -39,10 +40,20 @@ class CacheTranslator:
     :param maxsize : The maximum amount of cached items
     """
 
-    def __init__(self, translator: transformers.TranslationPipeline, maxsize=50000):
-        self.translator = translator
+    def __init__(self, model: transformers.T5ForConditionalGeneration, tokenizer: transformers.RobertaTokenizer, python_version: str, redis_cache_server_ip: str = None, redis_port: int = 1679, device="cpu", maxsize=50000):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        self.model.to(self.device)
+
+        # Redis Caching
+        self.redis_enabled = redis_cache_server_ip is not None
+
+        if self.redis_enabled:
+            self.redis_db = redis.StrictRedis(host=redis_cache_server_ip, port=redis_port, db=0, encoding="utf-8", decode_responses=True)
+            self.redis_namespace_prefix = f"{python_version}:"
 
     def __getitem__(self, item):
         self.cache.move_to_end(item)
@@ -54,14 +65,22 @@ class CacheTranslator:
         batch_size: int = 32,
         **kwargs,
     ) -> list[str]:
-        # return_tensors=True prevents standard postprocessing which skips special tokens
-        translation_result = self.translator(translation_requests, return_tensors=True, batch_size=batch_size, **kwargs)
+
         decoded_results = []
-        for result in flatten(translation_result):
-            # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
-            filtered_tokens = [tok for tok in result["translation_token_ids"].tolist() if tok not in [0, 1, 2, 3, 4]]
-            # decode the remaining tokens
-            decoded_results.append(self.translator.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
+
+        # process in batches
+        for i in range(0, len(translation_requests), batch_size):
+            batch = translation_requests[i : i + batch_size]
+            encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
+
+            with torch.no_grad():
+                output = self.model.generate(**encoded, max_length=512)
+
+            for tokens in output:
+                # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
+                filtered_tokens = [tok for tok in tokens.tolist() if tok not in [0, 1, 2, 3, 4]]
+                # decode the remaining tokens
+                decoded_results.append(self.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
 
         return decoded_results
 
@@ -88,6 +107,14 @@ class CacheTranslator:
     def __call__(self, args: list, check_timeout: callable = None, **_):
         normalized_args = [normalize_masks(fix_jump_targets(x)) for x in args]
 
+        if self.redis_enabled:
+            # Update local cache from redis
+            to_fetch_from_redis = list({norm for norm, _ in normalized_args if norm not in self.cache})
+            redis_results = {key: self.redis_db.get(f"{self.redis_namespace_prefix}{key}") for key in to_fetch_from_redis}
+            for translation_key, translation_result in redis_results.items():
+                if translation_result:
+                    self.cache[translation_key] = translation_result
+
         # New are those not in the local cache
         new = TrackedDataset(
             TRANSLATION_STEP,
@@ -98,6 +125,8 @@ class CacheTranslator:
         # Now, "new" has been updated to those not in local
         for arg, result in zip(new.x, self._translate_with_backoff(new)):
             self.cache[arg] = result
+            if self.redis_enabled:
+                self.redis_db.set(f"{self.redis_namespace_prefix}{arg}", self.cache[arg])
 
         results = [restore_masks(self[norm], order) for norm, order in normalized_args]
         while len(self.cache) > self.maxsize:
@@ -109,6 +138,8 @@ class CacheTranslator:
 def load_models(
     config_file: Path = Path("pylingual/decompiler_config.yaml"),
     version: PythonVersion = PythonVersion(3.9),
+    redis_cache_server_ip: str = None,
+    redis_port: int = 1679,
     token=False,
 ) -> tuple[transformers.Pipeline, CacheTranslator]:
     logger.info(f"Loading models for {version}...")
@@ -155,12 +186,5 @@ def load_models(
     #########################################
     translation_model = transformers.T5ForConditionalGeneration.from_pretrained(stmt_config["REPO"], revision=stmt_config["REVISION"], token=token)
     translation_tokenizer = transformers.RobertaTokenizer.from_pretrained(stmt_config["TOKENIZER"], token=token)
-    translator = transformers.TranslationPipeline(
-        model=translation_model,
-        tokenizer=translation_tokenizer,
-        max_length=512,
-        truncation=False,
-        device=device,
-    )
 
-    return segmenter, CacheTranslator(translator)
+    return segmenter, CacheTranslator(translation_model, translation_tokenizer, python_version=version.as_str(), redis_cache_server_ip=redis_cache_server_ip, redis_port=redis_port, device=device)

@@ -57,6 +57,7 @@ class Masker:
         "__doc__",
         "__annotations__",
         "__conditional_annotations__",
+        "__classdict__",
         "__annotate__",
         "__qualname__",
         "__class__",

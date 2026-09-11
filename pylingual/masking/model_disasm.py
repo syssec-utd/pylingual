@@ -35,10 +35,8 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
     global_masker.version = bytecode.version
 
     for bc in bytecode.iter_bytecodes():
-        bc_co = bc.to_code(no_lnotab=True)
-
         # create consts
-        consts = list(deepcopy(bc_co.co_consts))
+        consts = list(deepcopy(tuple(getattr(const, "codeobj", const) for const in bc.co_consts)))
 
         # add LOAD_SMALL_INT values to consts (3.14+)
         if bc.version >= (3, 14):
@@ -64,7 +62,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_idx += 1
 
         # create names
-        for name in bc_co.co_names:
+        for name in bc.co_names:
             if isinstance(name, tuple):
                 for n in name:
                     if n in global_tab:
@@ -77,20 +75,20 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_tab.update({bc.resolve_namespace(name): f"<mask_{global_idx}>"})
                 global_idx += 1
 
-        for free in bc_co.co_freevars:
+        for free in bc.codeobj.co_freevars:
             if free in global_tab:
                 continue
             global_tab.update({free: f"<mask_{global_idx}>"})
             global_idx += 1
 
         if bc.version >= (3, 11):
-            for cell in bc_co.co_cellvars:
+            for cell in bc.codeobj.co_cellvars:
                 if cell in global_tab:
                     continue
                 global_tab.update({cell: f"<mask_{global_idx}>"})
                 global_idx += 1
 
-        for local in bc_co.co_varnames:
+        for local in bc.co_varnames:
             if isinstance(local, tuple):
                 for local_item in local:
                     if local_item in global_tab:
@@ -103,7 +101,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_tab.update({bc.resolve_namespace(local): f"<mask_{global_idx}>"})
                 global_idx += 1
 
-        global_tab.update({bc_co.co_name: f"<mask_{global_idx}>"})
+        global_tab.update({bc.codeobj.co_name: f"<mask_{global_idx}>"})
         global_idx += 1
 
     return global_masker

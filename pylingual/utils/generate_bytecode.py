@@ -12,7 +12,7 @@ import shutil
 from pylingual.utils.version import PythonVersion
 
 
-UV_VERSIONS = {PythonVersion((3, x)) for x in range(8, 15)}
+UV_VERSIONS = {PythonVersion((3, x)) for x in range(8, 16)}
 
 
 class CompileError(Exception):
