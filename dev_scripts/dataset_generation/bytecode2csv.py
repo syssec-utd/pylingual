@@ -8,12 +8,15 @@
 # ///
 
 import csv
+import faulthandler
 import itertools
 import logging
 import multiprocessing
+import os
 import pathlib
 import re
-import signal
+import sys
+import time
 from typing import Callable, Tuple
 
 import tqdm
@@ -28,6 +31,37 @@ bytecode_separator = " <SEP> "
 source_seperator = " <SEP> "
 CSV_SGMT_HEADER = ["source", "bytecode", "boundary", "file"]
 CSV_STMT_HEADER = ["source", "bytecode", "file"]
+_active_tasks = None
+
+
+def retry_on_nas_error(max_retries=3, base_delay=1):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except OSError as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(base_delay * (2 ** attempt))
+                    else:
+                        raise
+        return wrapper
+    return decorator
+
+
+def initialize_worker(active_tasks):
+    global _active_tasks
+    _active_tasks = active_tasks
+    faulthandler.enable()
+
+
+def update_worker_stage(stage: str):
+    if _active_tasks is None:
+        return
+    pid = os.getpid()
+    task = _active_tasks.get(pid)
+    if task is not None:
+        _active_tasks[pid] = (*task[:3], stage)
 
 
 def create_csv_dataset(code_dataset_path: pathlib.Path, csv_dataset_path: pathlib.Path, data_requests: list[DataRequest], logger: logging.Logger = None):
@@ -40,94 +74,272 @@ def create_csv_dataset(code_dataset_path: pathlib.Path, csv_dataset_path: pathli
 
 def write_csvs(source_path: pathlib.Path, csv_output_path: pathlib.Path, logger: logging.Logger = None, max_csv_rows: int = 30000, progress_bar: tqdm.tqdm = None):
     # validate output directory
-    if csv_output_path.exists():
-        if not csv_output_path.is_dir():
-            raise OSError("CSV output path is not a directory")
-    else:
-        csv_output_path.mkdir(parents=True)
+    @retry_on_nas_error()
+    def ensure_csv_output_dir():
+        if csv_output_path.exists():
+            if not csv_output_path.is_dir():
+                raise OSError("CSV output path is not a directory")
+        else:
+            csv_output_path.mkdir(parents=True)
+
+    try:
+        ensure_csv_output_dir()
+    except OSError as error:
+        if logger:
+            logger.warning(f"Unable to access CSV output directory {csv_output_path}: {error}; skipping split")
+        return
+
+    # Resume: scan existing CSV files to find already-processed source paths
+    def load_processed_paths() -> set[str]:
+        """Read the file column from existing segmentation CSVs to determine which sources are done."""
+        processed = set()
+        csv.field_size_limit(sys.maxsize)
+        seg_dir = csv_output_path.joinpath("segmentation")
+        if not seg_dir.exists():
+            return processed
+        try:
+            csv_files = sorted(seg_dir.glob("segmentation_*.csv"))
+        except OSError:
+            return processed
+        for csv_path in csv_files:
+            try:
+                with open(csv_path, "r", newline="") as f:
+                    reader = csv.reader(f)
+                    next(reader, None)  # skip header
+                    for row in reader:
+                        if len(row) == len(CSV_SGMT_HEADER):
+                            processed.add(row[-1])
+            except (OSError, csv.Error, StopIteration):
+                continue
+        return processed
+
+    processed_paths = load_processed_paths()
+    if logger and processed_paths:
+        logger.info(f"Resuming: {len(processed_paths)} source files already in existing CSVs")
+    if progress_bar:
+        progress_bar.update(len(processed_paths))
+
+    def get_start_idx(prefix: str) -> int:
+        """Return the next CSV file index after the highest existing one."""
+        out_dir = csv_output_path.joinpath(prefix)
+        try:
+            files = list(out_dir.glob(f"{prefix}_*.csv"))
+        except OSError:
+            return 0
+        if not files:
+            return 0
+        try:
+            return max(int(f.stem.split("_")[-1]) for f in files) + 1
+        except (ValueError, IndexError):
+            return 0
 
     ##### csv write wrappers to preserve csv row limit
 
-    def csv_writer(file_prefix: str, csv_header: list) -> Callable:
+    def csv_writer(file_prefix: str, csv_header: list, start_idx: int = 0) -> Callable:
         out_dir = csv_output_path.joinpath(file_prefix)
-        out_dir.mkdir(exist_ok=True)
 
-        for csv_idx in itertools.count():
-            new_path = out_dir.joinpath(f"{file_prefix}_{csv_idx}.csv")
-            new_path.touch()
+        for csv_idx in itertools.count(start_idx):
+            @retry_on_nas_error()
+            def ensure_output_dir():
+                out_dir.mkdir(exist_ok=True)
+
+            @retry_on_nas_error()
+            def open_csv(mode="w"):
+                new_path = out_dir.joinpath(f"{file_prefix}_{csv_idx}.csv")
+                if mode == "w":
+                    new_path.touch()
+                return new_path.open(mode=mode)
+
+            def discard_row(_row):
+                return None
+
+            try:
+                ensure_output_dir()
+                csv_file = open_csv()
+            except OSError as error:
+                if logger:
+                    logger.warning(f"Unable to open {file_prefix}_{csv_idx}.csv: {error}; dropping rows")
+                for _ in itertools.repeat(None, max_csv_rows):
+                    yield discard_row
+                continue
+
             if logger:
-                logger.info(f"Creating new csv {new_path.resolve()}...")
-            with new_path.open(mode="w") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(csv_header)
-                for writer in itertools.repeat(writer, max_csv_rows):
-                    yield writer.writerow
+                logger.info(f"Creating new csv {csv_file.name}...")
+            writer = csv.writer(csv_file)
 
-    segmentation_writer = csv_writer("segmentation", CSV_SGMT_HEADER)
-    statement_writer = csv_writer("statement", CSV_STMT_HEADER)
+            def close_csv():
+                try:
+                    csv_file.close()
+                except OSError as error:
+                    if logger:
+                        logger.warning(f"Unable to close {csv_file.name}: {error}")
+
+            def write_row(row):
+                nonlocal csv_file, writer
+                for attempt in range(3):
+                    try:
+                        return writer.writerow(row)
+                    except OSError as error:
+                        close_csv()
+                        if attempt == 2:
+                            if logger:
+                                logger.warning(f"Unable to write {file_prefix}_{csv_idx}.csv: {error}; dropping row")
+                            return None
+                        try:
+                            time.sleep(2**attempt)
+                            csv_file = open_csv(mode="a")
+                            writer = csv.writer(csv_file)
+                        except OSError:
+                            continue
+
+            try:
+                write_row(csv_header)
+                for _ in itertools.repeat(None, max_csv_rows):
+                    yield write_row
+            finally:
+                close_csv()
+
+    seg_start = get_start_idx("segmentation")
+    stmt_start = get_start_idx("statement")
+    segmentation_writer = csv_writer("segmentation", CSV_SGMT_HEADER, seg_start)
+    statement_writer = csv_writer("statement", CSV_STMT_HEADER, stmt_start)
 
     # create dirs
-    code_dirs = (child for child in source_path.iterdir() if child.is_dir())
+    def safe_code_dirs():
+        try:
+            it = source_path.iterdir()
+        except OSError:
+            return
+        while True:
+            try:
+                child = next(it)
+            except OSError:
+                continue
+            except StopIteration:
+                return
+            try:
+                if child.is_dir():
+                    yield child
+            except OSError:
+                continue
+    code_dirs = safe_code_dirs()
 
     def bytecode2csv_args():
-        for dir in code_dirs:
-            py_path = next(dir.glob("*.py"), None)
-            pyc_path = next(dir.glob("*.pyc"), None)
-            if None in (py_path, pyc_path):
-                logging.debug(f"PY or PYC file not found in {dir}")
+        while True:
+            try:
+                try:
+                    dir = next(code_dirs)
+                except OSError:
+                    continue
+                except StopIteration:
+                    return
+                py_path = next(dir.glob("*.py"), None)
+                pyc_path = next(dir.glob("*.pyc"), None)
+            except OSError:
                 continue
-            else:
-                yield (py_path, pyc_path)
+            if None in (py_path, pyc_path):
+                continue
+            if str(py_path) in processed_paths:
+                continue
+            yield (py_path, pyc_path)
 
     num_fails = 0
-    with multiprocessing.Pool() as pool:
-        for result in pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args()):
-            if isinstance(result, Exception):
-                num_fails += 1
-                logger.debug(f"DIR: {dir}\nERR: {result}\nTYPE ERR: {type(result)}\n")
-                continue
+    with multiprocessing.Manager() as manager:
+        active_tasks = manager.dict()
+        with multiprocessing.Pool(
+            maxtasksperchild=100,
+            initializer=initialize_worker,
+            initargs=(active_tasks,),
+        ) as pool:
+            iterator = pool.imap_unordered(bytecode2csv_exception_wrapper, bytecode2csv_args())
+            while True:
+                try:
+                    result = iterator.next(timeout=120)
+                except StopIteration:
+                    break
+                except multiprocessing.TimeoutError:
+                    tasks = dict(active_tasks)
+                    live_pids = {worker.pid for worker in multiprocessing.active_children() if worker.is_alive()}
+                    details = []
+                    now = time.time()
+                    for pid, (py_path, pyc_path, started_at, stage) in sorted(tasks.items()):
+                        status = "hung" if pid in live_pids else "crashed"
+                        details.append(
+                            f"PID {pid} ({status}, {now - started_at:.0f}s, {stage}): "
+                            f"{py_path} | {pyc_path}"
+                        )
+                    message = "No worker result for 120s; terminating wedged CSV pool."
+                    if details:
+                        message += "\nIn-flight tasks:\n" + "\n".join(details)
+                    if logger:
+                        logger.error(message)
+                    else:
+                        logging.error(message)
+                    num_fails += max(1, len(tasks))
+                    pool.terminate()
+                    break
 
-            (segmentation_rows, statement_rows) = result
-            for row, writerow in zip(segmentation_rows, segmentation_writer):
-                writerow(row)
-            for row, writerow in zip(statement_rows, statement_writer):
-                writerow(row)
+                live_pids = {worker.pid for worker in multiprocessing.active_children() if worker.is_alive()}
+                for pid, (py_path, pyc_path, started_at, stage) in list(active_tasks.items()):
+                    if pid in live_pids:
+                        continue
+                    active_tasks.pop(pid, None)
+                    num_fails += 1
+                    message = (
+                        f"Worker PID {pid} crashed after {time.time() - started_at:.0f}s during {stage}: "
+                        f"{py_path} | {pyc_path}"
+                    )
+                    if logger:
+                        logger.error(message)
+                    else:
+                        logging.error(message)
 
-            if progress_bar:
-                progress_bar.update()
-                progress_bar.set_postfix({"num_fails": num_fails})
+                if isinstance(result, Exception):
+                    num_fails += 1
+                    logger.debug(f"ERR: {result}\nTYPE ERR: {type(result)}\n")
+                    continue
 
+                (segmentation_rows, statement_rows) = result
+                for row, writerow in zip(segmentation_rows, segmentation_writer):
+                    writerow(row)
+                for row, writerow in zip(statement_rows, statement_writer):
+                    writerow(row)
+
+                if progress_bar:
+                    progress_bar.update()
+                    progress_bar.set_postfix({"num_fails": num_fails})
     logger.info(f"NUMBER OF FAILS !!! {num_fails}")
 
 
-def timeout_handler(signum, frame):
-    raise TimeoutError()
-
-
-def bytecode2csv_exception_wrapper(paths=Tuple[pathlib.Path, pathlib.Path]) -> Tuple[list, list] | Exception:
-    signal.signal(signal.SIGALRM, timeout_handler)
+def bytecode2csv_exception_wrapper(paths: Tuple[pathlib.Path, pathlib.Path]) -> Tuple[list, list] | Exception:
+    pid = os.getpid()
+    if _active_tasks is not None:
+        _active_tasks[pid] = (str(paths[0]), str(paths[1]), time.time(), "starting")
     try:
-        signal.alarm(30)  # set 30 second timeout
-        results = bytecode2csv(*paths)
-        signal.alarm(0)  # success; disable timer
-        return results
+        return bytecode2csv(*paths)
     except Exception as error:
-        signal.alarm(0)  # disable timer in case another exception triggered the fail
         return Exception(f"{type(error)}: {error} in file {paths}")
+    finally:
+        if _active_tasks is not None:
+            _active_tasks.pop(pid, None)
 
 
+@retry_on_nas_error()
 def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, list]:
     """Creates segmentation and statement csv rows for given bytecode and source file"""
     segmentation_rows = []
     statement_rows = []
 
+    update_worker_stage("loading pyc")
     pyc = PYCFile(str(pyc_path.resolve()))
     if pyc.version == (3, 10):
         pyc.replace_duplicated_returns10(py_path.read_text().split("\n"))
     elif pyc.version >= (3, 12):
         pyc.replace_duplicated_returns12(py_path.read_text().split("\n"))
+    update_worker_stage("creating masker")
     global_masker = create_global_masker(pyc)
 
+    update_worker_stage("masking source")
     masked_source_text = mask_source(py_path, global_masker, pyc.version)
     masked_source_lines = masked_source_text.split("\n")
 
@@ -144,6 +356,7 @@ def bytecode2csv(py_path: pathlib.Path, pyc_path: pathlib.Path) -> tuple[list, l
 
     seen_lines = set()
 
+    update_worker_stage("building rows")
     # create rows for each bytecode
     for bc in pyc.iter_bytecodes():
         # we ignore comprehensions, hoisted later
