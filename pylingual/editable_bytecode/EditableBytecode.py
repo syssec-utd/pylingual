@@ -139,8 +139,7 @@ class EditableBytecode:
             # if it's not named "__annotate__", only treat it as an annotation function
             # if it starts with the type-definition pattern .format
             if codeobj.co_name != "__annotate__":
-                first_inst = next(iter(Bytecode(codeobj, self.opcode)), None)
-                if not first_inst or first_inst.argval != ".format":
+                if codeobj.co_argcount != 1 or unwrap(list(codeobj.co_varnames))[:1] != [".format"]:
                     return None
 
             # make edititable bytecode now
@@ -232,10 +231,16 @@ class EditableBytecode:
             annotate_bytecode = try_read_annotate_func(codeobj)
             if annotate_bytecode is None:
                 return (False, [])
-
+            
             # find the idx after the preamble
-            idx = next((idx for idx, inst in enumerate(annotate_bytecode.instructions) if inst.opname == "LOAD_CONST"), 0)
-            return (True, annotate_bytecode.instructions[idx:-1])  # skip the RETURN_VALUE at the end
+            insts = annotate_bytecode.instructions
+            # skip the `if format > VALUE_WITH_FAKE_GLOBALS: raise NotImplementedError` guard
+            raise_idx = next((i for i, inst in enumerate(insts) if inst.opname == "RAISE_VARARGS"), None)
+            if raise_idx is not None:
+                idx = raise_idx + 1
+            else:
+                idx = next((i for i, inst in enumerate(insts) if inst.opname == "LOAD_CONST"), 0)
+            return (True, insts[idx:-1])  # skip the RETURN_VALUE at the end
 
         # iterate over all instructions
         # replace any load_consts that load __annotate__ functions with the function's instructions, minus the return and the prefix
@@ -261,6 +266,7 @@ class EditableBytecode:
                     break
             self.co_consts[self.instructions[0].arg] = None
             extra_removes.update(to_remove)
+            handled_instructions.update(to_remove)
 
         # handle class object __annotate_func__
         for idx, inst in enumerate(self.instructions):
@@ -314,6 +320,12 @@ class EditableBytecode:
             if inst.opname == "LOAD_CONST":
                 is_annotate_func, inlinable_insts = is_annotate_func_and_get_inlinable_insts(inst.argval)
                 if is_annotate_func:
+                    # the inlined body has no line info; give it the line start of the
+                    # LOAD_CONST it replaces so it isn't grouped with the previous line
+                    if inlinable_insts and inst.starts_line is not None and inlinable_insts[0].starts_line is None:
+                        inlinable_insts[0].starts_line = inst.starts_line
+                        inst.starts_line = None
+
                     # replace
                     # LOAD_CONST __annotate__
                     # MAKE_FUNCTION
