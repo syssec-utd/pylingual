@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import functools
 import subprocess
 import sys
 import py_compile
@@ -32,10 +33,26 @@ def _compile_native(py_file: str, out_file: str):
     return
 
 
+@functools.lru_cache(maxsize=None)
+def _uv_python(version: PythonVersion) -> str | None:
+    """Resolve the interpreter uvx would use, so repeated compiles can skip uvx's per-call resolution."""
+    try:
+        found = subprocess.run(["uv", "python", "find", version.as_str()], shell=False, capture_output=True, text=True)
+        path = found.stdout.strip()
+        if found.returncode != 0 or not path:
+            return None
+        # confirm the version before trusting it, otherwise a bad resolve turns every compile into a CompileError
+        check = subprocess.run([path, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"], shell=False, capture_output=True, text=True)
+        return path if check.stdout.strip() == version.as_str() else None
+    except Exception:
+        return None
+
+
 def _compile_uv(py_file: str, out_file: str, version: PythonVersion):
     compile_cmd = f"import py_compile, sys; assert sys.version_info[:2] == {version.as_tuple()!r}; py_compile.compile({py_file!r}, cfile={out_file!r})"
 
-    cmd = ["uvx", "--no-config", "--python", version.as_str(), "python", "-c", compile_cmd]
+    python = _uv_python(version)
+    cmd = [python, "-c", compile_cmd] if python else ["uvx", "--no-config", "--python", version.as_str(), "python", "-c", compile_cmd]
 
     output = subprocess.run(cmd, shell=False, capture_output=True, text=True, env={**os.environ, "PYTHONWARNINGS": "ignore"})
 

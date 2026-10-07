@@ -30,7 +30,6 @@ else:
 
 logger = logging.getLogger(__name__)
 
-
 # translator with caching
 class CacheTranslator:
     """
@@ -168,11 +167,10 @@ def load_models(
     if torch.cuda.is_available():
         logger.info("Using CUDA GPU for models")
         device = torch.device("cuda:0")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        logger.info("Using MPS (Metal Performance Shaders) GPU for models")
-        device = torch.device("mps")
     else:
-        logger.warning("Using CPU for models")
+        # MPS recompiles its Metal graph on every T5 decode step, which makes it far slower than
+        # CPU for this workload, so it is not used even when available.
+        logger.info("Using CPU for models")
         device = torch.device("cpu")
     segmenter = transformers.pipeline(
         "token-classification",
