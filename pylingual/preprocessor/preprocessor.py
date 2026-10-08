@@ -71,6 +71,20 @@ class Tracer:
             else:
                 push = inst.bytecode.opcode.oppush[inst.opcode]
             pop = push - effect
+            if pop >= depth and inst.opname.startswith("BUILD_") and not inst.opname.startswith("BUILD_MAP"):
+                # The tracked value is merged into a new container pushed at TOS
+                # (BUILD_TUPLE/BUILD_LIST/BUILD_SET/...). Keep tracing the merged
+                # container so the reported consumer is the instruction that finally
+                # consumes it — e.g. for the 3.14 inlined-__annotate__ scaffolding, an
+                # annotation BUILD_MAP feeds BUILD_TUPLE then MAKE_FUNCTION, and
+                # _preserve_container must see MAKE_FUNCTION/SET_FUNCTION_ATTRIBUTE
+                # to protect the annotation from folding.
+                # BUILD_MAP is excluded: a dict merged into an outer dict stays an
+                # addressable value (e.g. foo(value={...}, **kw)), and folding it is
+                # safe/desired — DICT_MERGE remains the consumer that _preserve_container
+                # already whitelists.
+                depth = 1
+                continue
             if push >= 0 and pop >= depth:
                 return index, depth - 1
             depth += effect
@@ -135,15 +149,15 @@ class Preprocessor:
                     crosses_merge = consumption is not None and any(
                         inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
                     )
-                    if crosses_merge:
-                        logger.debug(
-                            "Tracer does not support tracing consumers through *_MERGE instructions; "
-                            "skipping container folding"
+                    if crosses_merge or consumption is None:
+                        logger.warning(
+                            "Tracer does not support tracing consumers through *_MERGE instructions "
+                            "or found no consumer; skipping container folding"
                         )
-                    elif consumption is None or not _preserve_container(following[consumption[0]], consumption[1]):
+                    elif not _preserve_container(following[consumption[0]], consumption[1]):
                         value = recovery.value
                         fold_through = None
-                        if consumption is not None and consumption[0] == 0 and _is_list_to_tuple(following[0]):
+                        if consumption[0] == 0 and _is_list_to_tuple(following[0]):
                             # A list directly followed by a list->tuple conversion is
                             # actually a tuple (e.g. a *-arg target); fold both into a single
                             # tuple constant rather than leaving a dangling LIST_TO_TUPLE.
@@ -151,6 +165,8 @@ class Preprocessor:
                             fold_through = following[0]
                         self._collapse_segment(bc, seg, value, fold_through)
                         return
+                    else:
+                        logger.debug("Container consumer is preserved; not folding")
         for child in reversed(seg.ordered_children):
             if isinstance(child, Segment):
                 self._process_segment(bc, child)
