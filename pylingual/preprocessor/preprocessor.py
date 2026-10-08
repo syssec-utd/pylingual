@@ -61,12 +61,12 @@ class Tracer:
                 effect = inst.bytecode.opcode.oppush[inst.opcode] - inst.bytecode.opcode.oppop[inst.opcode]
             if inst.opname.startswith("BUILD_"):
                 push = 1
-            elif inst.opname in ("CALL", "CALL_KW"):
-                # CALL/CALL_KW each push a single result; oppush[opcode] is
+            elif inst.opname in ("CALL", "CALL_KW", "DICT_MERGE"):
+                # CALL/CALL_KW/DICT_MERGE each push a single result; oppush[opcode] is
                 # unreliable for these dynamic-push instructions (e.g. oppush[CALL] is
                 # 0 on 3.12 and 2 on 3.14 while xstack_effect models it as pushing one
-                # return value), so use the same push count xstack_effect's net-effect
-                # formula implies.
+                # return value, and oppush[DICT_MERGE] is 0 on 3.14), so use the same
+                # push count xstack_effect's net-effect formula implies.
                 push = 1
             else:
                 push = inst.bytecode.opcode.oppush[inst.opcode]
@@ -116,6 +116,25 @@ def _is_list_to_tuple(inst) -> bool:
     return False
 
 
+def _is_function_scaffolding(following: list[Inst]) -> bool:
+    """Whether an unconsumed container sits inside 3.14 function-definition scaffolding.
+
+    The spliced __annotate__ body leaves the Tracer's simulated stack unbalanced, so the
+    traced consumer is unreliable there. Detect the scaffolding shape instead: a
+    MAKE_FUNCTION/SET_FUNCTION_ATTRIBUTE pair appearing before any barrier instruction
+    (STORE_*/RETURN_*/jump target) that would end the definition.
+    """
+    saw_make_function = False
+    for inst in following[:300]:
+        if saw_make_function and inst.opname.startswith("SET_FUNCTION_ATTRIBUTE"):
+            return True
+        if inst.opname == "MAKE_FUNCTION":
+            saw_make_function = True
+        elif inst.opname.startswith(("STORE_", "RETURN")) or inst.is_jump_target:
+            return False
+    return False
+
+
 class Preprocessor:
     """Rewrites container construction bytecode into single LOAD_CONST instructions.
 
@@ -149,11 +168,19 @@ class Preprocessor:
                     crosses_merge = consumption is not None and any(
                         inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
                     )
+                    in_function_scaffolding = consumption is None and _is_function_scaffolding(following)
                     if consumption is None:
-                        logger.debug(
-                            "Tracer found no consumer for container (possibly due to spliced "
-                            "__annotate__ body); skipping container folding"
-                        )
+                        if in_function_scaffolding:
+                            logger.debug(
+                                "Tracer found no consumer for container in function-definition "
+                                "scaffolding (spliced __annotate__ imbalance); skipping folding"
+                            )
+                        else:
+                            # No traced consumer and no function scaffolding nearby: the
+                            # container is a free-standing value (previously these folded;
+                            # keep folding so the model sees the compact form).
+                            self._collapse_segment(bc, seg, recovery.value)
+                            return
                     elif crosses_merge:
                         logger.debug(
                             "Tracer does not support tracing consumers through *_MERGE instructions; "
