@@ -14,7 +14,7 @@ This codebase is optimized for readability and future extension, so there may in
 
 To verify decompilation correctness and produce model training sets, PyLingual requires the ability to compile Python in the target version.
 
-For current Python versions (3.8-3.14), PyLingual uses `uv`'s managed installations, but for Python 3.6 and 3.7, PyLingual uses [pyenv](https://github.com/pyenv/pyenv) ([pyenv-win](https://github.com/pyenv-win/pyenv-win) for Windows).
+For current Python versions (3.8-3.15), PyLingual uses `uv`'s managed installations, but for Python 3.6 and 3.7, PyLingual uses [pyenv](https://github.com/pyenv/pyenv) ([pyenv-win](https://github.com/pyenv-win/pyenv-win) for Windows).
 
 ## Setup
 

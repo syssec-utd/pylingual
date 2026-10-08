@@ -25,7 +25,7 @@ def train_segmentation(segmentation_config_path: pathlib.Path, logger: logging.L
 
     # train tokenizer
     logger.info("training tokenizer...")
-    subprocess.run(["uv", "run", segmentation_root / "train_tokenizer.py", *_public_flag(public), segmentation_config_path])
+    subprocess.run(["uv", "run", segmentation_root / "train_tokenizer.py", *_public_flag(public), segmentation_config_path], check=True)
 
     # train mlm (single gpu to avoid conflicts with local tokenized data)
     logger.info("training masked language model...")
@@ -43,11 +43,12 @@ def train_segmentation(segmentation_config_path: pathlib.Path, logger: logging.L
             segmentation_config_path,
         ],
         env=dict(os.environ, NCCL_P2P_DISABLE="1"),
+        check=True,
     )
 
     # tokenize dataset
     logger.info("tokenizing segmentation dataset...")
-    subprocess.run(["uv", "run", segmentation_root / "tokenize_seg.py", *_public_flag(public), segmentation_config_path])
+    subprocess.run(["uv", "run", segmentation_root / "tokenize_seg.py", *_public_flag(public), segmentation_config_path], check=True)
 
     # train segmentation model (4 gpus)
     logger.info("training segmentation model...")
@@ -65,6 +66,7 @@ def train_segmentation(segmentation_config_path: pathlib.Path, logger: logging.L
             segmentation_config_path,
         ],
         env=dict(os.environ, NCCL_P2P_DISABLE="1"),
+        check=True,
     )
 
 
@@ -72,11 +74,11 @@ def train_statement(statement_config_path: pathlib.Path, logger: logging.Logger,
     statement_root = pathlib.Path(__file__).parent / "statement"
 
     # manual tokenizer
-    subprocess.run(["uv", "run", statement_root / "train_tokenizer_auto.py", *_public_flag(public), statement_config_path])
+    subprocess.run(["uv", "run", statement_root / "train_tokenizer_auto.py", *_public_flag(public), statement_config_path], check=True)
 
     # tokenize statement dataset with salesforce tokenizer
     logger.info("tokenizing statement dataset...")
-    subprocess.run(["uv", "run", statement_root / "tokenize_seq2seq.py", *_public_flag(public), statement_config_path])
+    subprocess.run(["uv", "run", statement_root / "tokenize_seq2seq.py", *_public_flag(public), statement_config_path], check=True)
 
     # train statement model (4 gpus)
     logger.info("training statement model...")
@@ -94,6 +96,7 @@ def train_statement(statement_config_path: pathlib.Path, logger: logging.Logger,
             statement_config_path,
         ],
         env=dict(os.environ, NCCL_P2P_DISABLE="1"),
+        check=True,
     )
 
 

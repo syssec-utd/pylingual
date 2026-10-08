@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from xdis import Code3
 
-Code3.__eq__ = (
-    lambda self, o: isinstance(o, Code3)
+Code3.__eq__ = lambda self, o: (
+    isinstance(o, Code3)
     and self.co_argcount == o.co_argcount
     and self.co_nlocals == o.co_nlocals
     and self.co_flags == o.co_flags
@@ -172,7 +172,7 @@ class Decompiler:
                 if not self.correct_segmentation(bad_idx, from_comp_error=True):
                     return
                 corrected_comp_errors.add(bad_idx)
-            failed = TrackedList(CORRECTION_STEP, [i for i, result in enumerate(self.equivalence_results) if not result.success])
+            failed = TrackedList(CORRECTION_STEP, [i for i in range(len(self.ordered_bytecodes)) if (result := self.result_for_bytecode(i, self.equivalence_results)) is not None and not result.success])
             for i in failed:
                 if self.correct_segmentation(i):
                     continue
@@ -203,8 +203,9 @@ class Decompiler:
                 self.source_context.purge(bad_bc.codeobj)
                 equivalence_results = self.check_reconstruction(str(self.source_context))
             for i in purged:
-                r = equivalence_results[i]
-                equivalence_results[i] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
+                r = self.result_for_bytecode(i, equivalence_results)
+                if r is not None:
+                    equivalence_results[equivalence_results.index(r)] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
             self.source_context.purged_cfts = []
             return equivalence_results
         except:
@@ -385,56 +386,72 @@ class Decompiler:
         else:
             return compare_pyc(self.pyc, pyc)
 
+    def result_for_bytecode(self, i: int, results: list[TestResult]) -> TestResult | None:
+        codeobj = self.ordered_bytecodes[i].codeobj
+        return next((r for r in results if isinstance(r, TestResult) and r.bc_a is not None and r.bc_a.codeobj == codeobj), None)
+
     # try to correct the segmentation of the ith code object
     def correct_segmentation(self, i: int, from_comp_error=False) -> bool:
-        if not self.segmentation_results[i]:
+        if len(self.segmentation_results) <= i or not self.segmentation_results[i]:
             return False
         if isinstance(self.source_context.cfts[self.ordered_bytecodes[i].codeobj], MetaTemplate):
             return False
         logger.info(f"Trying to fix segmentation for {self.ordered_bytecodes[i].name}")
         original_prediction = [r["entity"] for r in self.segmentation_results[i]]
+        original_translation = self.translation_results[i]
+        previous_lines, previous_indented_source = self.source_lines, self.indented_source
+        previous_context_lines = self.source_context.lines
+        previous_cache = self.source_context.cache.copy()
+        previous_starts = [(inst, inst.starts_line) for insts in self.ordered_instructions for inst in insts]
+        passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
         strategy = functools.partial(m_deep_top_k, priority_function=naive_confidence_priority, m=2, k=self.top_k + 1)
         # skip first prediction since it is the same as original
         for k, prediction in enumerate(get_top_k_predictions(strategy, self.segmentation_results[i])[1:], start=1):
             if prediction[0] != "B":
                 continue
-            # change segmentation to new prediction
-            for r, p in zip(self.segmentation_results[i], prediction):
-                r["entity"] = p
-            self.update_starts_line()
-            # retranslate affected bytecode
-            translation_request = self.make_translation_request(self.ordered_instructions[i], self.segmentation_results[i])
-            previous_lines, previous_indented_source = self.source_lines, self.indented_source
+            accepted = False
             try:
-                self.translation_results[i] = self.translator(translation_request)
-                self.update_source_lines()
-                self.unmask_lines()
-            except Exception as e:
-                e.add_note("From translation")
-                raise
-            self.source_context.update_lines(self.source_lines)
-            # check if new reconstruction is correct
-            self.reconstruct_source()
-            equivalence_results = self.check_reconstruction(self.indented_source)
-            if from_comp_error:
-                if not has_comp_error(equivalence_results) or self.find_comp_error_cause(equivalence_results) not in [None, i]:
+                # All source representations and instruction line numbers belong
+                # to the same candidate. Keep them together until it is checked.
+                for r, p in zip(self.segmentation_results[i], prediction):
+                    r["entity"] = p
+                self.update_starts_line()
+                translation_request = self.make_translation_request(self.ordered_instructions[i], self.segmentation_results[i])
+                try:
+                    self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
+                    self.update_source_lines()
+                    self.unmask_lines()
+                except Exception as e:
+                    e.add_note("From translation")
+                    raise
+                self.source_context.update_lines(self.source_lines)
+                self.reconstruct_source()
+                equivalence_results = self.check_reconstruction(self.indented_source)
+                if from_comp_error:
+                    improved = bool(equivalence_results) and (not has_comp_error(equivalence_results) or self.find_comp_error_cause(equivalence_results) not in [None, i])
+                else:
+                    improved = False
+                if not from_comp_error and not has_comp_error(equivalence_results):
+                    result = self.result_for_bytecode(i, equivalence_results)
+                    improved = result is not None and result.success
+                accepted = improved and all((r := self.result_for_bytecode(j, equivalence_results)) is not None and r.success for j in passing)
+                if accepted:
                     self.equivalence_results = equivalence_results
                     self.highest_k_used = max(self.highest_k_used, k)
                     logger.info(f"Updated segmentation for {self.ordered_bytecodes[i].name}")
                     return True
-            elif not has_comp_error(equivalence_results) and equivalence_results[i].success:
-                self.equivalence_results[i] = equivalence_results[i]
-                self.highest_k_used = max(self.highest_k_used, k)
-                logger.info(f"Updated segmentation for {self.ordered_bytecodes[i].name}")
-                return True
-            # correction failed, roll back changes to internal source code storage
-            self.indented_source = previous_indented_source
-            self.source_lines = previous_lines
-            self.source_context.update_lines(previous_lines)
-        # revert to original segmentation
-        for r, p in zip(self.segmentation_results[i], original_prediction):
-            r["entity"] = p
-        self.update_starts_line()
+            finally:
+                if not accepted:
+                    for r, p in zip(self.segmentation_results[i], original_prediction):
+                        r["entity"] = p
+                    for inst, starts_line in previous_starts:
+                        inst.starts_line = starts_line
+                    self.translation_results[i] = original_translation
+                    self.source_lines = previous_lines
+                    self.indented_source = previous_indented_source
+                    self.source_context.lines = previous_context_lines
+                    self.source_context.cache.clear()
+                    self.source_context.cache.update(previous_cache)
         logger.info(f"Could not fix segmentation for {self.ordered_bytecodes[i].name}")
         return False
 
@@ -450,7 +467,17 @@ class Decompiler:
                     inst.starts_line = None
 
 
-def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Path | None = None, version: str | None = None, top_k: int = 10, trust_lnotab: bool = False, timeout: int | None = None) -> DecompilerResult:
+def decompile(
+    pyc: PYCFile | Path,
+    save_to: Path | None = None,
+    config_file: Path | None = None,
+    version: str | None = None,
+    top_k: int = 10,
+    trust_lnotab: bool = False,
+    timeout: int | None = None,
+    redis_cache_server_ip: str = None,
+    redis_port: int = 1679,
+) -> DecompilerResult:
     """
     Decompile a PYC file.
 
@@ -461,6 +488,8 @@ def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Pat
     :param top_k: Max number of pyc segmentations to consider.
     :param trust_lnotab: Trust the lnotab in the input PYC for segmentation (False recommended).
     :param timeout: Maximum time in seconds to allow decompilation to run.
+    :param redis_cache_server_ip: IP for the Redis cache server.
+    :param redis_port: Port for the Redis cache server.
     :return: DecompilerResult class including important information about decompilation
     """
     logger.info(f"Loading {pyc}...")
@@ -489,7 +518,7 @@ def decompile(pyc: PYCFile | Path, save_to: Path | None = None, config_file: Pat
     if not config_file.exists():
         raise FileNotFoundError(f"Decompiler config {config_file} not found")
 
-    segmenter, translator = load_models(config_file, pversion)
+    segmenter, translator = load_models(config_file, pversion, redis_cache_server_ip, redis_port)
 
     if save_to:
         logger.info(f"Decompiling pyc {pyc.pyc_path.resolve() if pyc.pyc_path else repr(pyc)} to {save_to.resolve()}")

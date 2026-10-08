@@ -39,7 +39,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
         preprocessed = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
 
         # create consts
-        consts = list(deepcopy(bc_co.co_consts))
+        consts = list(deepcopy(tuple(getattr(const, "codeobj", const) for const in bc.co_consts)))
 
         # add LOAD_SMALL_INT values to consts (3.14+)
         if bc.version >= (3, 14):
@@ -65,7 +65,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_idx += 1
 
         # create names
-        for name in bc_co.co_names:
+        for name in bc.co_names:
             if isinstance(name, tuple):
                 for n in name:
                     if n in global_tab:
@@ -78,20 +78,20 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_tab[bc.resolve_namespace(name)] = f"<mask_{global_idx}>"
                 global_idx += 1
 
-        for free in bc_co.co_freevars:
+        for free in bc.codeobj.co_freevars:
             if free in global_tab:
                 continue
             global_tab[free] = f"<mask_{global_idx}>"
             global_idx += 1
 
         if bc.version >= (3, 11):
-            for cell in bc_co.co_cellvars:
+            for cell in bc.codeobj.co_cellvars:
                 if cell in global_tab:
                     continue
                 global_tab[cell] = f"<mask_{global_idx}>"
                 global_idx += 1
 
-        for local in bc_co.co_varnames:
+        for local in bc.co_varnames:
             if isinstance(local, tuple):
                 for local_item in local:
                     if local_item in global_tab:
@@ -105,6 +105,7 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
                 global_idx += 1
 
         global_tab[bc_co.co_name] = f"<mask_{global_idx}>"
+
         global_idx += 1
 
     return global_masker
