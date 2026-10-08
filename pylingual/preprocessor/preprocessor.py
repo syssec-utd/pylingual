@@ -149,10 +149,15 @@ class Preprocessor:
                     crosses_merge = consumption is not None and any(
                         inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
                     )
-                    if crosses_merge or consumption is None:
-                        logger.warning(
-                            "Tracer does not support tracing consumers through *_MERGE instructions "
-                            "or found no consumer; skipping container folding"
+                    if consumption is None:
+                        logger.debug(
+                            "Tracer found no consumer for container (possibly due to spliced "
+                            "__annotate__ body); skipping container folding"
+                        )
+                    elif crosses_merge:
+                        logger.debug(
+                            "Tracer does not support tracing consumers through *_MERGE instructions; "
+                            "skipping container folding"
                         )
                     elif not _preserve_container(following[consumption[0]], consumption[1]):
                         value = recovery.value

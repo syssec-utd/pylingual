@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from types import SimpleNamespace
 
@@ -97,10 +98,11 @@ def test_pre311_make_function_effect_includes_qualname():
 
 
 def test_explicit_keyword_map_before_kwargs_remains_visible_to_model(caplog):
-    bytecode = _preprocess(
-        "def f(foo, value, options):\n"
-        "    return foo(value, conditional=True, **options)\n"
-    )
+    with caplog.at_level(logging.DEBUG, logger="pylingual.preprocessor.preprocessor"):
+        bytecode = _preprocess(
+            "def f(foo, value, options):\n"
+            "    return foo(value, conditional=True, **options)\n"
+        )
     function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
 
     assert any(inst.opname == "BUILD_MAP" and inst.arg == 1 for inst in function.instructions)
@@ -114,10 +116,11 @@ def test_explicit_keyword_map_before_kwargs_remains_visible_to_model(caplog):
 
 
 def test_keyword_map_before_dynamic_kwargs_is_not_folded(caplog):
-    bytecode = _preprocess(
-        "def f(foo, options):\n"
-        "    return foo(class_='error', **options())\n"
-    )
+    with caplog.at_level(logging.DEBUG, logger="pylingual.preprocessor.preprocessor"):
+        bytecode = _preprocess(
+            "def f(foo, options):\n"
+            "    return foo(class_='error', **options())\n"
+        )
     function = next(bc for bc in bytecode.iter_bytecodes() if bc.codeobj.co_name == "f")
 
     assert any(inst.opname == "BUILD_MAP" and inst.arg == 1 for inst in function.instructions)
