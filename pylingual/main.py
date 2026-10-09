@@ -92,13 +92,15 @@ def collect_files(paths: list[Path], out_dir: Path, flatten: bool) -> list[tuple
 @click.option("-c", "--config-file", default=None, type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Config file for model information.", metavar="PATH")
 @click.option("-v", "--version", default=None, type=PythonVersion, help="Python version of the .pyc, default is auto detection.", metavar="VERSION")
 @click.option("-k", "--top-k", default=10, type=int, help="Maximum number of additional segmentations to consider.", metavar="INT")
+@click.option("-r", "--redis-host", default=None, envvar="PYLINGUAL_REDIS_HOST", type=str, help="Redis translation cache host. Unset disables caching (default: $PYLINGUAL_REDIS_HOST).", metavar="HOST")
+@click.option("--redis-port", default=6379, envvar="PYLINGUAL_REDIS_PORT", type=click.IntRange(min=1, max=65535), help="Redis translation cache port (default: $PYLINGUAL_REDIS_PORT or 6379).", metavar="PORT")
 @click.option("-q", "--quiet", is_flag=True, default=False, help="Suppress console output.")
 @click.option("--flatten", is_flag=True, default=False, help="Flatten the output directory. (Only used if files list contains directories)")
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing output files.")
 @click.option("--trust-lnotab", is_flag=True, default=False, help="Use the lnotab for segmentation instead of the segmentation model.")
 @click.option("--init-pyenv", is_flag=True, default=False, help="Install pyenv before decompiling.")
 @click.option("--timeout", default=None, type=int, help="Maximum time in seconds to allow decompilation to run per file.", metavar="SECONDS")
-def main(files: list[Path], out_dir: Path | None, config_file: Path | None, version: PythonVersion | None, top_k: int, flatten: bool, force: bool, trust_lnotab: bool, init_pyenv: bool, quiet: bool, timeout: int | None):
+def main(files: list[Path], out_dir: Path | None, config_file: Path | None, version: PythonVersion | None, top_k: int, flatten: bool, force: bool, trust_lnotab: bool, init_pyenv: bool, quiet: bool, timeout: int | None, redis_host: str | None, redis_port: int):
     rich.reconfigure(markup=False, emoji=False, quiet=quiet, theme=Theme({"logging.keyword": "yellow not bold"}))
     console = rich.get_console()
     log_handler = RichHandler(console=console, rich_tracebacks=True)
@@ -175,6 +177,8 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
                     top_k=top_k,
                     trust_lnotab=trust_lnotab,
                     timeout=timeout,
+                    redis_cache_server_ip=redis_host or None,
+                    redis_port=redis_port,
                 )
                 pyc = result.original_pyc
                 print_result(f"Equivalence Results for {pyc.pyc_path.name if pyc.pyc_path else repr(pyc)}", result.equivalence_results)
