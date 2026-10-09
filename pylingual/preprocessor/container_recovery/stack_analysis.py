@@ -38,8 +38,8 @@ def parse_list_recursive(remaining: list[tuple[int, object]]) -> Segment:
         (stack_depth, instr) = remaining.pop()
         if stack_depth < base_depth:
             output_segs.append(Segment(f"ELEM {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
-            cur_elem_id -= 1
-            base_depth -= 1
+            cur_elem_id -= base_depth - stack_depth
+            base_depth = stack_depth
             cur_seg = []
         cur_seg.append((stack_depth, instr))
 
@@ -70,8 +70,8 @@ def parse_set_recursive(remaining: list[tuple[int, object]]) -> Segment:
         (stack_depth, instr) = remaining.pop()
         if stack_depth < base_depth:
             output_segs.append(Segment(f"ELEM {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
-            cur_elem_id -= 1
-            base_depth -= 1
+            cur_elem_id -= base_depth - stack_depth
+            base_depth = stack_depth
             cur_seg = []
         cur_seg.append((stack_depth, instr))
 
@@ -102,8 +102,8 @@ def parse_tuple_recursive(remaining: list[tuple[int, object]]) -> Segment:
         (stack_depth, instr) = remaining.pop()
         if stack_depth < base_depth:
             output_segs.append(Segment(f"ELEM {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
-            cur_elem_id -= 1
-            base_depth -= 1
+            cur_elem_id -= base_depth - stack_depth
+            base_depth = stack_depth
             cur_seg = []
         cur_seg.append((stack_depth, instr))
 
@@ -136,8 +136,8 @@ def parse_dict_recursive(remaining: list[tuple[int, object]]) -> Segment:
         (stack_depth, instr) = remaining.pop()
         if stack_depth < base_depth:
             output_segs.append(Segment(f"KEY {(cur_elem_id + 1) // 2}" if is_key else f"VALUE {(cur_elem_id + 1) // 2}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
-            cur_elem_id -= 1
-            base_depth -= 1
+            cur_elem_id -= base_depth - stack_depth
+            base_depth = stack_depth
             cur_seg = []
             is_key = not is_key
         cur_seg.append((stack_depth, instr))
@@ -172,8 +172,8 @@ def parse_const_key_map_recursive(remaining: list[tuple[int, object]]) -> Segmen
         (stack_depth, instr) = remaining.pop()
         if stack_depth < base_depth:
             output_segs.append(Segment(f"VALUE {cur_elem_id}", parse_bytecode_recursive(cur_seg[::-1]), base_depth))
-            cur_elem_id -= 1
-            base_depth -= 1
+            cur_elem_id -= base_depth - stack_depth
+            base_depth = stack_depth
             cur_seg = []
         cur_seg.append((stack_depth, instr))
 
