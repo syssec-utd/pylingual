@@ -11,19 +11,24 @@ from pylingual.editable_bytecode.utils import comprehension_names, find_loadcons
 class TypeSensitiveDict(MutableMapping):
     def __init__(self, *args, **kwargs):
         self.store = dict()
+        self.original_keys = dict()
         self.update(dict(*args, **kwargs))  # use the free update to set keys
 
     def __getitem__(self, key):
         return self.store[self._key_transform(key)]
 
     def __setitem__(self, key, value):
-        self.store[self._key_transform(key)] = value
+        transformed = self._key_transform(key)
+        self.store[transformed] = value
+        self.original_keys[transformed] = key
 
     def __delitem__(self, key):
-        del self.store[self._key_transform(key)]
+        transformed = self._key_transform(key)
+        del self.store[transformed]
+        del self.original_keys[transformed]
 
     def __iter__(self):
-        return iter(self.store)
+        return iter(self.original_keys.values())
 
     def __len__(self):
         return len(self.store)
@@ -32,10 +37,10 @@ class TypeSensitiveDict(MutableMapping):
         return self._key_transform(key) in self.store
 
     def keys(self) -> list:
-        return [self._key_restore(key) for key in self.store.keys()]
+        return list(self.original_keys.values())
 
     def items(self):
-        return ((self._key_restore(key), value) for key, value in self.store.items())
+        return ((self.original_keys[key], value) for key, value in self.store.items())
 
     def values(self):
         return self.store.values()
@@ -45,10 +50,20 @@ class TypeSensitiveDict(MutableMapping):
             return (key.value.decode("utf-8"), str)
         if type(key) == LongTypeForPython3:
             return (key.value, int)
+        if type(key) in (list, tuple):
+            return (tuple(self._key_transform(value) for value in key), type(key))
+        if type(key) in (set, frozenset):
+            return (frozenset(self._key_transform(value) for value in key), type(key))
+        if type(key) is dict:
+            return (
+                frozenset((self._key_transform(k), self._key_transform(v)) for k, v in key.items()),
+                dict,
+            )
+        try:
+            hash(key)
+        except TypeError:
+            return (repr(key), type(key))
         return (key, type(key))
-
-    def _key_restore(self, key):
-        return key[0]
 
 
 #### Main Masker
@@ -184,16 +199,20 @@ class Masker:
             elif isinstance(inst.argval, str) and inst.argval in self.global_tab:  # have to do this check incase string is varname of type annotation
                 view = f"{inst.opname} , {repr(self.mask(inst.argval))}"
 
+            elif type(inst.argval) in (list, tuple, frozenset, set, dict) and getattr(inst, "preprocessed_container", False):
+                # Container constants recovered by the preprocessor are masked atomically.
+                # TODO: Providing type information via type(inst.argval).__name__(<mask_N>) would
+                # give the model useful context, but the current model was not trained on that format
+                # and produces garbled output (e.g. splitting "dict" across a mask boundary). Reverting
+                # to a plain mask token matches the training data. Revisit this after model retraining.
+                view = f"{inst.opname} , {self.mask(inst.argval)}"
             elif type(inst.argval) in (list, tuple, frozenset, set):
-                # do recursive in-place replacement of list elems if they are strs or bytestrs
-
                 def replace_list(consts):
-                    """recursive replacement of elements in arbitrary list-like objects"""
                     for idx, const in enumerate(consts):
                         if isinstance(const, str):
                             consts[idx] = repr(self.mask(inst.bytecode.resolve_namespace(const)))
                         elif const is None:
-                            continue  # don't mask None
+                            continue
                         elif type(const) in (list, tuple, frozenset):
                             consts[idx] = type(const)(replace_list(list(const)))
                         elif type(const) is slice:
@@ -202,19 +221,12 @@ class Masker:
                             consts[idx] = self.mask(const)
                     return consts
 
-                consts = list(deepcopy(inst.argval))
-                consts = replace_list(consts)
-
+                consts = replace_list(list(deepcopy(inst.argval)))
                 if inst.bytecode.version < (3, 11):
-                    # Format keyword argument list
-                    # We left pad the list of kwargs so the model doesnt have to "look ahead"
                     next_insts = inst.next_instructions
-                    next_inst = next_insts[0] if next_insts != [] else None
+                    next_inst = next_insts[0] if next_insts else None
                     if next_inst is not None and inst.opname == "LOAD_CONST" and next_inst.opname == "CALL_FUNCTION_KW":
                         consts = ["<KWARG_PAD>"] * (next_inst.argval - len(consts)) + consts
-
-                # cast back to original type and print repr
-                # demote quotes one layer
                 arg_repr = repr(type(inst.argval)(consts)).replace("'", "").replace('"', "'")
                 view = f"{inst.opname} , {arg_repr}"
             elif type(inst.argval) is slice:

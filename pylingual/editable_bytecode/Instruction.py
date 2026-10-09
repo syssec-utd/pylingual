@@ -133,6 +133,12 @@ class Inst:
             raise AttributeError("Only jump instructions have target attributes, not " + repr(self))
         self._target = value
 
+    def refresh_argrepr(self):
+        """Refresh argrepr to reflect the current state of the instruction, e.g. after offset changes."""
+        if self.is_jump and self._target is not None:
+            self.argval = self._target.offset
+            self.argrepr = "to " + repr(self._target.offset)
+
     def add_reqs(self, *reqs):
         for r in reqs:
             if isinstance(r, tuple):

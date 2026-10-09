@@ -37,6 +37,9 @@ dependencies = [
     "redis",
 ]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.urls]
 homepage = "https://pylingual.io"
 
