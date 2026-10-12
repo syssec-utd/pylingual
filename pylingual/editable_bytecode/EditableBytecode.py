@@ -125,7 +125,6 @@ class EditableBytecode:
                 self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self)
                 self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
                 self.bytecode_lookup[const.co_name] = self.co_consts[i]
-
     def fix_make_function_argval(self):
         """In Python 3.13 the argval for MAKE_FUNCTION is determined by an optional subsequent SET_FUNCTION_ATTRIBUTE instruction"""
 
@@ -260,6 +259,7 @@ class EditableBytecode:
         # replace any load_consts that load __annotate__ functions with the function's instructions, minus the return and the prefix
         # keys are (index, instructions to remove), values are (list of instructions to insert)
         inline_dict: dict[tuple[int, tuple[Inst]], list[Inst]] = {}
+        class_inline_chunks = []
         jump_target_mapping = {}
         conditional_annotation_map = {}
         handled_instructions: set[Inst] = set()
@@ -314,12 +314,38 @@ class EditableBytecode:
                     sanity_check, class_conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(annotate_codeobj)
                     assert sanity_check, "Improperly matched annotation function load sequence"
                     direct_annotations = class_conditional_annotation_map.pop(-1, None)
-
                     if direct_annotations:
-                        splice_idx = (classdict_store_idx + 1) if classdict_store_idx is not None else (idx - 1)
-                        inline_dict[(splice_idx, tuple(to_remove))] = direct_annotations
+                        # one chunk per annotation
+                        chunks, cur = [], []
+                        for ins in direct_annotations:
+                            cur.append(ins)
+                            if ins.opname == "STORE_SUBSCR":
+                                chunks.append(cur)
+                                cur = []
+                        if cur:
+                            chunks.append(cur)
+
+                        removed_set = set(to_remove)
+                        fallback_idx = (classdict_store_idx + 1) if classdict_store_idx is not None else (idx - 1)
+
+                        for chunk in chunks:
+                            chunk_line = chunk[0].starts_line
+                            # fix stale line numbers
+                            for ins in chunk[1:]:
+                                ins.starts_line = None
+                            target_idx = fallback_idx
+                            if chunk_line is not None:
+                                for j, body_inst in enumerate(self.instructions):
+                                    if body_inst in removed_set or body_inst in extra_removes:
+                                        continue
+                                    if body_inst.starts_line is not None and body_inst.starts_line >= chunk_line:
+                                        target_idx = j
+                                        break
+                            class_inline_chunks.append((target_idx, chunk))
+                        extra_removes.update(to_remove)
                     else:
                         extra_removes.update(to_remove)
+                    
                     conditional_annotation_map |= class_conditional_annotation_map
                 else:
                     sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
@@ -365,8 +391,13 @@ class EditableBytecode:
             elif inst.opname == "STORE_DEREF" and inst.argval == "__conditional_annotations__" and -1 in conditional_annotation_map:
                 inline_dict[(idx, tuple(self.instructions[idx - 1 : idx + 1]))] = conditional_annotation_map[-1]
                 del conditional_annotation_map[-1]
-        
-        self.insert_insts({idx: insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
+       
+        insert_map = defaultdict(list)
+        for (idx, _), insts in inline_dict.items():
+            insert_map[idx].extend(insts)
+        for idx, chunk in class_inline_chunks:
+            insert_map[idx].extend(chunk)
+        self.insert_insts(dict(insert_map))
         self._change_jump_targets(jump_target_mapping)
         self.remove_instructions(extra_removes | set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
 
