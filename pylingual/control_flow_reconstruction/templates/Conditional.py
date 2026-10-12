@@ -173,7 +173,10 @@ class IfThen(ControlFlowTemplate):
 class Assertion(ControlFlowTemplate):
     template = T(
         assertion=~N("fail", "tail"),
-        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"), has_instval("LOAD_GLOBAL", argval="AssertionError"), has_instval("LOAD_COMMON_CONSTANT", argval=0)).with_cond(has_no_lines),
+        fail=+N().with_cond(starting_instructions("LOAD_ASSERTION_ERROR"),
+                    has_instval("LOAD_GLOBAL", argval="AssertionError"),
+                    has_instval("LOAD_COMMON_CONSTANT", argval=0),
+                    has_instval("LOAD_COMMON_CONSTANT", argval=AssertionError)).with_cond(has_no_lines), # new argval added in 3.15
         tail=N.tail(),
     )
 

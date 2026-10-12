@@ -20,4 +20,6 @@ mise.toml
 dist/
 decompiled_*/
 decompiled_*.py
+ROADMAP.md
 
+.opencode-cache/

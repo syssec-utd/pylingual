@@ -25,6 +25,38 @@ git clone https://github.com/syssec-utd/pylingual
 uv tool install ./pylingual
 ```
 
+### Redis translation cache (optional)
+
+The CLI can reuse translation-model predictions across files and runs using Redis,
+with the same cache used by [the dataset evaluator](https://github.com/syssec-utd/pylingual_eval_dataset).
+Entries are keyed by Python version and normalized bytecode. Repeated statements can
+skip translation-model inference; the first uncached translation still runs the model,
+and segmentation and model loading are not cached by Redis.
+
+With Docker and Docker Compose installed, start Redis from the cloned repository:
+
+```sh
+cd pylingual
+docker compose up -d redis
+```
+
+The bundled service listens on `127.0.0.1:6379`. If Redis is already running there
+(for example, for the dataset evaluator), reuse it instead of starting another service.
+Enable caching with:
+
+```sh
+pylingual --redis-host 127.0.0.1 example.pyc
+```
+
+Alternatively, set `PYLINGUAL_REDIS_HOST`: `export PYLINGUAL_REDIS_HOST=127.0.0.1`
+in a POSIX shell, or `$env:PYLINGUAL_REDIS_HOST = '127.0.0.1'` in PowerShell.
+Without a host, Redis caching remains disabled. Use `--redis-port` or
+`PYLINGUAL_REDIS_PORT` for a different port; the CLI defaults to `6379`.
+Command-line settings override their environment variables.
+
+Cache keys do not include the translation model revision. Use a separate Redis
+instance when switching translation models to avoid reusing predictions from another model.
+
 ## Usage
 
 ```
@@ -39,6 +71,10 @@ Options:
                           detection.
   -k, --top-k INT         Maximum number of additional segmentations to
                           consider.
+  -r, --redis-host HOST  Redis translation cache host; defaults to
+                         $PYLINGUAL_REDIS_HOST. Unset disables caching.
+  --redis-port PORT      Redis port; defaults to $PYLINGUAL_REDIS_PORT
+                         or 6379.
   -q, --quiet             Suppress console output.
   --trust-lnotab          Use the lnotab for segmentation instead of the
                           segmentation model.

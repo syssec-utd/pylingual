@@ -18,6 +18,20 @@ from .control_flow_graph import bytecode_to_control_flow_graph
 from typing import Callable
 
 
+def _encode_name_arg(opname: str, name_index: int, original_arg: int | None, version: PythonVersion) -> int:
+    shifts = {
+        "LOAD_GLOBAL": 1 if version >= (3, 11) else 0,
+        "LOAD_ATTR": 1 if version >= (3, 12) else 0,
+        "LOAD_SUPER_ATTR": 2 if version >= (3, 12) else 0,
+        "IMPORT_NAME": 2 if version >= (3, 15) else 0,
+    }
+    shift = shifts.get(opname, 0)
+    if not shift:
+        return name_index
+    flags = int(original_arg or 0) & ((1 << shift) - 1)
+    return (name_index << shift) | flags
+
+
 class EditableBytecode:
     """
     An editable representation of Pythonic bytecode. Many values in it, including its instructions, may be incorrect
@@ -111,7 +125,6 @@ class EditableBytecode:
                 self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self)
                 self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
                 self.bytecode_lookup[const.co_name] = self.co_consts[i]
-
     def fix_make_function_argval(self):
         """In Python 3.13 the argval for MAKE_FUNCTION is determined by an optional subsequent SET_FUNCTION_ATTRIBUTE instruction"""
 
@@ -139,8 +152,7 @@ class EditableBytecode:
             # if it's not named "__annotate__", only treat it as an annotation function
             # if it starts with the type-definition pattern .format
             if codeobj.co_name != "__annotate__":
-                first_inst = next(iter(Bytecode(codeobj, self.opcode)), None)
-                if not first_inst or first_inst.argval != ".format":
+                if codeobj.co_argcount != 1 or unwrap(list(codeobj.co_varnames))[:1] != [".format"]:
                     return None
 
             # make edititable bytecode now
@@ -232,15 +244,22 @@ class EditableBytecode:
             annotate_bytecode = try_read_annotate_func(codeobj)
             if annotate_bytecode is None:
                 return (False, [])
-
+            
             # find the idx after the preamble
-            idx = next((idx for idx, inst in enumerate(annotate_bytecode.instructions) if inst.opname == "LOAD_CONST"), 0)
-            return (True, annotate_bytecode.instructions[idx:-1])  # skip the RETURN_VALUE at the end
+            insts = annotate_bytecode.instructions
+            # skip the `if format > VALUE_WITH_FAKE_GLOBALS: raise NotImplementedError` guard
+            raise_idx = next((i for i, inst in enumerate(insts) if inst.opname == "RAISE_VARARGS"), None)
+            if raise_idx is not None:
+                idx = raise_idx + 1
+            else:
+                idx = next((i for i, inst in enumerate(insts) if inst.opname == "LOAD_CONST"), 0)
+            return (True, insts[idx:-1])  # skip the RETURN_VALUE at the end
 
         # iterate over all instructions
         # replace any load_consts that load __annotate__ functions with the function's instructions, minus the return and the prefix
         # keys are (index, instructions to remove), values are (list of instructions to insert)
         inline_dict: dict[tuple[int, tuple[Inst]], list[Inst]] = {}
+        class_inline_chunks = []
         jump_target_mapping = {}
         conditional_annotation_map = {}
         handled_instructions: set[Inst] = set()
@@ -261,6 +280,7 @@ class EditableBytecode:
                     break
             self.co_consts[self.instructions[0].arg] = None
             extra_removes.update(to_remove)
+            handled_instructions.update(to_remove)
 
         # handle class object __annotate_func__
         for idx, inst in enumerate(self.instructions):
@@ -294,12 +314,38 @@ class EditableBytecode:
                     sanity_check, class_conditional_annotation_map = is_annotate_func_and_get_conditional_annotation_map(annotate_codeobj)
                     assert sanity_check, "Improperly matched annotation function load sequence"
                     direct_annotations = class_conditional_annotation_map.pop(-1, None)
-
                     if direct_annotations:
-                        splice_idx = (classdict_store_idx + 1) if classdict_store_idx is not None else (idx - 1)
-                        inline_dict[(splice_idx, tuple(to_remove))] = direct_annotations
+                        # one chunk per annotation
+                        chunks, cur = [], []
+                        for ins in direct_annotations:
+                            cur.append(ins)
+                            if ins.opname == "STORE_SUBSCR":
+                                chunks.append(cur)
+                                cur = []
+                        if cur:
+                            chunks.append(cur)
+
+                        removed_set = set(to_remove)
+                        fallback_idx = (classdict_store_idx + 1) if classdict_store_idx is not None else (idx - 1)
+
+                        for chunk in chunks:
+                            chunk_line = chunk[0].starts_line
+                            # fix stale line numbers
+                            for ins in chunk[1:]:
+                                ins.starts_line = None
+                            target_idx = fallback_idx
+                            if chunk_line is not None:
+                                for j, body_inst in enumerate(self.instructions):
+                                    if body_inst in removed_set or body_inst in extra_removes:
+                                        continue
+                                    if body_inst.starts_line is not None and body_inst.starts_line >= chunk_line:
+                                        target_idx = j
+                                        break
+                            class_inline_chunks.append((target_idx, chunk))
+                        extra_removes.update(to_remove)
                     else:
                         extra_removes.update(to_remove)
+                    
                     conditional_annotation_map |= class_conditional_annotation_map
                 else:
                     sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
@@ -314,6 +360,12 @@ class EditableBytecode:
             if inst.opname == "LOAD_CONST":
                 is_annotate_func, inlinable_insts = is_annotate_func_and_get_inlinable_insts(inst.argval)
                 if is_annotate_func:
+                    # the inlined body has no line info; give it the line start of the
+                    # LOAD_CONST it replaces so it isn't grouped with the previous line
+                    if inlinable_insts and inst.starts_line is not None and inlinable_insts[0].starts_line is None:
+                        inlinable_insts[0].starts_line = inst.starts_line
+                        inst.starts_line = None
+
                     # replace
                     # LOAD_CONST __annotate__
                     # MAKE_FUNCTION
@@ -339,8 +391,13 @@ class EditableBytecode:
             elif inst.opname == "STORE_DEREF" and inst.argval == "__conditional_annotations__" and -1 in conditional_annotation_map:
                 inline_dict[(idx, tuple(self.instructions[idx - 1 : idx + 1]))] = conditional_annotation_map[-1]
                 del conditional_annotation_map[-1]
-        
-        self.insert_insts({idx: insts_to_insert for (idx, insts_to_remove), insts_to_insert in inline_dict.items()})
+       
+        insert_map = defaultdict(list)
+        for (idx, _), insts in inline_dict.items():
+            insert_map[idx].extend(insts)
+        for idx, chunk in class_inline_chunks:
+            insert_map[idx].extend(chunk)
+        self.insert_insts(dict(insert_map))
         self._change_jump_targets(jump_target_mapping)
         self.remove_instructions(extra_removes | set(itertools.chain.from_iterable(insts_to_remove for (idx, insts_to_remove) in inline_dict.keys())))
 
@@ -459,6 +516,7 @@ class EditableBytecode:
                                 instruction.argval = instruction.target.offset
                             else:
                                 instruction.arg = instruction.argval = instruction.target.offset
+                        instruction.refresh_argrepr()
                     if add_extended:
                         # count the number of necessary preceeding EXTENDED_ARG instructions
                         n_extendeds_needed = (instruction.arg > 0xFF) + (instruction.arg > 0xFFFF) + (instruction.arg > 0xFFFFFF)
@@ -891,7 +949,8 @@ class EditableBytecode:
             elif inst.optype == "name":
                 if inst.argval not in self.co_names:
                     self.co_names.append(inst.argval)
-                inst.arg = self.co_names.index(inst.argval)
+                name_index = self.co_names.index(inst.argval)
+                inst.arg = _encode_name_arg(inst.opname, name_index, inst.arg, self.version)
             elif inst.optype == "free" or inst.optype == "local":
                 if inst.argval not in self.co_varnames:
                     self.co_varnames.append(inst.argval)
@@ -920,6 +979,18 @@ class EditableBytecode:
         self._edited = True
 
         return len(to_insert)
+
+    def insert_instruction(self, index: int, instruction: Inst) -> int:
+        """Inserts one instruction at the specified index."""
+        if index < len(self.instructions):
+            displaced = self.instructions[index]
+            if instruction.starts_line is None:
+                instruction.starts_line = displaced.starts_line
+                displaced.starts_line = None
+            for inst in self.instructions:
+                if inst.is_jump and inst.target is displaced:
+                    inst._target = instruction
+        return self.insert_insts({index: [instruction]})
 
     def new_instruction(self, *args, **kwargs):
         """Creates a new instruction for use with this EditableBytecode object. This function does NOT automatically insert the instruction."""
