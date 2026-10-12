@@ -41,7 +41,6 @@ def train_statement_model(config: StatementConfiguration, public: bool = False):
         per_device_eval_batch_size=config.statement_training_parameters.batch_size,
         weight_decay=0.01,
         fp16=config.fp16,
-        logging_dir=str(config.log_dir),
         report_to="tensorboard",
         logging_strategy="steps",
         logging_steps=1000,
