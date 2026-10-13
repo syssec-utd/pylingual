@@ -271,8 +271,6 @@ class NoEdge(EdgeMatcher):
     Matches an edge `(a, b)` if `b` is None (i.e. there is no edge)
     """
 
-    edge = ""
-
     @override
     def try_match(self, cfg: CFG, node_a: CFT, node_b: CFT | None) -> tuple[CFT | None, str] | None:
         if node_b is None:
@@ -389,8 +387,28 @@ class InstTemplate(ControlFlowTemplate):
     def try_match(cls, cfg, node):
         raise NotImplementedError
 
+    def handler_jump_keyword(self) -> str | None:
+        """`break`/`continue` for a POP_EXCEPT carrying a sanitized (blank) line, from the jump that follows it."""
+        if self.inst.opname != "POP_EXCEPT" or self.inst.starts_line is None or self.inst.source_line:
+            return None
+        for i in self.inst.bytecode:
+            if i.offset <= self.inst.offset:
+                continue
+            # leaving the loop: return, or popping a for loop's iterator
+            if i.opname in ("RETURN_VALUE", "RETURN_CONST", "POP_TOP", "POP_ITER", "END_FOR"):
+                return "break"
+            if "JUMP" in i.opname:
+                target = i.target
+                if target is None or target.offset > self.inst.offset:
+                    return "break"
+                # backward is usually the loop header; loop templates override when they know it's a break
+                return "continue"
+        return None
+
     @override
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
+        if (keyword := self.handler_jump_keyword()) is not None:
+            return self.line(keyword)
         lines = [] if self.inst.starts_line is None or not source.lines[self.inst.starts_line - 1] else self.line(source.lines[self.inst.starts_line - 1])
         if self.inst.opname == "LOAD_CONST" and iscode(self.inst.argval):
             if self.inst.argval in source.cfts and self.inst.argval.co_name not in comprehension_names:  # type: ignore
