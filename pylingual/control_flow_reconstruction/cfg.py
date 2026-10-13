@@ -149,9 +149,6 @@ class CFG(DiGraph_CFT):
         for i, pos in nx.nx_pydot.pydot_layout(relabeled, prog="dot", root=root).items():
             relabeled.nodes[i]["template"]._pos = [pos]
 
-    def node_by_offset(self, offset: int):
-        return next(x for x in self.nodes if x.offset == offset)
-
     def _create_dominator_tree(self):
         self._dt = nx.create_empty_copy(self)
         self._dt.add_edges_from(nx.immediate_dominators(self, self.start).items())

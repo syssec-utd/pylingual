@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Generator, NamedTuple
 from xdis import Code3
 
 from pylingual.editable_bytecode import PYCFile
-from pylingual.editable_bytecode.EditableBytecode import EditableBytecode
 from pylingual.utils.use_escape_sequences import use_escape_sequences
 from pylingual.utils.version import PythonVersion
 
@@ -158,13 +157,6 @@ class SourceContext:
 
     def __str__(self):
         return "\n".join("    " * x.indent + x.line for x in self.source_lines())
-
-    def update_cft(self, bc: EditableBytecode, template: ControlFlowTemplate):
-        x = bc
-        while x.parent is not None:
-            del self.cache[self.cfts[x.codeobj]]
-            x = x.parent
-        self.cfts[bc.codeobj] = template
 
     def update_lines(self, lines: list[str]):
         self.lines = sanitize_lines(lines)
