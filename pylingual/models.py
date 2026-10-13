@@ -132,6 +132,14 @@ class CacheTranslator:
             self.cache.popitem(last=False)
         return results
 
+# offline support if models are downloaded
+def _cached_first(fn, *args, **kwargs):
+    """Try the local HF cache first; fall back to downloading if it's missing."""
+    try:
+        return fn(*args, local_files_only=True, **kwargs)
+    except (OSError, ValueError):
+        logger.info(f"{getattr(fn, '__qualname__', fn)} not found in local cache for {args[:1]}, downloading...")
+        return fn(*args, local_files_only=False, **kwargs)
 
 @lru_cache(maxsize=1)
 def load_models(
@@ -150,12 +158,20 @@ def load_models(
     #################################
     # Segmentation model components #
     #################################
-    segmentation_model = transformers.AutoModelForTokenClassification.from_pretrained(
+    segmentation_model = _cached_first(
+        transformers.AutoModelForTokenClassification.from_pretrained,
         pretrained_model_name_or_path=seg_config["REPO"],
         revision=seg_config["REVISION"],
         token=token,
     )
-    segmentation_tokenizer_file = huggingface_hub.hf_hub_download(repo_id=seg_config["TOKENIZER"], filename="tokenizer.json", token=token)
+
+    segmentation_tokenizer_file = _cached_first(
+        huggingface_hub.hf_hub_download,
+        repo_id=seg_config["TOKENIZER"],
+        filename="tokenizer.json",
+        token=token,
+    )
+    
     segmentation_tokenizer = transformers.PreTrainedTokenizerFast(
         tokenizer_file=segmentation_tokenizer_file,
         unk_token="[UNK]",
@@ -182,7 +198,18 @@ def load_models(
     #########################################
     # Sequence translation model components #
     #########################################
-    translation_model = transformers.T5ForConditionalGeneration.from_pretrained(stmt_config["REPO"], revision=stmt_config["REVISION"], token=token)
-    translation_tokenizer = transformers.RobertaTokenizer.from_pretrained(stmt_config["TOKENIZER"], token=token)
+    
+    translation_model = _cached_first(
+        transformers.T5ForConditionalGeneration.from_pretrained,
+        stmt_config["REPO"],
+        revision=stmt_config["REVISION"],
+        token=token,
+    )
+   
+    translation_tokenizer = _cached_first(
+        transformers.RobertaTokenizer.from_pretrained,
+        stmt_config["TOKENIZER"],
+        token=token,
+    )
 
     return segmenter, CacheTranslator(translation_model, translation_tokenizer, python_version=version.as_str(), redis_cache_server_ip=redis_cache_server_ip, redis_port=redis_port, device=device)
