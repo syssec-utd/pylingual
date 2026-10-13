@@ -1,17 +1,18 @@
 from __future__ import annotations
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 
 from .Block import BlockTemplate, LoopElse
-from ..cft import ControlFlowTemplate, EdgeKind, InstTemplate, register_template
+from ..cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, register_template, out_edge_dict
 from ..utils import (
     T,
     N,
     is_not_type,
     no_back_edges,
     versions_below,
+    versions_until,
     versions_except,
     versions_from,
     ending_instructions,
@@ -132,11 +133,168 @@ class SelfLoop3_10(ControlFlowTemplate):
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
         header = source[self.loop_header]
         body = source[self.loop_body, 1]
-        RET_CONST = source[self.RET_CONST]
         if not any(source.lines[i.starts_line - 1].strip().startswith("while ") for i in self.loop_header.get_instructions() if i.starts_line is not None):
             return list(chain(header, self.line("while True:"), body))
         else:
             return list(chain(header, body))
+
+
+def _is_break_jump(cfg, node) -> bool:
+    """lone jump carrying a (sanitized) break line."""
+    if not isinstance(node, InstTemplate) or node.inst.opname not in ("JUMP_ABSOLUTE", "JUMP_FORWARD", "BREAK_LOOP") or node.inst.starts_line is None:
+        return False
+    return not node.inst.source_line
+
+
+@register_template(0, 1, *versions_until(3, 9))
+class WhileTrueBreak3_8(ControlFlowTemplate):
+    """`while true: ...; if c: break` with no loop header."""
+
+    template = T(
+        loop_body=~N("brk", "loop_body"),
+        brk=N("tail").with_in_deg(1).with_cond(_is_break_jump),
+        tail=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Fall: "tail"}, "loop_body", "brk")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        while True:
+            {loop_body}
+                break
+        """
+
+
+@register_template(0, -1, (3, 6), (3, 7))
+class MarkLoopElse3_6(ControlFlowTemplate):
+    """mark a loop's POP_BLOCK-led exhaustion target as its else body."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if isinstance(node, LoopElse) or cfg.in_degree(node) != 1 or not starting_instructions("POP_BLOCK")(cfg, node) or has_no_lines(cfg, node):
+            return None
+        (pred, _, prop), = cfg.in_edges(node, data=True)
+        if prop["kind"] is not EdgeKind.FalseJump or not (with_top_level_instructions("FOR_ITER")(cfg, pred) or cfg.is_loop_header(pred)):
+            return None
+        # no else if SETUP_LOOP targets the code right after POP_BLOCK
+        pop = node.get_instructions()[0]
+        after = [i for i in pop.bytecode if i.offset > pop.offset][:1]
+        if after and any(i.opname == "SETUP_LOOP" and i.target is after[0] for i in pop.bytecode):
+            return None
+        return LoopElse.try_match(cfg, node)
+
+    def to_indented_source(self, source):
+        raise NotImplementedError
+
+
+@register_template(0, -2, (3, 6), (3, 7))
+class HandlerBreak3_6(ControlFlowTemplate):
+    """break/continue in an except body: cut its edge so the handler doesn't seem to flow there."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if isinstance(node, (BreakTemplate, ContinueTemplate)) or not node.get_instructions():
+            return None
+        last = node.get_instructions()[-1]
+        if last.opname not in ("BREAK_LOOP", "CONTINUE_LOOP") or last.starts_line is None:
+            return None
+        # inside a handler, and not breaking a loop that starts within that handler
+        handlers = [h for h in cfg.nodes if h is not node and any(p["kind"] is EdgeKind.Exception for _, _, p in cfg.in_edges(h, data=True)) and cfg.dominates(h, node)]
+        if not handlers or any(cfg.dominates(h, n) and cfg.dominates(n, node) and cfg.is_loop_header(n) for h in handlers for n in cfg.nodes):
+            return None
+        exc = out_edge_dict(cfg, node)[EdgeCategory.Exception]
+        # can't raise, but sits in its test's handler region
+        if exc is None and len(preds := list(cfg.predecessors(node))) == 1:
+            exc = out_edge_dict(cfg, preds[0])[EdgeCategory.Exception]
+        template = BreakTemplate if last.opname == "BREAK_LOOP" else ContinueTemplate
+        return condense_mapping(template, cfg, {"child": node}, "child", out_edges={exc: EdgeKind.Exception.prop()} if exc is not None else {})
+
+    def to_indented_source(self, source):
+        raise NotImplementedError
+
+
+def _is_cond(node) -> bool:
+    insts = node.get_instructions()
+    return bool(insts) and insts[-1].opname in ("POP_JUMP_IF_FALSE", "POP_JUMP_IF_TRUE", "JUMP_IF_FALSE_OR_POP", "JUMP_IF_TRUE_OR_POP")
+
+
+def _unthread(cfg, node, cont=None):
+    """point a threaded back edge at the next test's continue."""
+    if not _is_cond(node) or cfg.is_loop_header(node):
+        return None
+    out = {p["kind"]: (dst, p) for _, dst, p in cfg.out_edges(node, data=True)}
+    nxt = out.get(EdgeKind.Fall, (None,))[0]
+    back = [(dst, p) for k, (dst, p) in out.items() if k in (EdgeKind.TrueJump, EdgeKind.FalseJump) and cfg.dominates(dst, node)]
+    # same line, so both tests are one condition
+    if nxt is None or len(back) != 1 or not _is_cond(nxt) or cfg.in_degree(nxt) != 1 or any(i.starts_line is not None for i in nxt.get_instructions()):
+        return None
+    header, prop = back[0]
+    exc = out_edge_dict(cfg, node)[EdgeCategory.Exception]
+    if out_edge_dict(cfg, nxt)[EdgeCategory.Exception] is not exc:
+        return None
+    for c in cfg.successors(nxt):
+        insts = c.get_instructions()
+        if c is header or (cont is not None and c is not cont) or len(insts) != 1 or insts[0].opname != "JUMP_ABSOLUTE" or insts[0].starts_line is None:
+            continue
+        if (cont is None and cfg.in_degree(c) != 1) or [d for d in cfg.successors(c) if d is not exc] != [header]:
+            continue
+        cfg.remove_edge(node, header)
+        cfg.add_edge(node, c, **prop)
+        return c
+    return None
+
+
+@register_template(0, -2, (3, 7), (3, 8), (3, 9))
+class UnthreadContinue3_7(ControlFlowTemplate):
+    """undo a short-circuit test's jump threaded past the continue to the loop header."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        cont = _unthread(cfg, node)
+        if cont is None:
+            return None
+        # earlier tests of the same condition
+        while len(preds := list(cfg.predecessors(node))) == 1 and _unthread(cfg, preds[0], cont):
+            node = preds[0]
+        cfg.iterate()
+        return cont
+
+    def to_indented_source(self, source):
+        raise NotImplementedError
+
+
+@register_template(0, 1, (3, 6), (3, 7))
+class WhileTrueOnce3_6(ControlFlowTemplate):
+    """`while true: ...; break` with no back edge."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        insts = node.get_instructions()
+        if not insts or insts[-1].opname != "SETUP_LOOP" or insts[-1].source_line:
+            return None
+        edges = {prop["kind"]: dst for _, dst, prop in cfg.out_edges(node, data=True)}
+        body, end = edges.get(EdgeKind.Fall), edges.get(EdgeKind.Jump)
+        if body is None or end is None or cfg.out_degree(node) != 2 or cfg.in_degree(body) != 1:
+            return None
+        last = body.members[-1] if isinstance(body, BlockTemplate) else body
+        if not _is_break_jump(cfg, last) or list(cfg.successors(body)) != [end]:
+            return None
+        return condense_mapping(cls, cfg, {"setup": node, "body": body}, "setup", "body", out_edges={end: EdgeKind.Fall.prop()})
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {setup}
+        while True:
+            {body}
+            break
+        """
 
 
 @register_template(0, 2)
@@ -294,15 +452,21 @@ class WhileTrueLoop3_14(ControlFlowTemplate):
 
     try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body", "else_body")
 
-    @to_indented_source
-    def to_indented_source():
-        """
-        while True:
-            {if_header}
-                {else_body}
-            {if_body?else:}
-                {if_body}
-        """
+    def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
+        # a blank-line nop here is the break; the rest is after the loop
+        exit_body, after = self.else_body, []
+        members = exit_body.members if isinstance(exit_body, BlockTemplate) else [exit_body]
+        first = members[0]
+        if isinstance(first, InstTemplate) and first.inst.opname == "NOP" and first.inst.starts_line is not None and not source.lines[first.inst.starts_line - 1]:
+            exit_body = first
+            after = source[BlockTemplate(members[1:])] if len(members) > 1 else []
+            body = self.line("break", 2)
+        else:
+            body = source[exit_body, 2]
+        lines = list(chain(self.line("while True:"), source[self.if_header, 1], body))
+        if source[self.if_body]:
+            lines += self.line("else:", 1) + source[self.if_body, 2]
+        return lines + after
 
 
 @register_template(0, 3)
@@ -324,10 +488,30 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
     to_indented_source = defer_source_to("comp")
 
 
+_HANDLER_EXIT_OPS = {"POP_TOP", "LOAD_CONST", "LOAD_SMALL_INT", "LOAD_COMMON_CONSTANT", "STORE_FAST", "STORE_NAME", "DELETE_FAST", "DELETE_NAME", "SWAP", "POP_ITER",
+                     "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", "POP_BLOCK", "POP_EXCEPT"}
+
+
+def _handler_exit(node) -> bool:
+    """break/continue out of an except: a blank-lined POP_EXCEPT (POP_BLOCK; POP_EXCEPT before 3.11), then only cleanup and the jump/exit."""
+    if not isinstance(node, (BlockTemplate, InstTemplate)):
+        return False
+    insts = node.get_instructions()
+    for k, i in enumerate(insts):
+        if i.opname in ("POP_EXCEPT", "POP_BLOCK") and i.starts_line is not None and not i.source_line:
+            rest = insts[k + 1 :]
+            if i.opname == "POP_BLOCK" and not any(j.opname == "POP_EXCEPT" for j in rest):
+                return False
+            return all(j.opname in _HANDLER_EXIT_OPS and j.starts_line is None for j in rest)
+    return False
+
+
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
+        if _handler_exit(node):
+            return condense_mapping(cls, cfg, {"child": node}, "child")
+        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "LOAD_SMALL_INT", "LOAD_COMMON_CONSTANT", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK", "POP_EXCEPT"}
 
         if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
             return None
@@ -351,12 +535,18 @@ class BreakTemplate(ControlFlowTemplate):
         return None
 
     def to_indented_source(self, source):
-        return self.child.to_indented_source(source) + self.line("break")
+        lines = self.child.to_indented_source(source)
+        # a handler's POP_EXCEPT already emits a (guessed) keyword; this template knows better
+        if lines and lines[-1].line in ("break", "continue"):
+            lines = lines[:-1]
+        return lines + self.line("break")
 
 
 class ContinueTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
+        if _handler_exit(node):
+            return condense_mapping(cls, cfg, {"child": node}, "child")
         continue_candidates = {"JUMP_ABSOLUTE", "JUMP_BACKWARD", "CONTINUE_LOOP", "POP_EXCEPT", "POP_BLOCK"}
 
         if not with_top_level_instructions(*continue_candidates)(cfg, node) or has_no_lines(cfg, node):
@@ -381,7 +571,11 @@ class ContinueTemplate(ControlFlowTemplate):
         return None
 
     def to_indented_source(self, source):
-        return self.child.to_indented_source(source) + self.line("continue")
+        lines = self.child.to_indented_source(source)
+        # a handler's POP_EXCEPT already emits a (guessed) keyword; this template knows better
+        if lines and lines[-1].line in ("break", "continue"):
+            lines = lines[:-1]
+        return lines + self.line("continue")
 
 
 @register_template(0, 0)
@@ -520,7 +714,8 @@ class FixLoop(ControlFlowTemplate):
                 break_node = BreakTemplate.try_match(cfg, pred)
                 if break_node is not None:
                     # Only remove edge if there are more than 2 incoming edges to avoid breaking other control flow structures
-                    if cfg.in_degree(succ) > 2:
+                    # (a break out of an except body is unambiguous: drop it unless that strands the target)
+                    if cfg.in_degree(succ) > 2 or (_handler_exit(break_node.child) and cfg.in_degree(succ) > 1 and succ != cfg.end):
                         cfg.remove_edge(break_node, succ)
                     elif cfg.in_degree(succ) <= 2 and succ != cfg.end:
                         # Broken: conflicting cases where removing the edge would strand blocks
