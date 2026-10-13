@@ -1,5 +1,5 @@
 from .Block import BlockTemplate
-from ..cft import ControlFlowTemplate, EdgeKind, InstTemplate, MetaTemplate, register_template
+from ..cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, MetaTemplate, register_template, out_edge_dict
 from ..utils import (
     E,
     T,
@@ -68,7 +68,14 @@ class IfElse(ControlFlowTemplate):
         tail=N.tail(),
     )
 
-    try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body", "else_body")
+    # line-less arms that don't rejoin are a loop's bottom test
+    try_match = make_try_match(
+        {EdgeKind.Fall: "tail"},
+        "if_header",
+        "if_body",
+        "else_body",
+        check=lambda cfg, m: has_some_lines(cfg, m["if_body"]) or has_some_lines(cfg, m["else_body"]) or (m.get("tail") is not None and not cfg.dominates(m["tail"], m["if_header"])),
+    )
 
     @to_indented_source
     def to_indented_source():
@@ -128,7 +135,8 @@ class IfElseJump(ControlFlowTemplate):
 class IfElseLoop(ControlFlowTemplate):
     template = T(
         if_header=~N("else_body", "if_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
-        if_body=~N("tail.").with_in_deg(1),
+        # a line-less return is the loop's bottom test
+        if_body=~N("tail.").with_in_deg(1).with_cond(has_some_lines, lambda cfg, node: out_edge_dict(cfg, node)[EdgeCategory.Natural] is not None, ending_instructions("RAISE_VARARGS")),
         else_body=~N("tail.").with_in_deg(1).with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_cond(has_no_lines),
         for_iter=N.tail().with_cond(with_instructions("FOR_ITER")),
         tail=N.tail(),
@@ -159,7 +167,13 @@ class IfThen(ControlFlowTemplate):
         tail=N.tail(),
     )
 
-    try_match = make_try_match({EdgeKind.Fall: "tail"}, "if_header", "if_body")
+    # a line-less return skipped by a back edge is the loop's exit test
+    try_match = make_try_match(
+        {EdgeKind.Fall: "tail"},
+        "if_header",
+        "if_body",
+        check=lambda cfg, m: has_some_lines(cfg, m["if_body"]) or m.get("tail") is None or not cfg.dominates(m["tail"], m["if_header"]),
+    )
 
     @to_indented_source
     def to_indented_source():
