@@ -30,6 +30,7 @@ from .cft import (
     NodeTemplate,
     OptionalEdge,
     OptionalNodeMatcher,
+    out_edge_dict,
 )
 
 if TYPE_CHECKING:
@@ -46,24 +47,100 @@ def has_in_degree(n: int):
 
     return check_in_degree
 
+def has_exception_edge(cfg, node):
+    return node is not None and out_edge_dict(cfg, node)[EdgeCategory.Exception] is not None
+
+def _handler_falls_off(insts) -> bool:
+    """some clause runs into the function's implicit return."""
+    line = ""
+    for i in insts:
+        if i.starts_line is not None:
+            line = i.source_line.strip()
+        # a blank line is a break/continue, not a fall-off
+        if i.opname in ("RETURN_VALUE", "RETURN_CONST") and line and not line.startswith("return"):
+            return True
+    return False
+
+
+def _handler_exits_explicitly(handler) -> bool:
+    insts = handler.get_instructions()
+    if _handler_falls_off(insts):
+        return False
+    # explicit return
+    if any(
+        i.starts_line is not None and i.source_line.strip().startswith("return")
+        for i in insts
+    ):
+        return True
+    # break/continue: a POP_EXCEPT carrying a sanitized (blank) line
+    if any(i.opname == "POP_EXCEPT" and i.starts_line is not None and not i.source_line for i in insts):
+        return True
+    # raises (named handlers end in their cleanup, not the raise)
+    return any(i.opname == "RAISE_VARARGS" for i in insts)
+
+
+def _norm_inst(i):
+    # 3.14 borrows in the try body but not in the handler copy
+    return (i.opname.replace("_CHECK", "").replace("_BORROW", ""), i.argval)
+
+
+# loop/branch leftovers that the handler copy lacks
+_FILLER_OPS = {"NOP", "END_FOR", "POP_ITER", "NOT_TAKEN"}
+
+
+def _tail_duplicated_in_handler(tail, handler) -> bool:
+    t = [_norm_inst(i) for i in tail.get_instructions() if i.opname not in _FILLER_OPS]
+    h = [_norm_inst(i) for i in handler.get_instructions() if i.opname not in _FILLER_OPS]
+    if not t or len(t) > len(h):
+        return False
+    return any(h[k:k + len(t)] == t for k in range(len(h) - len(t) + 1))
+
+
+def same_code(a, b) -> bool:
+    norm = lambda n: [_norm_inst(i) for i in n.get_instructions() if i.opname not in _FILLER_OPS]
+    return a is not None and b is not None and norm(a) == norm(b)
+
+
+def is_else_body(cfg: CFG, m: dict) -> bool:
+    tail, handler = m.get("tail"), m["except_body"]
+    return (
+        tail is not None
+        and cfg.in_degree(tail) == 1
+        and not cfg.has_edge(handler, tail)
+        and has_some_lines(cfg, tail)
+        and tail.offset < handler.offset
+        and not _handler_exits_explicitly(handler)
+        and not _tail_duplicated_in_handler(tail, handler)
+    )
+
+# newer const loads also match LOAD_CONST
+_CONST_LOAD_ALIASES = {"LOAD_SMALL_INT": "LOAD_CONST", "LOAD_COMMON_CONSTANT": "LOAD_CONST"}
+
+
+def _opnames(insts) -> tuple[str, ...]:
+    return tuple(_CONST_LOAD_ALIASES.get(x.opname, x.opname) for x in insts)
+
 
 def exact_instructions(*opnames: str):
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
-        return node is not None and tuple(x.opname for x in node.get_instructions()) == opnames
+        return node is not None and _opnames(node.get_instructions()) == opnames
 
     return check_instructions
 
 
+def _is_line_nop(x):
+    return isinstance(x, InstTemplate) and x.inst.opname == "NOP" and x.inst.starts_line is not None
+
 def starting_instructions(*opnames: str):
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
-        return node is not None and tuple(x.opname for x in node.get_instructions()[: len(opnames)]) == opnames
+        return node is not None and _opnames(node.get_instructions()[: len(opnames)]) == opnames
 
     return check_instructions
 
 
 def ending_instructions(*opnames: str):
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
-        return node is not None and tuple(x.opname for x in node.get_instructions()[-len(opnames) :]) == opnames
+        return node is not None and _opnames(node.get_instructions()[-len(opnames) :]) == opnames
 
     return check_instructions
 
@@ -77,8 +154,10 @@ def without_instructions(*opnames: str):
 
 def with_instructions(*opnames: str):
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
-        ops = {x.opname for x in node.get_instructions()}
-        return node is not None and all(opname in ops for opname in opnames)
+        if node is None:
+            return False
+        ops = set(_opnames(node.get_instructions()))
+        return all(opname in ops for opname in opnames)
 
     return check_instructions
 
@@ -86,11 +165,15 @@ def with_instructions(*opnames: str):
 def without_top_level_instructions(*opnames: str):
     from .templates.Block import BlockTemplate
 
+    # <=3.8 tests exceptions with COMPARE_OP
+    def opname(inst):
+        return "CHECK_EXC_MATCH" if inst.opname == "COMPARE_OP" and inst.argval in ("exception match", "exception-match") else inst.opname
+
     def check_instructions(cfg: CFG, node: ControlFlowTemplate | None) -> bool:
         if isinstance(node, BlockTemplate):
-            return all(x.inst.opname not in opnames for x in node.members if isinstance(x, InstTemplate))
+            return all(opname(x.inst) not in opnames for x in node.members if isinstance(x, InstTemplate))
         if isinstance(node, InstTemplate):
-            return node.inst.opname not in opnames
+            return opname(node.inst) not in opnames
         return True
 
     return check_instructions
@@ -453,6 +536,10 @@ def condense_mapping(
         out_edges[cfg.end] = EdgeKind.Meta.prop()
     if out_filter:
         out_edges = {k: v for k, v in out_edges.items() if EdgeCategory.from_kind(v["kind"]) not in out_filter}
+    # edges into the entry become self-loops; edges to other members are dropped
+    members = [n for n in in_template.values() if n is not None]
+    entries = {n for n in members if any(src not in members for src in cfg.predecessors(n))}
+    out_edges = {(template if dst in members else dst): prop for dst, prop in out_edges.items() if dst not in members or dst in entries}
     remove_nodes(cfg, mapping, *in_template)
     cfg.add_node(template)
     cfg.add_edges_from((src, template, prop) for src, prop in in_edges.items())
@@ -460,18 +547,14 @@ def condense_mapping(
     cfg.iterate()
     return template
 
-
-def make_try_match(out_edges: dict[EdgeKind, str], *nodes: str):
-    """
-    Make a `try_match` method for a `ControlFlowTemplate`.
-    Matches `cls.template`, condenses all nodes in `nodes`, and creates a new node.
-    """
-
+def make_try_match(out_edges: dict[EdgeKind, str], *nodes: str, check=None):
     @classmethod
     @override
     def try_match(cls: type[ControlFlowTemplate], cfg: CFG, node: ControlFlowTemplate) -> ControlFlowTemplate | None:
         mapping = cls.template.try_match(cfg, node)
         if mapping is None:
+            return None
+        if check is not None and not check(cfg, mapping):
             return None
         edges: dict[ControlFlowTemplate, dict] = {mapping[name]: kind.prop() for kind, name in out_edges.items() if mapping.get(name) is not None}  # type: ignore
         if mapping.get(_AUTO_EXC) is not None and all(e["kind"] != EdgeKind.Exception for e in edges.values()):
@@ -479,7 +562,6 @@ def make_try_match(out_edges: dict[EdgeKind, str], *nodes: str):
         return condense_mapping(cls, cfg, mapping, *nodes, out_edges=edges)
 
     return try_match
-
 
 def revert_on_fail(f: Callable[[type[ControlFlowTemplate], CFG, ControlFlowTemplate], ControlFlowTemplate | None] | classmethod):
     """
