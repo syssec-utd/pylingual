@@ -191,6 +191,44 @@ class MergeTryIfReturn3_11(ControlFlowTemplate):
         return None
 
 
+def _in_one_clause(cfg, nodes) -> bool:
+    doms = [d for d in cfg.nodes if all(cfg.dominates(d, n) for n in nodes)]
+    split = next((d for d in doms if all(cfg.dominates(o, d) for o in doms)), None)
+    if split is None or any(i.opname in ("CHECK_EXC_MATCH", "JUMP_IF_NOT_EXC_MATCH") for i in split.get_instructions()):
+        return False
+    return any(EdgeCategory.from_kind(p["kind"]) is EdgeCategory.Exception for d in doms for _, _, p in cfg.in_edges(d, data=True))
+
+
+@register_template(0, -20, *versions_from(3, 10))
+class MergeHandlerReturn3_10(ControlFlowTemplate):
+    """a try at function end returns after its body and again after its handler; keep one."""
+
+    @override
+    @classmethod
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        key = _inst_key(node)
+        if not key or key[-1][0] not in ("RETURN_VALUE", "RETURN_CONST") or not has_no_lines(cfg, node) or not _exits(cfg, node):
+            return None
+        handlers = {h for t in cfg.nodes if (h := out_edge_dict(cfg, t)[EdgeCategory.Exception]) is not None}
+        # handlers the body's copy is not in
+        handlers = {h for h in handlers if not all(cfg.dominates(h, p) for p in cfg.predecessors(node))}
+        for other in list(cfg.nodes):
+            if other is node or _inst_key(other) != key or not has_no_lines(cfg, other) or not _exits(cfg, other):
+                continue
+            in_edges = list(cfg.in_edges(other, data=True))
+            # every copy after a handler
+            if not in_edges or not all(any(cfg.dominates(h, pred) for h in handlers) for pred, _, _ in in_edges):
+                continue
+            # handler footer copies must come from one except clause
+            if ("POP_EXCEPT", None) in key and not _in_one_clause(cfg, [*cfg.predecessors(node), *(pred for pred, _, _ in in_edges)]):
+                continue
+            cfg.remove_node(other)
+            cfg.add_edges_from((pred, node, prop) for pred, _, prop in in_edges)
+            cfg.iterate()
+            return node
+        return None
+
+
 _NON_RAISING_EXIT = {"POP_TOP", "LOAD_CONST", "RETURN_VALUE", "JUMP_ABSOLUTE", "JUMP_FORWARD"}
 # a break/continue (blank line) out of a named handler also runs its cleanup
 _HANDLER_CLEANUP = {"POP_EXCEPT", "STORE_FAST", "STORE_NAME", "DELETE_FAST", "DELETE_NAME"}
@@ -234,6 +272,31 @@ class MergePopBlock(ControlFlowTemplate):
         cfg.add_edges_from((template, dst, prop) for _, dst, prop in out_edges)
         cfg.iterate()
         return template
+
+
+def _bare_pop_block(cfg, node) -> bool:
+    return isinstance(node, InstTemplate) and node.inst.opname == "POP_BLOCK" and node.inst.starts_line is None
+
+
+@register_template(0, -15, (3, 10))
+class MergePopBlockCopies3_10(ControlFlowTemplate):
+    """each exit of a nested try pops the enclosing block; keep one copy."""
+
+    @override
+    @classmethod
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        if not _bare_pop_block(cfg, node):
+            return None
+        out = out_edge_dict(cfg, node)
+        for other in list(cfg.nodes):
+            if other is node or not _bare_pop_block(cfg, other) or cfg.in_degree(other) != 1 or out_edge_dict(cfg, other) != out or cfg.out_degree(other) != cfg.out_degree(node):
+                continue
+            (pred, _, prop), = cfg.in_edges(other, data=True)
+            cfg.remove_node(other)
+            cfg.add_edge(pred, node, **prop)
+            cfg.iterate()
+            return node
+        return None
 
 
 def _bare_jump(cfg, node) -> bool:

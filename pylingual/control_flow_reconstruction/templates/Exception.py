@@ -3,7 +3,7 @@ from typing import override
 
 from .Block import BlockTemplate
 from .Conditional import IfElse, IfThen
-from ..cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, SourceLine, SourceContext, register_template, out_edge_dict
+from ..cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, MetaTemplate, SourceLine, SourceContext, register_template, out_edge_dict
 from ..source import indent_lines
 from ..utils import (
     E,
@@ -39,7 +39,7 @@ reraise = +N().with_cond(exact_instructions("COPY", "POP_EXCEPT", "RERAISE"))
 def try_header_source(template, source):
     header = template.members["try_header"]
     if header is None:
-        if isinstance(template, TryNested3_11):
+        if isinstance(template, (TryNested3_11, TryNestedTail3_11)):
             return try_header_source(template.try_body, source)
         return []
     lines = source[header]
@@ -90,15 +90,16 @@ _FOOTER_JUMPS = ("JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_BACKWARD_NO_INTERRUPT", 
 
 
 def _footer_key(cfg, node):
-    """key of a line-less `POP_EXCEPT; [cleanup;] JUMP` handler footer."""
+    """key of a line-less `POP_EXCEPT; [cleanup;] [JUMP]` handler footer."""
     insts = node.get_instructions()
-    ops = list(_opnames(insts))
-    if ops[:1] != ["POP_EXCEPT"] or ops[-1:][0] not in _FOOTER_JUMPS or ops[1:-1] not in ([], ["LOAD_CONST", "STORE_FAST", "DELETE_FAST"], ["LOAD_CONST", "STORE_NAME", "DELETE_NAME"]):
+    if insts and insts[-1].opname in _FOOTER_JUMPS:
+        insts = insts[:-1]
+    if list(_opnames(insts[:1])) != ["POP_EXCEPT"] or list(_opnames(insts[1:])) not in ([], ["LOAD_CONST", "STORE_FAST", "DELETE_FAST"], ["LOAD_CONST", "STORE_NAME", "DELETE_NAME"]):
         return None
     if not has_no_lines(cfg, node) or cfg.in_degree(node) != 1:
         return None
     out = out_edge_dict(cfg, node)
-    return (tuple((i.opname, i.argval) for i in insts[:-1]), ops[-1], out[EdgeCategory.Natural], out[EdgeCategory.Exception])
+    return (tuple((i.opname, i.argval) for i in insts), out[EdgeCategory.Natural], out[EdgeCategory.Exception])
 
 
 @register_template(0, -10, *versions_from(3, 11))
@@ -109,7 +110,7 @@ class MergeExceptFooters3_11(ControlFlowTemplate):
     @override
     def try_match(cls, cfg, node):
         key = _footer_key(cfg, node)
-        if key is None or key[2] is None:
+        if key is None or key[1] is None:
             return None
         # the copy comes from the cleanup of the try body's handler
         (body, _, _), = cfg.in_edges(node, data=True)
@@ -132,19 +133,6 @@ class MergeExceptFooters3_11(ControlFlowTemplate):
         return None
 
 
-def _arm_footer_key(cfg, node):
-    """like _footer_key, but the trailing jump is optional."""
-    insts = node.get_instructions()
-    if insts and insts[-1].opname in _FOOTER_JUMPS:
-        insts = insts[:-1]
-    if list(_opnames(insts[:1])) != ["POP_EXCEPT"] or list(_opnames(insts[1:])) not in ([], ["LOAD_CONST", "STORE_FAST", "DELETE_FAST"], ["LOAD_CONST", "STORE_NAME", "DELETE_NAME"]):
-        return None
-    if not has_no_lines(cfg, node) or cfg.in_degree(node) != 1:
-        return None
-    out = out_edge_dict(cfg, node)
-    return (tuple((i.opname, i.argval) for i in insts), out[EdgeCategory.Natural], out[EdgeCategory.Exception])
-
-
 @register_template(0, -10, *versions_from(3, 11))
 class MergeArmFooters3_11(ControlFlowTemplate):
     """merge the footer copied onto each arm of an if in one except clause."""
@@ -152,12 +140,12 @@ class MergeArmFooters3_11(ControlFlowTemplate):
     @classmethod
     @override
     def try_match(cls, cfg, node):
-        key = _arm_footer_key(cfg, node)
+        key = _footer_key(cfg, node)
         if key is None or key[1] is None:
             return None
         (pred, _, _), = cfg.in_edges(node, data=True)
         for other in list(cfg.nodes):
-            if other is node or _arm_footer_key(cfg, other) != key:
+            if other is node or _footer_key(cfg, other) != key:
                 continue
             (other_pred, _, prop), = cfg.in_edges(other, data=True)
             if other_pred is pred:
@@ -366,15 +354,17 @@ class TryElse3_12(ControlFlowTemplate):
 
 @register_template(0, -1, *versions_from(3, 12))
 class TryDupReturn3_12(TryElse3_12):
-    """the try body's copy of the return the handlers jump to; not an else."""
+    """the try body's copy of the return the handlers jump to, or a bare jump; not an else."""
 
     try_match = revert_on_fail(
         make_try_match(
             {EdgeKind.Fall: "tail"},
             "try_header", "try_body", "except_body", "try_else", "reraise",
             check=lambda cfg, m: m.get("try_else") is not None
-            and m["try_else"].get_instructions()[-1].opname in ("RETURN_VALUE", "RETURN_CONST")
-            and same_code(m["try_else"], m.get("tail")),
+            and (
+                m["try_else"].get_instructions()[-1].opname in ("RETURN_VALUE", "RETURN_CONST") and same_code(m["try_else"], m.get("tail"))
+                or has_no_lines(cfg, m["try_else"]) and list(_opnames(m["try_else"].get_instructions())) in (["JUMP_FORWARD"], ["JUMP_BACKWARD"])
+            ),
         )
     )
 
@@ -453,7 +443,8 @@ class TryFallthrough3_11(Try3_12):
         make_try_match(
             {EdgeKind.Fall: "tail"},
             "try_header", "try_body", "except_body", "reraise",
-            check=lambda cfg, m: m.get("tail") is not None and _first_line_offset(m["tail"]) > m["except_body"].offset,
+            # or the function's shared implicit return
+            check=lambda cfg, m: m.get("tail") is not None and (_first_line_offset(m["tail"]) > m["except_body"].offset or has_no_lines(cfg, m["tail"]) and cfg.out_degree(m["tail"]) == 1 and isinstance(next(iter(cfg.successors(m["tail"]))), MetaTemplate)),
         )
     )
 
@@ -505,6 +496,37 @@ class TryNested3_11(Try3_11):
         header = try_header_source(self.try_body, source)
         body = source[self.try_body]
         return list(chain(header, self.line("try:"), indent_lines(body[len(header):]), source[self.except_body]))
+
+
+@register_template(0, 1, *versions_from(3, 11))
+class TryNestedTail3_11(Try3_12):
+    """a try whose body is a try; the inner one took the shared header."""
+
+    template = T(
+        try_body=N("tail.", None, "except_body").of_type(Try3_12, TryElse3_12, Try3_11, TryElse3_11),
+        except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
+        reraise=reraise,
+        tail=N.tail(),
+    )
+
+    try_match = revert_on_fail(make_try_match({EdgeKind.Fall: "tail"}, "try_header", "try_body", "except_body", "reraise"))
+
+    to_indented_source = TryNested3_11.to_indented_source
+
+
+@register_template(0, 1, *versions_from(3, 11))
+class TryNestedJump3_11(TryNestedTail3_11):
+    """nested try whose exit jumps over the enclosing handler's cleanup."""
+
+    template = T(
+        try_body=N("jump.", None, "except_body").of_type(Try3_12, TryElse3_12, Try3_11, TryElse3_11),
+        jump=~N("tail.").with_in_deg(1).with_cond(exact_instructions("JUMP_FORWARD"), exact_instructions("JUMP_BACKWARD")).with_cond(has_no_lines),
+        except_body=N("tail.", None, "reraise").with_in_deg(1).of_subtemplate(Except3_11),
+        reraise=reraise,
+        tail=N.tail(),
+    )
+
+    try_match = revert_on_fail(make_try_match({EdgeKind.Fall: "tail"}, "try_header", "jump", "try_body", "except_body", "reraise"))
 
 
 class BareExcept3_11(Except3_11):
