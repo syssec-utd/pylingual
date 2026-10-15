@@ -8,9 +8,10 @@ from pylingual.utils.version import PythonVersion
 _RUNTIME_PYTHON_VERSION = PythonVersion(sys.version_info)
 
 if _RUNTIME_PYTHON_VERSION >= (3, 14):
-    from _ast_unparse import Unparser
+    from _ast_unparse import Unparser, _Precedence
 else:
     Unparser = ast._Unparser
+    _Precedence = ast._Precedence
 
 
 class customUnparser(Unparser):
@@ -40,7 +41,7 @@ class customUnparser(Unparser):
                 unparser = type(self)(self.masker, _avoid_backslashes=True)
             else:
                 unparser = type(self)(self.masker)
-            unparser.set_precedence(ast._Precedence.TEST.next(), inner)
+            unparser.set_precedence(_Precedence.TEST.next(), inner)
             return unparser.visit(inner)
 
         with self.delimit("{", "}"):
@@ -55,7 +56,10 @@ class customUnparser(Unparser):
                 self.write(f"!{chr(node.conversion)}")
             if node.format_spec:
                 self.write(":")
-                self._write_fstring_inner(node.format_spec)
+                if _RUNTIME_PYTHON_VERSION >= (3, 14):
+                    self._write_ftstring_inner(node.format_spec, is_format_spec=True)
+                else:
+                    self._write_fstring_inner(node.format_spec)
 
 
 def custom_unparse(ast_obj, masker: Masker):
