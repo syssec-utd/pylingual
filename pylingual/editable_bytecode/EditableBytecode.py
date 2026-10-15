@@ -304,6 +304,7 @@ class EditableBytecode:
 
                         if annotate_func:
                             annotate_codeobj = self.instructions[i].argval
+                            annotate_idx = i
                             to_remove.extend(self.instructions[i : i + 3])
 
                     # stopping conditions either SET_FUNCTION_ATTRIBUTE 0x10 or STORE_NAME __annotate_func__
@@ -313,6 +314,9 @@ class EditableBytecode:
                     if self.instructions[i].opname.startswith("STORE_") and self.instructions[i].argval == "__annotate_func__":
                         to_remove.extend(self.instructions[i : i + 1])
                         is_class = True
+                        # also drop the closure tuple (LOAD __classdict__; BUILD_TUPLE 1) built for the class __annotate__
+                        if annotate_func and annotate_idx == idx + 2 and self.instructions[idx + 1].opname == "BUILD_TUPLE":
+                            to_remove.extend(self.instructions[idx:annotate_idx])
                         break
 
                 # check if its the end of a class
@@ -354,6 +358,11 @@ class EditableBytecode:
                         extra_removes.update(to_remove)
                     
                     conditional_annotation_map |= class_conditional_annotation_map
+
+                    # the class __annotate__ is fully inlined, so drop it from co_consts to keep it from being decompiled on its own
+                    load_annotate = next(ins for ins in to_remove if ins.opname == "LOAD_CONST" and ins.argval is annotate_codeobj)
+                    if self.co_consts[load_annotate.arg] is annotate_codeobj:
+                        self.co_consts[load_annotate.arg] = None
                 else:
                     sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
                     if sanity_check:
