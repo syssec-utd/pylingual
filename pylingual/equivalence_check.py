@@ -7,7 +7,7 @@ from pathlib import Path
 import networkx as nx
 from pylingual.control_flow_reconstruction.cfg import CFG
 from pylingual.editable_bytecode import EditableBytecode, Inst, PYCFile
-from pylingual.editable_bytecode.bytecode_patches import fix_indirect_jump, fix_unreachable, remove_extended_arg, remove_nop, replace_firstlno, replace_borrow, split_loads
+from pylingual.editable_bytecode.bytecode_patches import fix_indirect_jump, fix_unreachable, remove_extended_arg, remove_nop, replace_firstlno, replace_borrow, split_loads, remove_comprehension_get_iter
 from pylingual.editable_bytecode.control_flow_graph import bytecode_to_control_flow_graph
 
 
@@ -177,7 +177,7 @@ def matching_iter(pyc_a, pyc_b):
         i_b += 1
 
 
-PATCHES = [remove_extended_arg, remove_nop, fix_indirect_jump, fix_unreachable, remove_extended_arg, replace_firstlno, replace_borrow, split_loads]
+PATCHES = [remove_extended_arg, remove_nop, remove_comprehension_get_iter, fix_indirect_jump, fix_unreachable, remove_extended_arg, replace_firstlno, replace_borrow, split_loads]
 
 
 class PatchedPYC:
