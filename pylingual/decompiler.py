@@ -277,7 +277,8 @@ class Decompiler:
             # force each code object to start with a 'B'
 
             for codeobj in self.segmentation_results:
-                codeobj[0]["entity"] = "B"
+                if codeobj:  # hoisted comprehensions have no instructions of their own
+                    codeobj[0]["entity"] = "B"
 
             self.update_starts_line()
         except Exception as e:
