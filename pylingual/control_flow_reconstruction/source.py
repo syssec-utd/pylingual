@@ -4,6 +4,7 @@ import itertools
 import keyword
 import inspect
 import ast
+import re
 
 from typing import TYPE_CHECKING, Generator, NamedTuple
 from xdis import Code3
@@ -32,8 +33,12 @@ class SourceLine(NamedTuple):
         return SourceLine(line, self.indent, self.blame, self.child, self.meta)
 
 
+# class bookkeeping the compiler generates; the model sometimes translates it into an assignment
+compiler_generated_assignment = re.compile(r"(__static_attributes__|__firstlineno__|__classdictcell__|__classcell__)\s*=[^=]")
+
+
 def sanitize_lines(lines: list[str]) -> list[str]:
-    return ["" if x in ("break", "continue", "except:", "while True:", "try:") else x for x in (x[2:] if x.startswith("elif ") else x for x in (x.strip() for x in lines))]
+    return ["" if x in ("break", "continue", "except:", "while True:", "try:") or compiler_generated_assignment.match(x) else x for x in (x[2:] if x.startswith("elif ") else x for x in (x.strip() for x in lines))]
 
 
 def fake_header(co: Code3):
@@ -111,7 +116,7 @@ class SourceContext:
             elif not purged:
                 # filter out returns in top level codeobjs and classes
                 if not co.co_flags & (inspect.CO_NEWLOCALS | inspect.CO_GENERATOR | inspect.CO_ASYNC_GENERATOR):
-                    if line.line == "return":
+                    if line.line in ("return", "return None"):
                         yield line.with_line("pass")
                     elif line.line.startswith("return "):
                         yield SourceLine("# " + line.line, line.indent, line.blame, meta=True)
