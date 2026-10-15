@@ -65,3 +65,43 @@ def test_ellipsis_subscript_tuple_masks_restore_as_subscript_syntax(value, expec
     masker.global_tab[value] = "<mask_0>"
     source = "value = array[<mask_0>]"
     assert restore_masked_source_text([source], masker) == [f"value = array[{expected}]"]
+
+
+def test_string_masks_between_format_placeholders_are_escaped():
+    # 3.14 folds `'...%s...' % args` into BUILD_STRING, so a single literal holds several masks
+    # and the middle ones touch neither quote
+    masker = Masker()
+    masker.global_tab["Invalid '"] = "<mask_0>"
+    masker.global_tab["', must be in "] = "<mask_1>"
+
+    source = "error += '<mask_0>%s<mask_1>%s' % (sort, sorts)"
+
+    assert restore_masked_source_text([source], masker) == ["error += 'Invalid \\'%s\\', must be in %s' % (sort, sorts)"]
+
+
+def test_bytes_mask_next_to_brace_is_not_escaped():
+    masker = Masker()
+    masker.global_tab[b"\x00"] = "<mask_0>"
+
+    assert restore_masked_source_text(["value = {<mask_0>: 1}"], masker) == ["value = {b'\\x00': 1}"]
+
+
+def test_string_mask_in_fstring_replacement_field():
+    masker = Masker()
+    masker.global_tab["it's"] = "<mask_0>"
+    masker.global_tab["name"] = "<mask_1>"
+
+    source = "value = f'{<mask_1>}<mask_0>{<mask_1>[\"<mask_0>\"]}'"
+
+    assert restore_masked_source_text([source], masker) == ["value = f'{name}it\\'s{name[\"it\\'s\"]}'"]
+
+
+def test_string_mask_in_fstring_literal_doubles_braces():
+    masker = Masker()
+    masker.global_tab["{"] = "<mask_0>"
+    masker.global_tab["}"] = "<mask_1>"
+    masker.global_tab["var"] = "<mask_2>"
+
+    source = "value = f'<mask_0>{<mask_2>}<mask_1>' + '<mask_0>'"
+
+    assert restore_masked_source_text([source], masker) == ["value = f'{{{var}}}' + '{'"]
