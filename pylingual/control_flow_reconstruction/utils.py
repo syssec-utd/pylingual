@@ -50,10 +50,17 @@ def has_in_degree(n: int):
 def has_exception_edge(cfg, node):
     return node is not None and out_edge_dict(cfg, node)[EdgeCategory.Exception] is not None
 
+def not_try_header(cfg, node) -> bool:
+    """not a lone `try:` nop leading into its protected body."""
+    if node is None or not node.get_instructions() or any(i.opname != "NOP" for i in node.get_instructions()) or has_exception_edge(cfg, node):
+        return True
+    return not has_exception_edge(cfg, out_edge_dict(cfg, node)[EdgeCategory.Natural])
+
+
 def _handler_falls_off(insts) -> bool:
     """some clause runs into the function's implicit return."""
     line = ""
-    for i in insts:
+    for i in sorted(insts, key=lambda i: i.offset):
         if i.starts_line is not None:
             line = i.source_line.strip()
         # a blank line is a break/continue, not a fall-off

@@ -18,6 +18,7 @@ from ..utils import (
     without_instructions,
     without_top_level_instructions,
     ending_instructions,
+    not_try_header,
 )
 from .Loop import BreakTemplate, ContinueTemplate
 
@@ -55,13 +56,34 @@ class EarlyRet(ControlFlowTemplate):
         """
 
 
+def _handler_return(cfg, node) -> bool:
+    """a return out of an except clause; it already left the handler's region."""
+    return node is not None and cfg.out_degree(node) == 1 and starting_instructions("POP_EXCEPT")(cfg, node) and (ending_instructions("RETURN_VALUE")(cfg, node) or ending_instructions("RETURN_CONST")(cfg, node))
+
+
+def _tail_in_if_body(cfg, m) -> bool:
+    """the else exits and the tail is laid out before it or after the if body's cold code, so it continues the if body."""
+    tail, body, other = m.get("tail"), m["if_body"], m["else_body"]
+    if tail is None or other is None or cfg.in_degree(tail) != 1 or not has_some_lines(cfg, tail) or out_edge_dict(cfg, other)[EdgeCategory.Natural] is not None:
+        return False
+    # a real else branch, not a duplicated finally
+    if body.offset > other.offset or not has_some_lines(cfg, other):
+        return False
+    if tail.offset < other.offset:
+        return True
+    after = max(i.offset for i in other.get_instructions())
+    cold = [i.offset for i in body.get_instructions() if i.offset > after]
+    return bool(cold) and min(cold) < tail.offset
+
+
 @register_template(1, 40)
 class IfElse(ControlFlowTemplate):
     template = T(
         if_header=~N("if_body", "else_body").with_cond(without_top_level_instructions("WITH_EXCEPT_START", "CHECK_EXC_MATCH", "FOR_ITER")),
-        if_body=~N.tail().of_subtemplate(EarlyRet) | ~N.tail().of_subtemplate(EarlyRetDuplicateBlocks) | ~N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | ~N("tail.").with_in_deg(1),
+        if_body=~N.tail().of_subtemplate(EarlyRet) | ~N.tail().of_subtemplate(EarlyRetDuplicateBlocks) | ~N(None).with_in_deg(1).of_type(BreakTemplate, ContinueTemplate) | N.tail().with_in_deg(1).with_cond(_handler_return).with_cond(has_some_lines) | ~N("tail.").with_in_deg(1).with_cond(not_try_header),
         else_body=~N.tail().of_subtemplate(EarlyRet)
         | ~N.tail().of_subtemplate(EarlyRetDuplicateBlocks) 
+        | N.tail().with_in_deg(1).with_cond(_handler_return).with_cond(has_some_lines)
         | ~N("tail.").with_in_deg(1).of_type(BreakTemplate, ContinueTemplate)
         | ~N("tail.").with_cond(without_top_level_instructions("RERAISE", "END_FINALLY")).with_in_deg(1)
         | ~N("tail").with_cond(has_some_lines).with_in_deg(1),
@@ -74,7 +96,8 @@ class IfElse(ControlFlowTemplate):
         "if_header",
         "if_body",
         "else_body",
-        check=lambda cfg, m: has_some_lines(cfg, m["if_body"]) or has_some_lines(cfg, m["else_body"]) or (m.get("tail") is not None and not cfg.dominates(m["tail"], m["if_header"])),
+        check=lambda cfg, m: (has_some_lines(cfg, m["if_body"]) or has_some_lines(cfg, m["else_body"]) or (m.get("tail") is not None and not cfg.dominates(m["tail"], m["if_header"])))
+        and not _tail_in_if_body(cfg, m),
     )
 
     @to_indented_source

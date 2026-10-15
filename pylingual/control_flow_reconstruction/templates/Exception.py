@@ -155,11 +155,89 @@ class MergeArmFooters3_11(ControlFlowTemplate):
             split = next((d for d in doms if all(cfg.dominates(o, d) for o in doms)), None)
             if split is None or split in (pred, other_pred) or with_instructions("CHECK_EXC_MATCH")(cfg, split) or not has_some_lines(cfg, split):
                 continue
+            # inside a handler
+            if not any(has_incoming_edge_of_categories("exception")(cfg, d) for d in doms):
+                continue
             cfg.remove_node(other)
             cfg.add_edge(other_pred, node, **prop)
             cfg.iterate()
             return node
         return None
+
+
+def _footer_return(cfg, node):
+    """key of a `POP_EXCEPT; [cleanup;] return` footer ending its function."""
+    if not isinstance(node, BlockTemplate) or list(_opnames(node.get_instructions()[:1])) != ["POP_EXCEPT"]:
+        return None
+    if node.get_instructions()[-1].opname not in ("RETURN_VALUE", "RETURN_CONST") or cfg.in_degree(node) != 1 or cfg.out_degree(node) != 1:
+        return None
+    return [(i.opname, i.argval) for i in node.get_instructions()], len(node.members)
+
+
+def _lined_return_at(node):
+    """index of the return's first member when only it has a line."""
+    lined = [k for k, x in enumerate(node.members) if any(i.starts_line is not None for i in x.get_instructions())]
+    return lined[0] if len(lined) == 1 and lined[0] > 0 else None
+
+
+@register_template(0, -10, *versions_from(3, 12))
+class SplitFooterReturn3_12(ControlFlowTemplate):
+    """a return after an if is copied into each arm's except footer; split it off and share it."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node):
+        key = _footer_return(cfg, node)
+        if key is None:
+            return None
+        for other in list(cfg.nodes):
+            if other is node or _footer_return(cfg, other) != key or set(cfg.successors(other)) != set(cfg.successors(node)):
+                continue
+            # one copy keeps the line, the other is the compiler's duplicate
+            lined, copy = (node, other) if has_no_lines(cfg, other) else (other, node)
+            k = _lined_return_at(lined)
+            if k is None or not has_no_lines(cfg, copy):
+                continue
+            (_, end, end_prop), = cfg.out_edges(lined, data=True)
+            ret = BlockTemplate(lined.members[k:])
+            cfg.add_node(ret)
+            cfg.add_edge(ret, end, **end_prop)
+            for n in (lined, copy):
+                (pred, _, prop), = cfg.in_edges(n, data=True)
+                head = BlockTemplate(n.members[:k])
+                cfg.remove_node(n)
+                cfg.add_edge(pred, head, **prop)
+                cfg.add_edge(head, ret, **EdgeKind.Fall.prop())
+            cfg.iterate()
+            return ret
+        return None
+
+
+@register_template(0, -10, *versions_from(3, 11))
+class ExceptReturn3_11(ControlFlowTemplate):
+    """join a return in an except clause with the `POP_EXCEPT; RETURN_VALUE` that leaves the handler."""
+
+    @classmethod
+    @override
+    def try_match(cls, cfg, node):
+        if not node.get_instructions() or node.get_instructions()[-1].opname != "SWAP":
+            return None
+        out = out_edge_dict(cfg, node)
+        ret, exc = out[EdgeCategory.Natural], out[EdgeCategory.Exception]
+        if exc is None or ret is None or cfg.out_degree(node) != 2 or cfg.in_degree(ret) != 1:
+            return None
+        if not exact_instructions("POP_EXCEPT", "RETURN_VALUE")(cfg, ret) or not has_no_lines(cfg, ret) or cfg.out_degree(ret) != 1:
+            return None
+        members = [m for x in (node, ret) for m in (x.members if isinstance(x, BlockTemplate) else [x])]
+        template = BlockTemplate(members)
+        in_edges = list(cfg.in_edges(node, data=True))
+        out_edges = [*((template, d, p) for _, d, p in cfg.out_edges(ret, data=True)), (template, exc, EdgeKind.Exception.prop())]
+        cfg.remove_nodes_from([node, ret])
+        cfg.add_node(template)
+        cfg.add_edges_from((src, template, p) for src, _, p in in_edges)
+        cfg.add_edges_from(out_edges)
+        cfg.iterate()
+        return template
 
 
 class Except3_11(ControlFlowTemplate):
@@ -316,6 +394,12 @@ class ReturnInTry3_12(ControlFlowTemplate):
         {ret}
         """
 
+def _splits_loop(cfg, m) -> bool:
+    """the else would take a loop's iterator setup but not the loop."""
+    body = m.get("try_else", m.get("else_body"))
+    return ending_instructions("SETUP_LOOP")(cfg, body) or ending_instructions("GET_ITER")(cfg, body) and starting_instructions("FOR_ITER")(cfg, m.get("tail"))
+
+
 @register_template(0, 0, *versions_from(3, 12))
 class TryElse3_12(ControlFlowTemplate):
     template = T(
@@ -327,6 +411,7 @@ class TryElse3_12(ControlFlowTemplate):
         tail=N.tail(),
     )
 
+    # an else body's handlers come before the try's; code after the try comes after them
     try_match = revert_on_fail(
         make_try_match(
             {
@@ -337,6 +422,8 @@ class TryElse3_12(ControlFlowTemplate):
             "except_body",
             "try_else",
             "reraise",
+            check=lambda cfg, m: all(i.offset < m["except_body"].offset for i in m["try_else"].get_instructions())
+            and not _splits_loop(cfg, m),
         )
     )
 
@@ -354,7 +441,7 @@ class TryElse3_12(ControlFlowTemplate):
 
 @register_template(0, -1, *versions_from(3, 12))
 class TryDupReturn3_12(TryElse3_12):
-    """the try body's copy of the return the handlers jump to, or a bare jump; not an else."""
+    """the try body's copy of the return the handlers jump to, a bare jump, or the body's own return; not an else."""
 
     try_match = revert_on_fail(
         make_try_match(
@@ -363,7 +450,7 @@ class TryDupReturn3_12(TryElse3_12):
             check=lambda cfg, m: m.get("try_else") is not None
             and (
                 m["try_else"].get_instructions()[-1].opname in ("RETURN_VALUE", "RETURN_CONST") and same_code(m["try_else"], m.get("tail"))
-                or has_no_lines(cfg, m["try_else"]) and list(_opnames(m["try_else"].get_instructions())) in (["JUMP_FORWARD"], ["JUMP_BACKWARD"])
+                or has_no_lines(cfg, m["try_else"]) and list(_opnames(m["try_else"].get_instructions())) in (["JUMP_FORWARD"], ["JUMP_BACKWARD"], ["RETURN_VALUE"])
             ),
         )
     )
@@ -471,7 +558,7 @@ class TryElse3_11(ControlFlowTemplate):
             "try_else",
             "reraise",
             # an else body is laid out before the handler; code after the try comes after it
-            check=lambda cfg, m: _first_line_offset(m["try_else"]) < m["except_body"].offset,
+            check=lambda cfg, m: _first_line_offset(m["try_else"]) < m["except_body"].offset and not _splits_loop(cfg, m),
         )
     )
 
@@ -1045,6 +1132,7 @@ class TryElse3_9(ControlFlowTemplate):
             "try_footer",
             "except_body",
             "else_body",
+            check=lambda cfg, m: not _splits_loop(cfg, m),
         )
     )
 
@@ -1358,6 +1446,7 @@ class TryElse3_6(ControlFlowTemplate):
             "try_footer",
             "except_body",
             "else_body",
+            check=lambda cfg, m: not _splits_loop(cfg, m),
         )
     )
 

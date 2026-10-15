@@ -7,7 +7,7 @@ from pylingual.editable_bytecode import Inst
 import networkx as nx
 
 from ..cft import ControlFlowTemplate, EdgeKind, InstTemplate, SourceContext, SourceLine, register_template, EdgeCategory, out_edge_dict, MetaTemplate, indent_str
-from ..utils import E, N, T, condense_mapping, defer_source_to, no_self_edges, remove_nodes, versions_from, versions_until, without_instructions, has_no_lines, exact_instructions, make_try_match
+from ..utils import not_try_header, E, N, T, condense_mapping, defer_source_to, no_self_edges, remove_nodes, versions_from, versions_until, without_instructions, has_no_lines, exact_instructions, make_try_match
 
 if TYPE_CHECKING:
     from pylingual.control_flow_reconstruction.cfg import CFG
@@ -207,7 +207,10 @@ class MergeHandlerReturn3_10(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
         key = _inst_key(node)
-        if not key or key[-1][0] not in ("RETURN_VALUE", "RETURN_CONST") or not has_no_lines(cfg, node) or not _exits(cfg, node):
+        # a constant return; a bare RETURN_VALUE returns whatever came before it
+        if not key or not (key[-1][0] == "RETURN_CONST" or key[-1][0] == "RETURN_VALUE" and len(key) > 1 and key[-2][0] in ("LOAD_CONST", "LOAD_SMALL_INT", "LOAD_COMMON_CONSTANT")):
+            return None
+        if not has_no_lines(cfg, node) or not _exits(cfg, node):
             return None
         handlers = {h for t in cfg.nodes if (h := out_edge_dict(cfg, t)[EdgeCategory.Exception]) is not None}
         # handlers the body's copy is not in
@@ -422,6 +425,9 @@ class BlockTemplate(ControlFlowTemplate):
             if cfg.get_edge_data(current, next).get("kind") != EdgeKind.Fall and cfg.run != 2:
                 break
             if out[EdgeCategory.Conditional] is not None:
+                break
+            # a handler footer or finished statement ends before the next try's header
+            if not not_try_header(cfg, next) and (not isinstance(current, (InstTemplate, BlockTemplate)) or members[0].get_instructions()[:1] and members[0].get_instructions()[0].opname == "POP_EXCEPT"):
                 break
             out = out_edge_dict(cfg, next)
             current = next
