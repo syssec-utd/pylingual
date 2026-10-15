@@ -125,19 +125,25 @@ class SourceContext:
         self.purged_cfts.append(self.cfts[co])
 
     def source_lines(self):
+        def is_doc(x: SourceLine):
+            return x.line.startswith(('__doc__ = "', "__doc__ = '", '"""'))
+
         def is_prefix(x: SourceLine):
-            return x.line.startswith(("from __future__ import ", "__doc__ = ", "global ", "nonlocal ", '"""'))
+            return is_doc(x) or x.line.startswith(("from __future__ import ", "global ", "nonlocal "))
 
         def priority(x: SourceLine):
-            if x.line.startswith(("__doc__ = ", '"""')):
+            if is_doc(x):
                 return 0
             if x.line.startswith("from __future__ import "):
                 return 1
             return 2
 
+        # the docstring and __future__ imports must stay first, ahead of header lines like `global x`
+        # the leading comment lines are skipped so they don't stop the reordering
         lines = self.header_lines + list(self.source_lines_of(self.pyc.codeobj))
-        prefix = [x.with_line(x.line[10:]) if x.line.startswith("__doc__ = ") else x for x in sorted(itertools.takewhile(is_prefix, lines), key=priority)]
-        lines[: len(prefix)] = prefix
+        start = len(self.header_lines)
+        prefix = [x.with_line(x.line[10:]) if x.line.startswith("__doc__ = ") else x for x in sorted(itertools.takewhile(is_prefix, lines[start:]), key=priority)]
+        lines[start : start + len(prefix)] = prefix
 
         # insert pass in empty blocks
         colon_line = None
