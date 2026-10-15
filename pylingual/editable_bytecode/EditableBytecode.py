@@ -89,7 +89,8 @@ class EditableBytecode:
         for inst in self.instructions:
             if inst.opname == "STORE_GLOBAL":
                 self.globals.add(inst.argval)
-            elif inst.opname == "STORE_DEREF":
+            elif inst.opname == "STORE_DEREF" and inst.argval not in ("__classdict__", "__conditional_annotations__"):
+                # __classdict__ and __conditional_annotations__ are compiler-generated, not nonlocals
                 self.nonlocals.add(inst.argval)
 
         if self.version >= (3, 11):
@@ -185,7 +186,14 @@ class EditableBytecode:
             conditional_annotation_map: dict[int, list[Inst]] = dict()
             cursor_idx = annotate_bytecode._idx_map[id(annotate_bytecode[3].target.next_instructions[0])] # start of the first annotation definition
             while (cursor_inst := annotate_bytecode[cursor_idx]).opname != "RETURN_VALUE":
-                if cursor_inst.opname.startswith("LOAD_") and cursor_inst.argval == "__classdict__":
+                if cursor_inst.opname.startswith("LOAD_") and isinstance(cursor_inst.argval, int) and annotate_bytecode[cursor_idx + 1].argval == "__conditional_annotations__":
+                    annotation_identifier = cursor_inst.argval
+
+                    conditional_annotation_guard_jump = annotate_bytecode[cursor_idx + 3]
+                    next_cursor_idx = annotate_bytecode._idx_map[id(conditional_annotation_guard_jump.target)]
+
+                    inlinable_insts = annotate_bytecode[cursor_idx + 4 : next_cursor_idx]
+                elif cursor_inst.opname.startswith("LOAD_") and cursor_inst.argval == "__classdict__":
                     annotation_identifier = -1
                     next_cursor_idx = next(idx + 1 for idx in range(cursor_idx, len(annotate_bytecode)) if annotate_bytecode[idx].opname == "STORE_SUBSCR")
 
@@ -205,13 +213,11 @@ class EditableBytecode:
                     )
 
                     inlinable_insts = (conditional_annotation_map.get(-1) or list()) + [load_classdict] + annotate_bytecode[cursor_idx + 1 : next_cursor_idx]
-                elif cursor_inst.opname.startswith("LOAD_") and isinstance(cursor_inst.argval, int):
-                    annotation_identifier = cursor_inst.argval
-
-                    conditional_annotation_guard_jump = annotate_bytecode[cursor_idx + 3]
-                    next_cursor_idx = annotate_bytecode._idx_map[id(conditional_annotation_guard_jump.target)]
-
-                    inlinable_insts = annotate_bytecode[cursor_idx + 4 : next_cursor_idx]
+                elif "__classdict__" in codeobj.co_freevars:
+                    # direct class annotation whose type expression doesn't start with a __classdict__ lookup 
+                    annotation_identifier = -1
+                    next_cursor_idx = next(idx + 1 for idx in range(cursor_idx, len(annotate_bytecode)) if annotate_bytecode[idx].opname == "STORE_SUBSCR")
+                    inlinable_insts = (conditional_annotation_map.get(-1) or list()) + annotate_bytecode[cursor_idx:next_cursor_idx]
                 else:
                     return (False, dict())
 
