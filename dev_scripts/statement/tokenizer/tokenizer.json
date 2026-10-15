@@ -6869,6 +6869,663 @@
       "normalized": false,
       "single_word": false,
       "special": true
+    },
+    {
+      "id": 863,
+      "content": "BUILD_INTERPOLATION",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 864,
+      "content": "BUILD_TEMPLATE",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 865,
+      "content": "CALL",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 866,
+      "content": "CALL_KW",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 867,
+      "content": "CONVERT_VALUE",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 868,
+      "content": "FORMAT_SIMPLE",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 869,
+      "content": "FORMAT_WITH_SPEC",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 870,
+      "content": "KW_NAMES",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 871,
+      "content": "LOAD_COMMON_CONSTANT",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 872,
+      "content": "LOAD_FAST_BORROW",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 873,
+      "content": "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 874,
+      "content": "LOAD_FAST_LOAD_FAST",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 875,
+      "content": "LOAD_FROM_DICT_OR_DEREF",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 876,
+      "content": "LOAD_FROM_DICT_OR_GLOBALS",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 877,
+      "content": "LOAD_SMALL_INT",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 878,
+      "content": "LOAD_SPECIAL",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 879,
+      "content": "NOT_TAKEN",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 880,
+      "content": "POP_ITER",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 881,
+      "content": "SET_FUNCTION_ATTRIBUTE",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 882,
+      "content": "STORE_FAST_LOAD_FAST",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 883,
+      "content": "STORE_FAST_STORE_FAST",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 884,
+      "content": "TO_BOOL",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 885,
+      "content": "positional",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 886,
+      "content": "annotations-func",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 887,
+      "content": "annotations",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 888,
+      "content": "closures",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 889,
+      "content": "kwonly_defaults",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 890,
+      "content": "coroutine",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 891,
+      "content": "async_generator",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 892,
+      "content": "posonly:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 893,
+      "content": "kwonly:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 894,
+      "content": "kwarg:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 895,
+      "content": "__classdict__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 896,
+      "content": "__annotations__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 897,
+      "content": "__conditional_annotations__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 898,
+      "content": "__class__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 899,
+      "content": "__doc__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 900,
+      "content": "AssertionError",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 901,
+      "content": "NotImplementedError",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 902,
+      "content": "exception",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 903,
+      "content": "instance",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 904,
+      "content": "TARGET_0",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 905,
+      "content": "TARGET_1",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 906,
+      "content": "TARGET_2",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 907,
+      "content": "TARGET_3",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 908,
+      "content": "TARGET_4",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 909,
+      "content": "TARGET_5",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 910,
+      "content": "TARGET_6",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 911,
+      "content": "TARGET_7",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 912,
+      "content": "TARGET_8",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 913,
+      "content": "TARGET_9",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 914,
+      "content": "TARGET_10",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 915,
+      "content": "TARGET_11",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 916,
+      "content": "TARGET_12",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 917,
+      "content": "TARGET_13",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 918,
+      "content": "TARGET_14",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 919,
+      "content": "TARGET_15",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 920,
+      "content": "INTRINSIC_PRINT",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 921,
+      "content": "INTRINSIC_IMPORT_STAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 922,
+      "content": "INTRINSIC_STOPITERATION_ERROR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 923,
+      "content": "INTRINSIC_ASYNC_GEN_WRAP",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 924,
+      "content": "INTRINSIC_UNARY_POSITIVE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 925,
+      "content": "INTRINSIC_LIST_TO_TUPLE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 926,
+      "content": "INTRINSIC_TYPEVAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 927,
+      "content": "INTRINSIC_PARAMSPEC",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 928,
+      "content": "INTRINSIC_TYPEVARTUPLE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 929,
+      "content": "INTRINSIC_SUBSCRIPT_GENERIC",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 930,
+      "content": "INTRINSIC_TYPEALIAS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 931,
+      "content": "INTRINSIC_PREP_RERAISE_STAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 932,
+      "content": "INTRINSIC_TYPEVAR_WITH_BOUND",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 933,
+      "content": "INTRINSIC_TYPEVAR_WITH_CONSTRAINTS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 934,
+      "content": "INTRINSIC_SET_FUNCTION_TYPE_PARAMS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
+    },
+    {
+      "id": 935,
+      "content": "INTRINSIC_SET_TYPEPARAM_DEFAULT",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false,
+      "special": true
     }
   ],
   "normalizer": null,
@@ -7768,7 +8425,80 @@
       "compare": 859,
       "name": 860,
       "const": 861,
-      "local": 862
+      "local": 862,
+      "BUILD_INTERPOLATION": 863,
+      "BUILD_TEMPLATE": 864,
+      "CALL": 865,
+      "CALL_KW": 866,
+      "CONVERT_VALUE": 867,
+      "FORMAT_SIMPLE": 868,
+      "FORMAT_WITH_SPEC": 869,
+      "KW_NAMES": 870,
+      "LOAD_COMMON_CONSTANT": 871,
+      "LOAD_FAST_BORROW": 872,
+      "LOAD_FAST_BORROW_LOAD_FAST_BORROW": 873,
+      "LOAD_FAST_LOAD_FAST": 874,
+      "LOAD_FROM_DICT_OR_DEREF": 875,
+      "LOAD_FROM_DICT_OR_GLOBALS": 876,
+      "LOAD_SMALL_INT": 877,
+      "LOAD_SPECIAL": 878,
+      "NOT_TAKEN": 879,
+      "POP_ITER": 880,
+      "SET_FUNCTION_ATTRIBUTE": 881,
+      "STORE_FAST_LOAD_FAST": 882,
+      "STORE_FAST_STORE_FAST": 883,
+      "TO_BOOL": 884,
+      "positional": 885,
+      "annotations-func": 886,
+      "annotations": 887,
+      "closures": 888,
+      "kwonly_defaults": 889,
+      "coroutine": 890,
+      "async_generator": 891,
+      "posonly:": 892,
+      "kwonly:": 893,
+      "kwarg:": 894,
+      "__classdict__": 895,
+      "__annotations__": 896,
+      "__conditional_annotations__": 897,
+      "__class__": 898,
+      "__doc__": 899,
+      "AssertionError": 900,
+      "NotImplementedError": 901,
+      "exception": 902,
+      "instance": 903,
+      "TARGET_0": 904,
+      "TARGET_1": 905,
+      "TARGET_2": 906,
+      "TARGET_3": 907,
+      "TARGET_4": 908,
+      "TARGET_5": 909,
+      "TARGET_6": 910,
+      "TARGET_7": 911,
+      "TARGET_8": 912,
+      "TARGET_9": 913,
+      "TARGET_10": 914,
+      "TARGET_11": 915,
+      "TARGET_12": 916,
+      "TARGET_13": 917,
+      "TARGET_14": 918,
+      "TARGET_15": 919,
+      "INTRINSIC_PRINT": 920,
+      "INTRINSIC_IMPORT_STAR": 921,
+      "INTRINSIC_STOPITERATION_ERROR": 922,
+      "INTRINSIC_ASYNC_GEN_WRAP": 923,
+      "INTRINSIC_UNARY_POSITIVE": 924,
+      "INTRINSIC_LIST_TO_TUPLE": 925,
+      "INTRINSIC_TYPEVAR": 926,
+      "INTRINSIC_PARAMSPEC": 927,
+      "INTRINSIC_TYPEVARTUPLE": 928,
+      "INTRINSIC_SUBSCRIPT_GENERIC": 929,
+      "INTRINSIC_TYPEALIAS": 930,
+      "INTRINSIC_PREP_RERAISE_STAR": 931,
+      "INTRINSIC_TYPEVAR_WITH_BOUND": 932,
+      "INTRINSIC_TYPEVAR_WITH_CONSTRAINTS": 933,
+      "INTRINSIC_SET_FUNCTION_TYPE_PARAMS": 934,
+      "INTRINSIC_SET_TYPEPARAM_DEFAULT": 935
     },
     "merges": []
   }
