@@ -339,7 +339,8 @@ class EditableBytecode:
                             # fix stale line numbers
                             for ins in chunk[1:]:
                                 ins.starts_line = None
-                            target_idx = fallback_idx
+                            # an annotation after the last body statement belongs at the end of the body, before the class epilogue
+                            target_idx = fallback_idx if chunk_line is None else idx
                             if chunk_line is not None:
                                 for j, body_inst in enumerate(self.instructions):
                                     if body_inst in removed_set or body_inst in extra_removes:
