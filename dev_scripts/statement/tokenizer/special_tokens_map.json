@@ -1394,13 +1394,6 @@
       "single_word": false
     },
     {
-      "content": "LOAD_FROM_DICT_OR_GLOBAL",
-      "lstrip": false,
-      "rstrip": true,
-      "normalized": false,
-      "single_word": false
-    },
-    {
       "content": "LOAD_FAST",
       "lstrip": false,
       "rstrip": true,
@@ -5420,6 +5413,447 @@
     },
     {
       "content": "local",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "BUILD_INTERPOLATION",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "BUILD_TEMPLATE",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "CALL",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "KW_NAMES",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_COMMON_CONSTANT",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_FAST_BORROW",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_FROM_DICT_OR_GLOBALS",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_SMALL_INT",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "LOAD_SPECIAL",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "NOT_TAKEN",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "POP_ITER",
+      "lstrip": false,
+      "rstrip": true,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "positional",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "annotations-func",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "annotations",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "closures",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "kwonly_defaults",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "coroutine",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "async_generator",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "posonly:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "kwonly:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "kwarg:",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "__classdict__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "__annotations__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "__conditional_annotations__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "__class__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "__doc__",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "AssertionError",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "NotImplementedError",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "exception",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "instance",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_0",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_1",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_2",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_3",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_4",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_5",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_6",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_7",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_8",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_9",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_10",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_11",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_12",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_13",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_14",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "TARGET_15",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_PRINT",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_IMPORT_STAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_STOPITERATION_ERROR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_ASYNC_GEN_WRAP",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_UNARY_POSITIVE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_LIST_TO_TUPLE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_TYPEVAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_PARAMSPEC",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_TYPEVARTUPLE",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_SUBSCRIPT_GENERIC",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_TYPEALIAS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_PREP_RERAISE_STAR",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_TYPEVAR_WITH_BOUND",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_TYPEVAR_WITH_CONSTRAINTS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_SET_FUNCTION_TYPE_PARAMS",
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "single_word": false
+    },
+    {
+      "content": "INTRINSIC_SET_TYPEPARAM_DEFAULT",
       "lstrip": false,
       "rstrip": false,
       "normalized": false,
