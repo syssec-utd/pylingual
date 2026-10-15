@@ -58,49 +58,43 @@ class CacheTranslator:
         self.cache.move_to_end(item)
         return self.cache[item]
 
-    def _translate_and_decode(
-        self,
-        translation_requests: TrackedDataset | list[str],
-        batch_size: int = 32,
-        **kwargs,
-    ) -> list[str]:
+    def _translate_and_decode(self, batch: list[str]) -> list[str]:
+        """Translate a single batch of requests"""
+        encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
+
+        with torch.no_grad():
+            output = self.model.generate(**encoded, max_length=512)
 
         decoded_results = []
-
-        # process in batches
-        for i in range(0, len(translation_requests), batch_size):
-            batch = translation_requests[i : i + batch_size]
-            encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
-
-            with torch.no_grad():
-                output = self.model.generate(**encoded, max_length=512)
-
-            for tokens in output:
-                # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
-                filtered_tokens = [tok for tok in tokens.tolist() if tok not in [0, 1, 2, 3, 4]]
-                # decode the remaining tokens
-                decoded_results.append(self.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
+        for tokens in output:
+            # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
+            filtered_tokens = [tok for tok in tokens.tolist() if tok not in [0, 1, 2, 3, 4]]
+            # decode the remaining tokens
+            decoded_results.append(self.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
 
         return decoded_results
 
-    def _translate_with_backoff(self, translation_requests: TrackedDataset) -> list[str]:
-        try:
-            return self._translate_and_decode(translation_requests, batch_size=32)
-        except Exception as e:
-            logger.info(f"Lowering translation batch size ({e})")
-        # Try with batch_size = 1 if normal translation fails:
-        try:
-            return self._translate_and_decode(translation_requests, batch_size=1)
-        except Exception as e:
-            logger.info(f"Lowering translation batch size ({e})")
+    def _translate_with_backoff(self, translation_requests: TrackedDataset | list[str], batch_size: int = 32) -> list[str]:
         translation_results = []
-        # try one-by-one if batch_size=1 fails
-        for request in translation_requests:
+        # process in batches
+        for i in range(0, len(translation_requests), batch_size):
+            batch = translation_requests[i : i + batch_size]
             try:
-                translation_results.append(self._translate_and_decode([request], batch_size=1)[0])
-            except Exception:
-                # last resort fallback
+                translation_results.extend(self._translate_and_decode(batch))
+                continue
+            except Exception as e:
+                error = repr(e)
+            # handled outside the except block so tensors can be freed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if batch_size == 1:
+                # fallback
+                logger.info(f"Could not translate statement ({error})")
                 translation_results.append("'''Decompiler error: line too long for translation. Please decompile this statement manually.'''")
+            else:
+                # retry with a smaller batch size
+                logger.info(f"Lowering translation batch size to {batch_size // 2} ({error})")
+                translation_results.extend(self._translate_with_backoff(batch, batch_size=batch_size // 2))
         return translation_results
 
     def __call__(self, args: list, check_timeout: callable = None, **_):
@@ -117,7 +111,8 @@ class CacheTranslator:
         # New are those not in the local cache
         new = TrackedDataset(
             TRANSLATION_STEP,
-            list({norm for norm, _ in normalized_args if norm not in self.cache}),
+            # sorted by length so batches need less padding; order doesn't matter since results are keyed by request
+            sorted({norm for norm, _ in normalized_args if norm not in self.cache}, key=len),
             check_timeout=check_timeout,
         )
 
