@@ -40,7 +40,7 @@ from xdis.magics import magicint2version
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 from pylingual.control_flow_reconstruction.structure import bc_to_cft
 from pylingual.control_flow_reconstruction.cft import MetaTemplate
-from pylingual.equivalence_check import TestResult, compare_pyc
+from pylingual.equivalence_check import PatchedPYC, TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
 from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
@@ -103,7 +103,6 @@ class Decompiler:
 
     def __init__(self, pyc: PYCFile, segmenter: transformers.Pipeline, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
         self.pyc = pyc
-        self.pyc.copy()
         self.name = pyc.pyc_path.name if pyc.pyc_path is not None else repr(pyc)
         self.segmenter = segmenter
         self.translator = translator
@@ -227,7 +226,7 @@ class Decompiler:
             self.ordered_instructions = [list(itertools.chain.from_iterable(bc.get_lno_insts().values())) for bc in self.pyc.iter_bytecodes()]
             self.ordered_bytecodes = [bc for bc in self.pyc.iter_bytecodes()]
             self.codeobj_instruction_lists = [[self.global_masker.get_model_view(inst) for inst in insts] for insts in self.ordered_instructions]
-            self.segmentation_requests = [bytecode_separator.join(self.global_masker.get_model_view(inst) for inst in insts) for insts in self.ordered_instructions]
+            self.segmentation_requests = [bytecode_separator.join(views) for views in self.codeobj_instruction_lists]
         except Exception as e:
             e.add_note("From masking bytecode")
             raise
@@ -313,8 +312,8 @@ class Decompiler:
         logger.info(f"Translating statements for {self.name}...")
         try:
             translation_requests = []
-            for instructions, boundary_predictions in zip(self.ordered_instructions, self.segmentation_results):
-                translation_requests.append(self.make_translation_request(instructions, boundary_predictions))
+            for model_views, boundary_predictions in zip(self.codeobj_instruction_lists, self.segmentation_results):
+                translation_requests.append(self.make_translation_request(model_views, boundary_predictions))
             flattened_translation_requests = list(itertools.chain.from_iterable(translation_requests))
             self.translation_results = self.translator(flattened_translation_requests, check_timeout=self.check_timeout)
             unflatten(self.translation_results, translation_requests)
@@ -351,13 +350,13 @@ class Decompiler:
             raise
 
     # make a translation request from a segmentation result
-    def make_translation_request(self, instructions: list[list["Inst"]], boundary_predictions: list[dict]) -> list[str]:
+    def make_translation_request(self, model_views: list[str], boundary_predictions: list[dict]) -> list[str]:
         translation_requests = []
-        for inst, boundary_prediction in zip(instructions, boundary_predictions):
+        for model_view, boundary_prediction in zip(model_views, boundary_predictions):
             if boundary_prediction["entity"] == "B":
-                translation_requests.append(self.global_masker.get_model_view(inst))
+                translation_requests.append(model_view)
             else:
-                translation_requests[-1] += bytecode_separator + self.global_masker.get_model_view(inst)
+                translation_requests[-1] += bytecode_separator + model_view
         return translation_requests
 
     def update_source_lines(self):
@@ -385,7 +384,12 @@ class Decompiler:
             logger.error(f"Could not check decompilation due to pyenv error: {e}")
             return []
         else:
-            return compare_pyc(self.pyc, pyc)
+            return compare_pyc(self.patched_pyc, pyc)
+
+    # the original pyc only needs to be patched once, it is compared after every candidate fix
+    @functools.cached_property
+    def patched_pyc(self) -> PatchedPYC:
+        return PatchedPYC(self.pyc)
 
     def result_for_bytecode(self, i: int, results: list[TestResult]) -> TestResult | None:
         codeobj = self.ordered_bytecodes[i].codeobj
@@ -417,7 +421,7 @@ class Decompiler:
                 for r, p in zip(self.segmentation_results[i], prediction):
                     r["entity"] = p
                 self.update_starts_line()
-                translation_request = self.make_translation_request(self.ordered_instructions[i], self.segmentation_results[i])
+                translation_request = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
                 try:
                     self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
                     self.update_source_lines()
