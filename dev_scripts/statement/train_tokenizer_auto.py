@@ -33,12 +33,15 @@ def save_and_upload_tokenizer(
         repo_id=tokenizer_repo_name,
         commit_message=f"Trained tokenizer using {dataset_name}",
     )
-    api.upload_file(
-        path_in_repo="special_tokens_map.json",
-        path_or_fileobj=str(tokenizer_json_path.parent / "special_tokens_map.json"),
-        repo_id=tokenizer_repo_name,
-        commit_message="Extracted special tokens map",
-    )
+    # transformers 5 stores special tokens in tokenizer_config.json and no longer writes special_tokens_map.json
+    special_tokens_map_path = tokenizer_json_path.parent / "special_tokens_map.json"
+    if special_tokens_map_path.is_file():
+        api.upload_file(
+            path_in_repo="special_tokens_map.json",
+            path_or_fileobj=str(special_tokens_map_path),
+            repo_id=tokenizer_repo_name,
+            commit_message="Extracted special tokens map",
+        )
     api.upload_file(
         path_in_repo="tokenizer.json",
         path_or_fileobj=str(tokenizer_json_path.parent / "tokenizer.json"),
