@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import functools
+import gc
 import redis
 import yaml
 import logging
+import threading
 
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
-from functools import lru_cache
 
 from pylingual.masking.model_disasm import (
     fix_jump_targets,
@@ -140,13 +142,44 @@ def _cached_first(fn, *args, **kwargs):
         logger.info(f"{getattr(fn, '__qualname__', fn)} not found in local cache for {args[:1]}, downloading...")
         return fn(*args, local_files_only=False, **kwargs)
 
-@lru_cache(maxsize=1)
+def _free_device_memory():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def _single_slot_cache(fn):
+    """Keep only the latest models loaded, freeing the old ones first; falls back to CPU on GPU OOM."""
+    lock = threading.Lock()
+    loaded_key = loaded_models = None
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        nonlocal loaded_key, loaded_models
+        key = (args, tuple(sorted(kwargs.items())))
+        with lock:
+            if loaded_key == key:
+                return loaded_models
+            loaded_key = loaded_models = None
+            _free_device_memory()
+            try:
+                loaded_models = fn(*args, **kwargs)
+            except torch.OutOfMemoryError:
+                logger.warning("Not enough GPU memory to load models, falling back to CPU")
+                _free_device_memory()
+                loaded_models = fn(*args, **{**kwargs, "device": torch.device("cpu")})
+            loaded_key = key
+            return loaded_models
+
+    return wrapper
+
+@_single_slot_cache
 def load_models(
     config_file: Path = Path("pylingual/decompiler_config.yaml"),
     version: PythonVersion = PythonVersion(3.9),
     redis_cache_server_ip: str = None,
     redis_port: int = 1679,
     token=False,
+    device: torch.device | None = None,
 ) -> tuple[transformers.Pipeline, CacheTranslator]:
     logger.info(f"Loading models for {version}...")
     with config_file.open() as f:
@@ -179,7 +212,9 @@ def load_models(
         sep_token="[SEP]",
         mask_token="[MASK]",
     )
-    if torch.cuda.is_available():
+    if device is not None:
+        logger.info(f"Using {device} for models")
+    elif torch.cuda.is_available():
         logger.info("Using CUDA GPU for models")
         device = torch.device("cuda:0")
     else:
