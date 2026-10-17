@@ -158,10 +158,28 @@ class CFG(DiGraph_CFT):
         # In NetworkX 3.5 and below, the start node dominates itself; this was changed in NetworkX 3.6
         if self._dt.has_edge(self.start, self.start):
             self._dt.remove_edge(self.start, self.start)
-        self._dr = nx.transitive_closure_dag(self._dt.reverse())
+        # number the dominator tree so dominance is an interval check; the transitive closure is quadratic on deep trees
+        self._span = span = {}
+        count = 0
+        stack = [(self.start, iter(self._dt.predecessors(self.start)))]
+        span[self.start] = [count, None]
+        while stack:
+            node, children = stack[-1]
+            for child in children:
+                count += 1
+                span[child] = [count, None]
+                stack.append((child, iter(self._dt.predecessors(child))))
+                break
+            else:
+                span[node][1] = count
+                stack.pop()
 
     def dominates(self, node_a, node_b):
-        return self._dr.has_edge(node_a, node_b) or node_a == node_b
+        if node_a == node_b:
+            return True
+        a = self._span.get(node_a)
+        b = self._span.get(node_b)
+        return a is not None and b is not None and a[0] <= b[0] <= a[1]
 
     def visualize(self):
         pass
