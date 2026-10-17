@@ -131,7 +131,11 @@ class CacheTranslator:
 def _cached_first(fn, *args, **kwargs):
     """Try the local HF cache first; fall back to downloading if it's missing."""
     try:
-        return fn(*args, local_files_only=True, **kwargs)
+        result = fn(*args, local_files_only=True, **kwargs)
+        # tokenizers don't raise when their files are missing, they come back with only the special tokens
+        if isinstance(result, transformers.PreTrainedTokenizerBase) and len(result) <= len(result.all_special_tokens):
+            raise OSError("tokenizer has no vocabulary")
+        return result
     except (OSError, ValueError):
         logger.info(f"{getattr(fn, '__qualname__', fn)} not found in local cache for {args[:1]}, downloading...")
         return fn(*args, local_files_only=False, **kwargs)
