@@ -55,6 +55,17 @@ def test_keyword_only_default_mapping_remains_visible_to_model():
         assert masker.get_model_view(keys).startswith("LOAD_CONST , (")
 
 
+def test_decorated_method_keyword_only_default_mapping_is_not_folded():
+    bytecode = _preprocess(
+        "class C:\n"
+        "    @dec\n"
+        "    def f(cls, *, timeout: int=None):\n"
+        "        pass\n"
+    )
+
+    assert not any(inst.opname == "LOAD_CONST" and isinstance(inst.argval, dict) for code in bytecode.iter_bytecodes() for inst in code.instructions)
+
+
 def test_inner_container_still_folds_before_unrelated_make_function():
     bytecode = _preprocess("value = ([1, 2], lambda: 0)\n")
 

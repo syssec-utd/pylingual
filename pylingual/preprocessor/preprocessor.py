@@ -135,6 +135,19 @@ def _is_function_scaffolding(following: list[Inst]) -> bool:
     return False
 
 
+def _crosses_spliced_annotate(following: list[Inst], consumer_idx: int) -> bool:
+    """Whether the trace to the consumer passes a spliced class __annotate__ closure.
+
+    In class bodies the __classdict__ closure load of an inlined __annotate__ is left
+    dangling, so the Tracer overshoots the function definition and reports a later
+    consumer (e.g. a decorator CALL) instead of SET_FUNCTION_ATTRIBUTE.
+    """
+    window = following[:consumer_idx]
+    return any(inst.opname.startswith("LOAD_FAST") and inst.argval == "__classdict__" for inst in window) and any(
+        inst.opname == "SET_FUNCTION_ATTRIBUTE" for inst in window
+    )
+
+
 class Preprocessor:
     """Rewrites container construction bytecode into single LOAD_CONST instructions.
 
@@ -169,6 +182,9 @@ class Preprocessor:
                         inst.opname.endswith("_MERGE") for inst in following[:consumption[0] + 1]
                     )
                     in_function_scaffolding = consumption is None and _is_function_scaffolding(following)
+                    if consumption is not None and _crosses_spliced_annotate(following, consumption[0]):
+                        logger.debug("Tracer crossed a spliced __annotate__ closure; skipping container folding")
+                        consumption, crosses_merge, in_function_scaffolding = None, False, True
                     if consumption is None:
                         if in_function_scaffolding:
                             logger.debug(
