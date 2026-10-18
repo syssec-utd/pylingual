@@ -5,6 +5,13 @@ from xdis.cross_dis import xstack_effect
 from .segment import Segment
 
 
+def stripped_precall_effect(instr) -> int:
+    """3.11 splits a call into PRECALL argc (pops argc) and CALL argc (pops 1), but PRECALL is stripped from the bytecode."""
+    if instr.opname == "CALL" and instr.bytecode.version == (3, 11):
+        return -(instr.arg or 0)
+    return 0
+
+
 def analyze_stack(bytecode) -> list[tuple[int, object]]:
     opc = bytecode.opcode
     depth = 0
@@ -14,6 +21,7 @@ def analyze_stack(bytecode) -> list[tuple[int, object]]:
         effect = xstack_effect(instr.opcode, opc, arg)
         if effect is None:
             effect = opc.oppush[instr.opcode] - opc.oppop[instr.opcode]
+        effect += stripped_precall_effect(instr)
         depth += effect
         results.append((depth, instr))
     return results

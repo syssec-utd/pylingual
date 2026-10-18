@@ -7,7 +7,7 @@ from xdis.cross_dis import instruction_size, xstack_effect
 from pylingual.editable_bytecode import EditableBytecode, Inst
 from .container_recovery.recovery import recover
 from .container_recovery.segment import Segment
-from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive
+from .container_recovery.stack_analysis import analyze_stack, parse_bytecode_recursive, stripped_precall_effect
 from .container_recovery.strategies.set import _OrderedSet
 
 _CONTAINER_TAGS = {"LIST", "SET", "TUPLE", "DICT"}
@@ -59,6 +59,7 @@ class Tracer:
                 effect = _make_function_stack_effect(inst.arg, inst.bytecode.version)
             elif effect is None:
                 effect = inst.bytecode.opcode.oppush[inst.opcode] - inst.bytecode.opcode.oppop[inst.opcode]
+            effect += stripped_precall_effect(inst)
             if inst.opname.startswith("BUILD_"):
                 push = 1
             elif inst.opname in ("CALL", "CALL_KW", "DICT_MERGE"):
