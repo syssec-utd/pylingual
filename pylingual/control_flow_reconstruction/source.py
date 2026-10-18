@@ -108,7 +108,11 @@ class SourceContext:
                     else:
                         yield SourceLine(fake_header(line.child), line.indent - 1, line.child)
                 yield from self.source_lines_of(line.child, line.indent)
-            elif not purged:
+            elif purged:
+                # keep imports, 3.12+ children compile differently without them
+                if line.indent == i and not line.meta and line.line.startswith(("import ", "from ")):
+                    yield line
+            else:
                 # filter out returns in top level codeobjs and classes
                 if not co.co_flags & (inspect.CO_NEWLOCALS | inspect.CO_GENERATOR | inspect.CO_ASYNC_GENERATOR):
                     if line.line == "return":
