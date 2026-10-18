@@ -77,8 +77,14 @@ class SourceContext:
                     doc = use_escape_sequences(bc.codeobj.co_consts[0])
                     cft.add_header(f'"""{doc}"""')
             if bc.codeobj.co_flags & (inspect.CO_GENERATOR | inspect.CO_ASYNC_GENERATOR):
-                if not any(self.lines[i.starts_line - 1].strip().startswith("yield ") or self.lines[i.starts_line - 1].strip() == "yield" for i in cft.get_instructions() if i.starts_line is not None):
-                    cft.add_header("if False: yield")
+                line_nos = [i.starts_line - 1 for i in cft.get_instructions() if i.starts_line is not None]
+                if not any(self.lines[n].strip().startswith("yield ") or self.lines[n].strip() == "yield" for n in line_nos):
+                    # the model sometimes translates the fake yield to a bare "if False:"
+                    if_false = next((n for n in line_nos if self.lines[n].strip() == "if False:"), None)
+                    if if_false is not None:
+                        self.lines[if_false] = "if False: yield"
+                    else:
+                        cft.add_header("if False: yield")
             for global_var in bc.globals:
                 cft.add_header(f"global {global_var}")
             parent_nonlocal = set()
