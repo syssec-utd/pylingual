@@ -172,6 +172,9 @@ def unmask(source_line: str, replacements: dict, container_masks: set[str], re_p
         r = replacements[match.group()]
         if match.group() in container_masks:
             return r
+        # add parenthesis to integers if they are being accessed
+        if r.isdigit() and s[1] < len(match.string) and match.string[s[1]] == ".":
+            return f"({r})"
         if s[0] == 0 or s[1] >= len(match.string) or match.string[s[0] - 1] not in "\"'{}" and match.string[s[1]] not in "\"'{}":
             return r
         return use_escape_sequences(r)
