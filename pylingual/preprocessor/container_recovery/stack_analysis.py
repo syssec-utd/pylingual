@@ -186,7 +186,7 @@ def parse_const_key_map_recursive(remaining: list[tuple[int, object]]) -> Segmen
 
 
 def parse_map_add_recursive(remaining: list[tuple[int, object]]) -> Segment | None:
-    """Parse 3.12+ dict literals with 16+ items: BUILD_MAP 0 + MAP_ADD 1 chunks merged by DICT_UPDATE 1.
+    """Parse 3.10+ dict literals with 16+ items: BUILD_MAP 0 + MAP_ADD 1 chunks merged by DICT_UPDATE 1.
 
     Parses on a copy and returns None without touching `remaining` if the pattern doesn't match.
     """
@@ -223,9 +223,15 @@ def parse_map_add_recursive(remaining: list[tuple[int, object]]) -> Segment | No
                 key_seg.append(trial.pop())
             if not value_seg or not key_seg:
                 return None
+            # the key must sit directly on the dict, otherwise the stack depths are off
+            if not trial or trial[-1][0] != stack_depth or trial[-1][1].opname not in ("MAP_ADD", "BUILD_MAP"):
+                return None
             output_segs.append(Segment("VALUE", parse_bytecode_recursive(value_seg[::-1]), stack_depth + 2))
             output_segs.append(Segment("KEY", parse_bytecode_recursive(key_seg[::-1]), stack_depth + 1))
         elif instr.opname == "BUILD_MAP" and instr.arg == 0 and output_segs:
+            # the compiler emits chunks of 16 or 17 pairs, anything else is a partial chunk
+            if sum(seg.tag == "ADD" for seg in output_segs) not in (16, 17):
+                return None
             trial.pop()
             output_segs.append(Segment("BUILD", [(stack_depth, instr)]))
             remaining[:] = trial
@@ -238,10 +244,12 @@ def parse_map_add_recursive(remaining: list[tuple[int, object]]) -> Segment | No
 def parse_bytecode_recursive(remaining: list[tuple[int, object]]) -> list[Segment]:
     output_segs = []
     cur_seg = []
+    # after a failed map_add parse, a retry from a later MAP_ADD could match a partial dict
+    map_add_failed = False
 
     while remaining:
         (stack_depth, instr) = remaining[-1]
-        if instr.opname in ("MAP_ADD", "DICT_UPDATE") and instr.arg == 1 and (dict_seg := parse_map_add_recursive(remaining)) is not None:
+        if instr.arg == 1 and (instr.opname == "DICT_UPDATE" or instr.opname == "MAP_ADD" and not map_add_failed) and (dict_seg := parse_map_add_recursive(remaining)) is not None:
             if cur_seg: output_segs.append(Segment("UNKNOWN", cur_seg[::-1]))
             cur_seg = []
             output_segs.append(dict_seg)
@@ -316,6 +324,8 @@ def parse_bytecode_recursive(remaining: list[tuple[int, object]]) -> list[Segmen
             cur_seg = []
             output_segs.append(Segment("LOAD_CONST_CONTAINER", [(stack_depth, instr)]))
         else:
+            if instr.opname == "MAP_ADD" and instr.arg == 1:
+                map_add_failed = True
             remaining.pop()
             cur_seg.append((stack_depth, instr))
 
