@@ -184,13 +184,20 @@ class PatchedPYC:
     """
     Patched copy of a pyc with lazily built block graphs.
     Pass one to compare_pyc to avoid re-preparing a pyc that is compared repeatedly.
-    Code objects identical to ones in reference (ignoring line info) are shared with it instead of rebuilt.
+    Code objects identical to ones in reference (ignoring line info) are shared with it instead of rebuilt,
+    and ones identical to previous (apart from moved lines) are taken from it, so previous must not be used afterwards.
     """
 
-    def __init__(self, pyc: PYCFile | Path, reference: PYCFile | None = None):
-        self.pyc = pyc.copy() if isinstance(pyc, PYCFile) else PYCFile(pyc, reference=reference)
+    def __init__(self, pyc: PYCFile | Path, reference: PatchedPYC | None = None, previous: PatchedPYC | None = None):
+        if isinstance(pyc, PYCFile):
+            self.pyc = pyc.copy()
+        else:
+            self.pyc = PYCFile(pyc, reference=reference and reference.pyc, previous=previous and previous.pyc)
         self.pyc.apply_patches(PATCHES)
         self.block_graphs = {}
+        if previous is not None:
+            self.block_graphs = {bc: previous.block_graphs[bc] for bc in self.pyc.iter_bytecodes() if bc in previous.block_graphs}
+        self.last_compared = None
 
     def block_graph(self, bytecode: EditableBytecode) -> CFG:
         if bytecode not in self.block_graphs:
@@ -210,7 +217,10 @@ def compare_pyc(pyc_a: PYCFile | Path | PatchedPYC, pyc_b: PYCFile | Path) -> li
     """
 
     pyc_a = pyc_a if isinstance(pyc_a, PatchedPYC) else PatchedPYC(pyc_a)
-    pyc_b = PatchedPYC(pyc_b, reference=pyc_a.pyc)
+    # consecutive candidates compared against pyc_a usually differ in only a few code objects
+    previous, pyc_a.last_compared = pyc_a.last_compared, None
+    pyc_b = PatchedPYC(pyc_b, reference=pyc_a, previous=previous)
+    pyc_a.last_compared = pyc_b
 
     results = []
 

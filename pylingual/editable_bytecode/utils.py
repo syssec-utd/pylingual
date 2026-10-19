@@ -55,6 +55,20 @@ def same_code(a, b) -> bool:
     return len(a.co_consts) == len(b.co_consts) and all(same_const(x, y) for x, y in zip(a.co_consts, b.co_consts))
 
 
+def line_shift(a, b) -> int | None:
+    """
+    Gets how far every line moved between two code objects that are the same apart from line info, or None if the lines changed otherwise
+    """
+    delta = b.co_firstlineno - a.co_firstlineno
+    stack = [(a, b)]
+    while stack:
+        x, y = stack.pop()
+        if y.co_firstlineno - x.co_firstlineno != delta or any(getattr(x, attr, None) != getattr(y, attr, None) for attr in ("co_lnotab", "co_linetable")):
+            return None
+        stack.extend((c, d) for c, d in zip(x.co_consts, y.co_consts) if iscode(c))
+    return delta
+
+
 def codeobj_replace(codeobj, **kwargs):
     if hasattr(codeobj, "replace"):
         return codeobj.replace(**kwargs)
