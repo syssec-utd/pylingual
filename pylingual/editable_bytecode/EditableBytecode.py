@@ -12,7 +12,7 @@ from xdis.bytecode import parse_exception_table, _ExceptionTableEntry
 from pylingual.utils.version import PythonVersion
 
 from .Instruction import Inst
-from .utils import codeobj_replace, comprehension_names, unwrap
+from .utils import codeobj_replace, comprehension_names, line_shift, same_code, unwrap
 from .control_flow_graph import bytecode_to_control_flow_graph
 
 from typing import Callable
@@ -50,6 +50,8 @@ class EditableBytecode:
         version,
         name_prefix: Optional[str] = None,
         parent=None,
+        reference=None,
+        previous=None,
     ):
         self.codeobj = codeobj
         self.opcode = opcode
@@ -89,7 +91,8 @@ class EditableBytecode:
         for inst in self.instructions:
             if inst.opname == "STORE_GLOBAL":
                 self.globals.add(inst.argval)
-            elif inst.opname == "STORE_DEREF":
+            elif inst.opname == "STORE_DEREF" and inst.argval not in ("__classdict__", "__conditional_annotations__"):
+                # __classdict__ and __conditional_annotations__ are compiler-generated, not nonlocals
                 self.nonlocals.add(inst.argval)
 
         if self.version >= (3, 11):
@@ -119,12 +122,54 @@ class EditableBytecode:
         self.child_bytecodes = []
         self.bytecode_lookup = {}
 
+        # children identical to ones in reference (ignoring line info) are shared with it instead of rebuilt
+        # shared children belong to reference, so they must not be edited
+        self.shared_bytecodes = []
+        # children identical to ones in previous (with every line moved by the same amount) are taken from it
+        # adopted children are already patched, so they must not be patched again
+        self.adopted_bytecodes = []
+        code_indices = [i for i, const in enumerate(self.co_consts) if iscode(const)]
+        names = [unwrap(self.co_consts[i].co_name) for i in code_indices]
+
+        def matching_children(other):
+            if other is not None and [unwrap(bc.codeobj.co_name) for bc in other.child_bytecodes] == names:
+                return other.child_bytecodes
+            return [None] * len(code_indices)
+
         # Initialize recursive structure
-        for i, const in enumerate(self.co_consts):
-            if iscode(const):
-                self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self)
-                self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
-                self.bytecode_lookup[const.co_name] = self.co_consts[i]
+        for i, ref, prev in zip(code_indices, matching_children(reference), matching_children(previous)):
+            const = self.co_consts[i]
+            if prev is not None and prev in previous.shared_bytecodes:
+                # previous shared it with its reference, so it can only be shared
+                ref = ref if ref is not None and same_code(ref.codeobj, const) else prev
+                prev = None
+            if ref is not None and same_code(ref.codeobj, const):
+                self.co_consts[i] = ref
+                self.shared_bytecodes.append(ref)
+            elif prev is not None and prev.adopt(const):
+                self.co_consts[i] = prev
+                self.adopted_bytecodes.append(prev)
+            else:
+                self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self, reference=ref, previous=prev)
+            self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
+            self.bytecode_lookup[const.co_name] = self.co_consts[i]
+
+    def adopt(self, codeobj) -> bool:
+        """If codeobj is this bytecode's code object with every line moved by the same amount, moves the lines of this bytecode to match it"""
+        if not same_code(self.codeobj, codeobj) or (delta := line_shift(self.codeobj, codeobj)) is None:
+            return False
+        # code objects are paired by co_consts index, which inlining keeps intact
+        stack = [(self, codeobj)]
+        while stack:
+            bc, code = stack.pop()
+            bc.codeobj = code
+            if delta:
+                for inst in bc.instructions:
+                    if inst.starts_line is not None:
+                        inst.starts_line += delta
+            stack.extend((child, code.co_consts[i]) for i, child in enumerate(bc.co_consts) if isinstance(child, EditableBytecode) and child not in bc.shared_bytecodes)
+        return True
+
     def fix_make_function_argval(self):
         """In Python 3.13 the argval for MAKE_FUNCTION is determined by an optional subsequent SET_FUNCTION_ATTRIBUTE instruction"""
 
@@ -185,7 +230,14 @@ class EditableBytecode:
             conditional_annotation_map: dict[int, list[Inst]] = dict()
             cursor_idx = annotate_bytecode._idx_map[id(annotate_bytecode[3].target.next_instructions[0])] # start of the first annotation definition
             while (cursor_inst := annotate_bytecode[cursor_idx]).opname != "RETURN_VALUE":
-                if cursor_inst.opname.startswith("LOAD_") and cursor_inst.argval == "__classdict__":
+                if cursor_inst.opname.startswith("LOAD_") and isinstance(cursor_inst.argval, int) and annotate_bytecode[cursor_idx + 1].argval == "__conditional_annotations__":
+                    annotation_identifier = cursor_inst.argval
+
+                    conditional_annotation_guard_jump = annotate_bytecode[cursor_idx + 3]
+                    next_cursor_idx = annotate_bytecode._idx_map[id(conditional_annotation_guard_jump.target)]
+
+                    inlinable_insts = annotate_bytecode[cursor_idx + 4 : next_cursor_idx]
+                elif cursor_inst.opname.startswith("LOAD_") and cursor_inst.argval == "__classdict__":
                     annotation_identifier = -1
                     next_cursor_idx = next(idx + 1 for idx in range(cursor_idx, len(annotate_bytecode)) if annotate_bytecode[idx].opname == "STORE_SUBSCR")
 
@@ -205,13 +257,11 @@ class EditableBytecode:
                     )
 
                     inlinable_insts = (conditional_annotation_map.get(-1) or list()) + [load_classdict] + annotate_bytecode[cursor_idx + 1 : next_cursor_idx]
-                elif cursor_inst.opname.startswith("LOAD_") and isinstance(cursor_inst.argval, int):
-                    annotation_identifier = cursor_inst.argval
-
-                    conditional_annotation_guard_jump = annotate_bytecode[cursor_idx + 3]
-                    next_cursor_idx = annotate_bytecode._idx_map[id(conditional_annotation_guard_jump.target)]
-
-                    inlinable_insts = annotate_bytecode[cursor_idx + 4 : next_cursor_idx]
+                elif "__classdict__" in codeobj.co_freevars:
+                    # direct class annotation whose type expression doesn't start with a __classdict__ lookup 
+                    annotation_identifier = -1
+                    next_cursor_idx = next(idx + 1 for idx in range(cursor_idx, len(annotate_bytecode)) if annotate_bytecode[idx].opname == "STORE_SUBSCR")
+                    inlinable_insts = (conditional_annotation_map.get(-1) or list()) + annotate_bytecode[cursor_idx:next_cursor_idx]
                 else:
                     return (False, dict())
 
@@ -298,6 +348,7 @@ class EditableBytecode:
 
                         if annotate_func:
                             annotate_codeobj = self.instructions[i].argval
+                            annotate_idx = i
                             to_remove.extend(self.instructions[i : i + 3])
 
                     # stopping conditions either SET_FUNCTION_ATTRIBUTE 0x10 or STORE_NAME __annotate_func__
@@ -307,6 +358,9 @@ class EditableBytecode:
                     if self.instructions[i].opname.startswith("STORE_") and self.instructions[i].argval == "__annotate_func__":
                         to_remove.extend(self.instructions[i : i + 1])
                         is_class = True
+                        # also drop the closure tuple (LOAD __classdict__; BUILD_TUPLE 1) built for the class __annotate__
+                        if annotate_func and annotate_idx == idx + 2 and self.instructions[idx + 1].opname == "BUILD_TUPLE":
+                            to_remove.extend(self.instructions[idx:annotate_idx])
                         break
 
                 # check if its the end of a class
@@ -333,7 +387,8 @@ class EditableBytecode:
                             # fix stale line numbers
                             for ins in chunk[1:]:
                                 ins.starts_line = None
-                            target_idx = fallback_idx
+                            # an annotation after the last body statement belongs at the end of the body, before the class epilogue
+                            target_idx = fallback_idx if chunk_line is None else idx
                             if chunk_line is not None:
                                 for j, body_inst in enumerate(self.instructions):
                                     if body_inst in removed_set or body_inst in extra_removes:
@@ -347,6 +402,11 @@ class EditableBytecode:
                         extra_removes.update(to_remove)
                     
                     conditional_annotation_map |= class_conditional_annotation_map
+
+                    # the class __annotate__ is fully inlined, so drop it from co_consts to keep it from being decompiled on its own
+                    load_annotate = next(ins for ins in to_remove if ins.opname == "LOAD_CONST" and ins.argval is annotate_codeobj)
+                    if self.co_consts[load_annotate.arg] is annotate_codeobj:
+                        self.co_consts[load_annotate.arg] = None
                 else:
                     sanity_check, inline_insts = is_annotate_func_and_get_inlinable_insts(annotate_codeobj)
                     if sanity_check:
@@ -620,6 +680,15 @@ class EditableBytecode:
             for bc in bytecode.iter_bytecodes():
                 yield bc
 
+    def iter_built_bytecodes(self):
+        """Iterates through all EditableBytecode objects built along with this one, skipping shared and adopted ones."""
+
+        yield self
+
+        for bytecode in self.child_bytecodes:
+            if bytecode not in self.shared_bytecodes and bytecode not in self.adopted_bytecodes:
+                yield from bytecode.iter_built_bytecodes()
+
     def copy(self):
         """Returns a copy of the current bytecode object, as it stands."""
         try:
@@ -728,7 +797,7 @@ class EditableBytecode:
 
     def apply_patches(self, patch_functions: list[Callable[["EditableBytecode"], None]]) -> None:
         for patch in patch_functions:
-            for bc in self.iter_bytecodes():
+            for bc in self.iter_built_bytecodes():
                 patch(bc)
 
     def _change_jump_targets(self, jump_target_mapping: dict[Inst, Inst]):

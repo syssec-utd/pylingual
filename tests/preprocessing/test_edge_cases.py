@@ -175,3 +175,17 @@ def test_stararg_tuple_recovered_as_tuple():
     bc = _preprocess("f(a, *(1, '2'))\n")
     folded = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
     assert (1, '2') in folded, f"star-arg tuple not folded as tuple: {folded!r}"
+
+
+@pytest.mark.parametrize("size", [16, 20, 60])
+def test_large_dict_built_with_map_add_is_folded(size):
+    expected = {f"k{i}": [i, "v"] for i in range(size)}
+    bc = _preprocess(f"a = {expected!r}\n")
+    assert [i.opname for i in bc.instructions][:2] == ["LOAD_CONST", "STORE_NAME"]
+    assert expected in _co_const_values(bc)
+
+
+def test_large_dict_with_dict_splat_is_not_folded():
+    entries = ", ".join(f"'k{i}': {i}" for i in range(20))
+    bc = _preprocess(f"a = {{**b, {entries}}}\n")
+    assert any(inst.opname == "LOAD_NAME" and inst.argval == "b" for inst in bc.instructions)

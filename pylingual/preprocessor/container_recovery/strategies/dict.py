@@ -6,6 +6,44 @@ from ..utils import _non_empty_children, _get_build_map_size
 
 
 @register_recovery_strategy(0)
+def recover_map_add(seg: Segment, indent: int) -> Recovery | None:
+    # BUILD_MAP 0, (KEY, VALUE, ADD)*, (DICT, UPDATE)*
+    if not any(isinstance(c, Segment) and c.tag in ("ADD", "UPDATE") for c in seg.ordered_children):
+        return None
+    result = {}
+    complete = True
+    pending = []
+    for child in seg.ordered_children:
+        if not isinstance(child, Segment) or child.tag == "BUILD":
+            continue
+        if child.tag == "ADD":
+            if len(pending) != 2:
+                return Recovery(None, False)
+            key_r, val_r = (recover(c, indent + 1) for c in pending)
+            items = [(key_r.value, val_r.value)]
+            complete = complete and key_r.complete and val_r.complete
+        elif child.tag == "UPDATE":
+            if len(pending) != 1:
+                return Recovery(None, False)
+            sub_r = recover(pending[0], indent + 1)
+            if not sub_r.complete or not isinstance(sub_r.value, dict):
+                return Recovery(None, False)
+            items = list(sub_r.value.items())
+        else:
+            pending.append(child)
+            continue
+        pending = []
+        for key, value in items:
+            # Duplicate keys affect source construction even though the runtime dict overwrites them.
+            if key in result:
+                complete = False
+            result[key] = value
+    if pending:
+        return Recovery(None, False)
+    return Recovery(result, complete)
+
+
+@register_recovery_strategy(0)
 def recover_dict(seg: Segment, indent: int) -> Recovery | None:
     size = _get_build_map_size(seg)
     if size is None:

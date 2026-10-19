@@ -6,3 +6,4 @@ from .fix_indirect_jump import fix_indirect_jump
 from .replace_firstlno import replace_firstlno
 from .replace_borrow import replace_borrow
 from .split_loads import split_loads
+from .remove_comprehension_get_iter import remove_comprehension_get_iter

@@ -25,6 +25,52 @@ def unwrap(x):
     return x
 
 
+# every code attribute except filename and line info
+SAME_CODE_ATTRS = ("co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_stacksize", "co_flags", "co_code", "co_names", "co_varnames", "co_freevars", "co_cellvars", "co_name", "co_qualname", "co_exceptiontable")
+
+
+def same_const(a, b) -> bool:
+    if iscode(a) or iscode(b):
+        return iscode(a) and iscode(b) and same_code(a, b)
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, tuple):
+        return len(a) == len(b) and all(same_const(x, y) for x, y in zip(a, b))
+    if isinstance(a, frozenset):
+        return sorted(map(repr, a)) == sorted(map(repr, b))
+    if isinstance(a, (float, complex)):
+        # nan never compares equal and -0.0 should stay distinct
+        return a == b and repr(a) == repr(b)
+    return a == b
+
+
+def same_code(a, b) -> bool:
+    """
+    Checks if two code objects are identical, ignoring filenames and line info
+    """
+    if a is b:
+        return True
+    if any(getattr(a, attr, None) != getattr(b, attr, None) for attr in SAME_CODE_ATTRS):
+        return False
+    return len(a.co_consts) == len(b.co_consts) and all(same_const(x, y) for x, y in zip(a.co_consts, b.co_consts))
+
+
+def line_shift(a, b) -> int | None:
+    """
+    Gets how far every line moved between two code objects that are the same apart from line info, or None if the lines changed otherwise
+    """
+    delta = b.co_firstlineno - a.co_firstlineno
+    stack = [(a, b)]
+    while stack:
+        x, y = stack.pop()
+        # co_linetable replaced co_lnotab in 3.10
+        table = "co_linetable" if hasattr(x, "co_linetable") else "co_lnotab"
+        if y.co_firstlineno - x.co_firstlineno != delta or getattr(x, table, None) != getattr(y, table, None):
+            return None
+        stack.extend((c, d) for c, d in zip(x.co_consts, y.co_consts) if iscode(c))
+    return delta
+
+
 def codeobj_replace(codeobj, **kwargs):
     if hasattr(codeobj, "replace"):
         return codeobj.replace(**kwargs)

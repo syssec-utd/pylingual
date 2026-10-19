@@ -2687,7 +2687,7 @@ wheels = [
 [[package]]
 name = "xdis"
 version = "6.3.1.dev0"
-source = { git = "https://github.com/rocky/python-xdis#7741e31b16910718503a58b8d22eb3c2bd074d9e" }
+source = { git = "https://github.com/rocky/python-xdis#51e36c42a01a83d67f6530fdf7fbd42a0f387d86" }
 dependencies = [
     { name = "click" },
     { name = "six" },

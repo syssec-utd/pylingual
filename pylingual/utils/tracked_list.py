@@ -32,6 +32,11 @@ class TrackedList:
     def __getitem__(self, i):
         if self.check_timeout:
             self.check_timeout()
+        if isinstance(i, slice):
+            # batched access: advance progress by the batch size
+            items = self.x[i]
+            self.progress(len(items))
+            return items
         self.progress(i - self.i)
         self.i = i
         return self.x[i]

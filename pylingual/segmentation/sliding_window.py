@@ -97,6 +97,7 @@ def align_segmentation_window_results(
     # bake codeobj_result dicts into lists
     baked_result_dict = dict()
     for codeobj_index, codeobj_result_dict in segmentation_result_dict.items():
+        codeobj_result_list = []
         if bool(codeobj_result_dict):
             codeobj_length = max(codeobj_result_dict.keys()) + 1
             codeobj_result_list = [None] * codeobj_length

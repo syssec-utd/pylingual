@@ -11,6 +11,7 @@ from pylingual.masking.global_masker import Masker, TypeSensitiveDict
 from pylingual.masking.model_disasm import create_global_masker
 from pylingual.preprocessor import Preprocessor, Tracer
 from pylingual.preprocessor.preprocessor import _make_function_stack_effect
+from pylingual.preprocessor.container_recovery.stack_analysis import stripped_precall_effect
 
 
 def _preprocess(source: str) -> EditableBytecode:
@@ -53,6 +54,17 @@ def test_keyword_only_default_mapping_remains_visible_to_model():
     ), None)
     if keys is not None:
         assert masker.get_model_view(keys).startswith("LOAD_CONST , (")
+
+
+def test_decorated_method_keyword_only_default_mapping_is_not_folded():
+    bytecode = _preprocess(
+        "class C:\n"
+        "    @dec\n"
+        "    def f(cls, *, timeout: int=None):\n"
+        "        pass\n"
+    )
+
+    assert not any(inst.opname == "LOAD_CONST" and isinstance(inst.argval, dict) for code in bytecode.iter_bytecodes() for inst in code.instructions)
 
 
 def test_inner_container_still_folds_before_unrelated_make_function():
@@ -163,3 +175,12 @@ def test_tracer_reports_consumer_argument_from_top_of_stack():
     index, argnum = consumption
     assert following[index].opname == "DICT_MERGE"
     assert argnum == 1
+
+
+def test_stripped_precall_effect_only_applies_to_311_calls():
+    def call(version, opname="CALL", arg=2):
+        return SimpleNamespace(opname=opname, arg=arg, bytecode=SimpleNamespace(version=version))
+
+    assert stripped_precall_effect(call((3, 11))) == -2
+    assert stripped_precall_effect(call((3, 12))) == 0
+    assert stripped_precall_effect(call((3, 11), opname="CALL_FUNCTION_EX")) == 0

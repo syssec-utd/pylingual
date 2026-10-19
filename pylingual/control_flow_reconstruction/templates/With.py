@@ -1,5 +1,5 @@
 from ..cft import ControlFlowTemplate, EdgeKind, register_template
-from ..utils import T, N, exact_instructions, starting_instructions, without_top_level_instructions, to_indented_source, make_try_match, versions_from
+from ..utils import E, T, N, ending_instructions, exact_instructions, has_no_lines, with_instructions, starting_instructions, without_top_level_instructions, to_indented_source, make_try_match, versions_from
 
 
 class WithCleanup3_11(ControlFlowTemplate):
@@ -18,6 +18,27 @@ class WithCleanup3_11(ControlFlowTemplate):
     def to_indented_source():
         """
         {pop_exc}
+        """
+
+
+@register_template(0, 9, *versions_from(3, 11))
+class WithReturnExit3_11(ControlFlowTemplate):
+    """A return in a nested with leaves through the inner exit call into the outer exits and the return"""
+
+    template = T(
+        exit=~N("ret").with_cond(has_no_lines).with_cond(ending_instructions("CALL", "POP_TOP")),
+        ret=N(E.meta("end"), E.exc("ret_exc?")).with_in_deg(1).with_cond(has_no_lines).with_cond(with_instructions("CALL", "POP_TOP")).with_cond(ending_instructions("RETURN_VALUE"), ending_instructions("RETURN_CONST")),
+        ret_exc=N.tail(),
+        end=N.tail(),
+    )
+
+    try_match = make_try_match({EdgeKind.Meta: "end"}, "exit", "ret")
+
+    @to_indented_source
+    def to_indented_source():
+        """
+        {exit}
+        {ret}
         """
 
 

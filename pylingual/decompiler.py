@@ -19,11 +19,12 @@ Code3.__eq__ = lambda self, o: (
     and self.co_cellvars == o.co_cellvars
     and self.co_kwonlyargcount == o.co_kwonlyargcount
 )
-Code3.__hash__ = lambda self: hash(self.co_code)
+Code3.__hash__ = lambda self: hash((self.co_code, self.co_name, self.co_firstlineno))
 
 import datetime
 import functools
 import importlib.resources
+import io
 import itertools
 import logging
 import re
@@ -31,6 +32,7 @@ import tempfile
 import sys
 import shutil
 import time
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,7 +42,7 @@ from xdis.magics import magicint2version
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 from pylingual.control_flow_reconstruction.structure import bc_to_cft
 from pylingual.control_flow_reconstruction.cft import MetaTemplate
-from pylingual.equivalence_check import TestResult, compare_pyc
+from pylingual.equivalence_check import PatchedPYC, TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
 from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
 from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
@@ -64,6 +66,22 @@ lno_regex = re.compile(r"(?<=line )\d+")
 
 def has_comp_error(results: list[TestResult]) -> bool:
     return bool(results) and isinstance(results[0], Exception)
+
+
+# an unclosed bracket makes python report the next statement, so find the line that opened it
+def unclosed_bracket_line(source: str, lno: int) -> int | None:
+    stack = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.start[0] >= lno:
+                break
+            if tok.type == tokenize.OP and tok.string in "([{":
+                stack.append(tok.start[0])
+            elif tok.type == tokenize.OP and tok.string in ")]}" and stack:
+                stack.pop()
+    except (tokenize.TokenError, SyntaxError):
+        pass
+    return stack[0] if stack else None
 
 
 @dataclass
@@ -103,7 +121,6 @@ class Decompiler:
 
     def __init__(self, pyc: PYCFile, segmenter: transformers.Pipeline, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
         self.pyc = pyc
-        self.pyc.copy()
         self.name = pyc.pyc_path.name if pyc.pyc_path is not None else repr(pyc)
         self.segmenter = segmenter
         self.translator = translator
@@ -114,6 +131,8 @@ class Decompiler:
         self.trust_lnotab = trust_lnotab
         self.timeout = timeout
         self.start_time = time.time()
+        self.unmask_cache = {}
+        self.unmask_cache_size = None
 
     def check_timeout(self):
         if self.timeout is not None and time.time() - self.start_time > self.timeout:
@@ -154,9 +173,12 @@ class Decompiler:
         lno = lno_regex.search(str(results[0]))
         if lno is None:
             return None
-        lno = int(lno.group(0)) - 1
-        # get offending codeobj
-        bad_codeobj = self.source_context.source_lines()[lno].blame
+        lno = int(lno.group(0))
+        lno = unclosed_bracket_line(str(self.source_context), lno) or lno
+        # get offending codeobj, counting physical lines since unmasked strings can span several
+        source_lines = self.source_context.source_lines()
+        ends = itertools.accumulate(x.line.count("\n") + 1 for x in source_lines)
+        bad_codeobj = source_lines[next((i for i, end in enumerate(ends) if end >= lno), len(source_lines) - 1)].blame
 
         bad_idx = next(i for i, e in enumerate(self.ordered_bytecodes) if e.codeobj == bad_codeobj)
         return bad_idx
@@ -227,7 +249,7 @@ class Decompiler:
             self.ordered_instructions = [list(itertools.chain.from_iterable(bc.get_lno_insts().values())) for bc in self.pyc.iter_bytecodes()]
             self.ordered_bytecodes = [bc for bc in self.pyc.iter_bytecodes()]
             self.codeobj_instruction_lists = [[self.global_masker.get_model_view(inst) for inst in insts] for insts in self.ordered_instructions]
-            self.segmentation_requests = [bytecode_separator.join(self.global_masker.get_model_view(inst) for inst in insts) for insts in self.ordered_instructions]
+            self.segmentation_requests = [bytecode_separator.join(views) for views in self.codeobj_instruction_lists]
         except Exception as e:
             e.add_note("From masking bytecode")
             raise
@@ -235,7 +257,13 @@ class Decompiler:
     def unmask_lines(self):
         logger.info(f"Unmasking lines for {self.name}...")
         try:
-            self.source_lines = restore_masked_source_text(self.source_lines, self.global_masker)
+            # lines are unmasked independently, so lines of unchanged code objects are only unmasked once
+            if self.unmask_cache_size != len(self.global_masker.global_tab):
+                self.unmask_cache = {}
+                self.unmask_cache_size = len(self.global_masker.global_tab)
+            new_lines = [line for line in dict.fromkeys(self.source_lines) if line not in self.unmask_cache]
+            self.unmask_cache.update(zip(new_lines, restore_masked_source_text(new_lines, self.global_masker)))
+            self.source_lines = [self.unmask_cache[line] for line in self.source_lines]
         except Exception as e:
             e.add_note("From masking bytecode")
             raise
@@ -277,7 +305,8 @@ class Decompiler:
             # force each code object to start with a 'B'
 
             for codeobj in self.segmentation_results:
-                codeobj[0]["entity"] = "B"
+                if codeobj:  # hoisted comprehensions have no instructions of their own
+                    codeobj[0]["entity"] = "B"
 
             self.update_starts_line()
         except Exception as e:
@@ -312,8 +341,8 @@ class Decompiler:
         logger.info(f"Translating statements for {self.name}...")
         try:
             translation_requests = []
-            for instructions, boundary_predictions in zip(self.ordered_instructions, self.segmentation_results):
-                translation_requests.append(self.make_translation_request(instructions, boundary_predictions))
+            for model_views, boundary_predictions in zip(self.codeobj_instruction_lists, self.segmentation_results):
+                translation_requests.append(self.make_translation_request(model_views, boundary_predictions))
             flattened_translation_requests = list(itertools.chain.from_iterable(translation_requests))
             self.translation_results = self.translator(flattened_translation_requests, check_timeout=self.check_timeout)
             unflatten(self.translation_results, translation_requests)
@@ -350,13 +379,13 @@ class Decompiler:
             raise
 
     # make a translation request from a segmentation result
-    def make_translation_request(self, instructions: list[list["Inst"]], boundary_predictions: list[dict]) -> list[str]:
+    def make_translation_request(self, model_views: list[str], boundary_predictions: list[dict]) -> list[str]:
         translation_requests = []
-        for inst, boundary_prediction in zip(instructions, boundary_predictions):
+        for model_view, boundary_prediction in zip(model_views, boundary_predictions):
             if boundary_prediction["entity"] == "B":
-                translation_requests.append(self.global_masker.get_model_view(inst))
+                translation_requests.append(model_view)
             else:
-                translation_requests[-1] += bytecode_separator + self.global_masker.get_model_view(inst)
+                translation_requests[-1] += bytecode_separator + model_view
         return translation_requests
 
     def update_source_lines(self):
@@ -384,7 +413,12 @@ class Decompiler:
             logger.error(f"Could not check decompilation due to pyenv error: {e}")
             return []
         else:
-            return compare_pyc(self.pyc, pyc)
+            return compare_pyc(self.patched_pyc, pyc)
+
+    # the original pyc only needs to be patched once, it is compared after every candidate fix
+    @functools.cached_property
+    def patched_pyc(self) -> PatchedPYC:
+        return PatchedPYC(self.pyc)
 
     def result_for_bytecode(self, i: int, results: list[TestResult]) -> TestResult | None:
         codeobj = self.ordered_bytecodes[i].codeobj
@@ -400,8 +434,7 @@ class Decompiler:
         original_prediction = [r["entity"] for r in self.segmentation_results[i]]
         original_translation = self.translation_results[i]
         previous_lines, previous_indented_source = self.source_lines, self.indented_source
-        previous_context_lines = self.source_context.lines
-        previous_cache = self.source_context.cache.copy()
+        previous_context = self.source_context.snapshot()
         previous_starts = [(inst, inst.starts_line) for insts in self.ordered_instructions for inst in insts]
         passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
         strategy = functools.partial(m_deep_top_k, priority_function=naive_confidence_priority, m=2, k=self.top_k + 1)
@@ -416,7 +449,7 @@ class Decompiler:
                 for r, p in zip(self.segmentation_results[i], prediction):
                     r["entity"] = p
                 self.update_starts_line()
-                translation_request = self.make_translation_request(self.ordered_instructions[i], self.segmentation_results[i])
+                translation_request = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
                 try:
                     self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
                     self.update_source_lines()
@@ -449,9 +482,7 @@ class Decompiler:
                     self.translation_results[i] = original_translation
                     self.source_lines = previous_lines
                     self.indented_source = previous_indented_source
-                    self.source_context.lines = previous_context_lines
-                    self.source_context.cache.clear()
-                    self.source_context.cache.update(previous_cache)
+                    self.source_context.restore(previous_context)
         logger.info(f"Could not fix segmentation for {self.ordered_bytecodes[i].name}")
         return False
 

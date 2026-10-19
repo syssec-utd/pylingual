@@ -7,7 +7,7 @@ from pathlib import Path
 import networkx as nx
 from pylingual.control_flow_reconstruction.cfg import CFG
 from pylingual.editable_bytecode import EditableBytecode, Inst, PYCFile
-from pylingual.editable_bytecode.bytecode_patches import fix_indirect_jump, fix_unreachable, remove_extended_arg, remove_nop, replace_firstlno, replace_borrow, split_loads
+from pylingual.editable_bytecode.bytecode_patches import fix_indirect_jump, fix_unreachable, remove_extended_arg, remove_nop, replace_firstlno, replace_borrow, split_loads, remove_comprehension_get_iter
 from pylingual.editable_bytecode.control_flow_graph import bytecode_to_control_flow_graph
 
 
@@ -177,7 +177,35 @@ def matching_iter(pyc_a, pyc_b):
         i_b += 1
 
 
-def compare_pyc(pyc_a: PYCFile | Path, pyc_b: PYCFile | Path) -> list[TestResult]:
+PATCHES = [remove_extended_arg, remove_nop, remove_comprehension_get_iter, fix_indirect_jump, fix_unreachable, remove_extended_arg, replace_firstlno, replace_borrow, split_loads]
+
+
+class PatchedPYC:
+    """
+    Patched copy of a pyc with lazily built block graphs.
+    Pass one to compare_pyc to avoid re-preparing a pyc that is compared repeatedly.
+    Code objects identical to ones in reference (ignoring line info) are shared with it instead of rebuilt,
+    and ones identical to previous (apart from moved lines) are taken from it, so previous must not be used afterwards.
+    """
+
+    def __init__(self, pyc: PYCFile | Path, reference: PatchedPYC | None = None, previous: PatchedPYC | None = None):
+        if isinstance(pyc, PYCFile):
+            self.pyc = pyc.copy()
+        else:
+            self.pyc = PYCFile(pyc, reference=reference and reference.pyc, previous=previous and previous.pyc)
+        self.pyc.apply_patches(PATCHES)
+        self.block_graphs = {}
+        if previous is not None:
+            self.block_graphs = {bc: previous.block_graphs[bc] for bc in self.pyc.iter_bytecodes() if bc in previous.block_graphs}
+        self.last_compared = None
+
+    def block_graph(self, bytecode: EditableBytecode) -> CFG:
+        if bytecode not in self.block_graphs:
+            self.block_graphs[bytecode] = CFG.from_graph(bytecode_to_control_flow_graph(bytecode), bytecode, iterate=False)
+        return self.block_graphs[bytecode]
+
+
+def compare_pyc(pyc_a: PYCFile | Path | PatchedPYC, pyc_b: PYCFile | Path) -> list[TestResult]:
     """
     Tests the control flow of the two pyc files
     Should not be imported as it relies on TestResult class.
@@ -188,15 +216,15 @@ def compare_pyc(pyc_a: PYCFile | Path, pyc_b: PYCFile | Path) -> list[TestResult
     :param pyc_path_b: Second pyc to compare
     """
 
-    pyc_a = pyc_a.copy() if isinstance(pyc_a, PYCFile) else PYCFile(pyc_a)
-    pyc_b = pyc_b.copy() if isinstance(pyc_b, PYCFile) else PYCFile(pyc_b)
-
-    pyc_a.apply_patches([remove_extended_arg, remove_nop, fix_indirect_jump, fix_unreachable, remove_extended_arg, replace_firstlno, replace_borrow, split_loads])
-    pyc_b.apply_patches([remove_extended_arg, remove_nop, fix_indirect_jump, fix_unreachable, remove_extended_arg, replace_firstlno, replace_borrow, split_loads])
+    pyc_a = pyc_a if isinstance(pyc_a, PatchedPYC) else PatchedPYC(pyc_a)
+    # consecutive candidates compared against pyc_a usually differ in only a few code objects
+    previous, pyc_a.last_compared = pyc_a.last_compared, None
+    pyc_b = PatchedPYC(pyc_b, reference=pyc_a, previous=previous)
+    pyc_a.last_compared = pyc_b
 
     results = []
 
-    for bytecode_a, bytecode_b in matching_iter(pyc_a, pyc_b):
+    for bytecode_a, bytecode_b in matching_iter(pyc_a.pyc, pyc_b.pyc):
         if bytecode_a is None:
             test_result = TestResult(False, "Extra bytecode", None, bytecode_b)
             results.append(test_result)
@@ -205,22 +233,23 @@ def compare_pyc(pyc_a: PYCFile | Path, pyc_b: PYCFile | Path) -> list[TestResult
             test_result = TestResult(False, "Missing bytecode", bytecode_a, None)
             results.append(test_result)
             continue
-        cfg_a = bytecode_to_control_flow_graph(bytecode_a)
-        cfg_b = bytecode_to_control_flow_graph(bytecode_b)
-        block_graph_a = CFG.from_graph(cfg_a, bytecode_a, iterate=False)
-        block_graph_b = CFG.from_graph(cfg_b, bytecode_b, iterate=False)
-        if not is_control_flow_equivalent(block_graph_a, block_graph_b):
+        if bytecode_a is bytecode_b:
+            # shared with pyc_a since the code object was identical
+            results.append(TestResult(True, "Equal", bytecode_a, bytecode_b))
+            continue
+        bytecode_result = compare_bytecode(bytecode_a, bytecode_b)
+        if bytecode_result.result:
+            # identical bytecode always has identical control flow, so the graphs are only built on a mismatch
+            test_result = TestResult(True, "Equal", bytecode_a, bytecode_b)
+            results.append(test_result)
+            continue
+
+        if not is_control_flow_equivalent(pyc_a.block_graph(bytecode_a), pyc_b.block_graph(bytecode_b)):
             test_result = TestResult(False, "Different control flow", bytecode_a, bytecode_b)
             results.append(test_result)
             continue
 
-        bytecode_result = compare_bytecode(bytecode_a, bytecode_b)
-        if not bytecode_result.result:
-            test_result = TestResult(False, "Different bytecode", bytecode_a, bytecode_b, bytecode_result.failed_line, bytecode_result.failed_offset)
-            results.append(test_result)
-            continue
-
-        test_result = TestResult(True, "Equal", bytecode_a, bytecode_b)
+        test_result = TestResult(False, "Different bytecode", bytecode_a, bytecode_b, bytecode_result.failed_line, bytecode_result.failed_offset)
         results.append(test_result)
 
     return results

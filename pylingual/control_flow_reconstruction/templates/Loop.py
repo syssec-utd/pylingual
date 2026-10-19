@@ -2,6 +2,8 @@ from __future__ import annotations
 from itertools import chain
 from typing import TYPE_CHECKING
 
+import networkx as nx
+
 from pylingual.control_flow_reconstruction.source import SourceContext, SourceLine
 
 from .Block import BlockTemplate, LoopElse
@@ -133,7 +135,7 @@ class SelfLoop3_10(ControlFlowTemplate):
         header = source[self.loop_header]
         body = source[self.loop_body, 1]
         RET_CONST = source[self.RET_CONST]
-        if not any(source.lines[i.starts_line - 1].strip().startswith("while ") for i in self.loop_header.get_instructions() if i.starts_line is not None):
+        if not any(line.strip().startswith("while ") for i in self.loop_header.get_instructions() if (line := source.line_of(i)) is not None):
             return list(chain(header, self.line("while True:"), body))
         else:
             return list(chain(header, body))
@@ -324,31 +326,37 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
     to_indented_source = defer_source_to("comp")
 
 
+def ends_in_break(cfg, node):
+    break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "LOAD_COMMON_CONSTANT", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
+
+    if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
+        return False
+
+    if isinstance(node, BlockTemplate):
+        opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
+    if isinstance(node, InstTemplate):
+        opcodes = [node.inst]
+
+    i = len(opcodes) - 1
+    while i >= 0:
+        instruction = opcodes[i].opname
+        if instruction in break_candidates:
+            if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
+                return True
+            else:
+                i -= 1
+                continue
+        else:
+            return False
+    return False
+
+
 class BreakTemplate(ControlFlowTemplate):
     @classmethod
     def try_match(cls, cfg, node):
-        break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
-
-        if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
+        if not ends_in_break(cfg, node):
             return None
-
-        if isinstance(node, BlockTemplate):
-            opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
-        if isinstance(node, InstTemplate):
-            opcodes = [node.inst]
-
-        i = len(opcodes) - 1
-        while i >= 0:
-            instruction = opcodes[i].opname
-            if instruction in break_candidates:
-                if opcodes[i].starts_line is not None and not any(opcodes[i].source_line.strip().startswith(word) for word in {"pass", "...", "return"}):
-                    return condense_mapping(cls, cfg, {"child": node}, "child")
-                else:
-                    i -= 1
-                    continue
-            else:
-                return None
-        return None
+        return condense_mapping(cls, cfg, {"child": node}, "child")
 
     def to_indented_source(self, source):
         return self.child.to_indented_source(source) + self.line("break")
@@ -384,6 +392,33 @@ class ContinueTemplate(ControlFlowTemplate):
         return self.child.to_indented_source(source) + self.line("continue")
 
 
+@register_template(0, 2, *versions_from(3, 11))
+class BreakOnceLoop(ControlFlowTemplate):
+    """A for loop whose body always breaks, so it never jumps back to its header."""
+
+    template = T(
+        for_iter=~N("for_body", "exhaust").with_cond(ending_instructions("FOR_ITER")),
+        for_body=~N("tail").with_in_deg(1).with_cond(ends_in_break),
+        exhaust=N("tail").with_in_deg(1).with_cond(has_no_lines),
+        tail=N.tail(),
+    )
+    template2 = T(
+        for_iter=~N("for_body", "tail").with_cond(ending_instructions("FOR_ITER")),
+        for_body=~N("tail").with_in_deg(1).with_cond(ends_in_break),
+        tail=N.tail(),
+    )
+
+    @classmethod
+    def try_match(cls, cfg, node):
+        mapping = cls.template.try_match(cfg, node) or cls.template2.try_match(cfg, node)
+        if mapping is None:
+            return None
+        return condense_mapping(cls, cfg, mapping, "for_iter", "for_body", "exhaust", out_edges={mapping["tail"]: EdgeKind.Fall.prop()})
+
+    def to_indented_source(self, source):
+        return list(chain(source[self.for_iter], source[self.for_body, 1], self.line("break", 1)))
+
+
 @register_template(0, 0)
 class FixLoop(ControlFlowTemplate):
     @classmethod
@@ -416,6 +451,7 @@ class FixLoop(ControlFlowTemplate):
         edges_to_remove = []
         else_candidates = []
         else_node = None
+        break_target = None
 
         if for_loop:
             # For loops
@@ -447,6 +483,16 @@ class FixLoop(ControlFlowTemplate):
                             if cfg.get_edge_data(candidate_end, ss).get("kind") != EdgeKind.Exception:
                                 candidate_end = ss
                                 break
+
+            # When the else body leaves the function, breaks jump to the code after the loop instead
+            if candidate_end is cfg.end and else_node is not None and cfg.bytecode.version >= (3, 11):
+                loop_nodes = {n for n in nx.ancestors(cfg, node) if cfg.dominates(node, n)} | {node}
+                exits = {dst for n in loop_nodes for _, dst, kind in cfg.out_edges(n, data="kind") if kind is not EdgeKind.Exception and dst not in loop_nodes and dst is not else_node and dst is not cfg.end}
+                jumps = {(n, dst) for n in exits for _, dst, kind in cfg.out_edges(n, data="kind") if kind in (EdgeKind.Fall, EdgeKind.Jump)}
+                targets = {dst for _, dst in jumps}
+                if len(targets) == 1 and not has_no_lines(cfg, else_node):
+                    candidate_end = break_target = targets.pop()
+                    encompassed_nodes = [n for n, _ in jumps]
 
             # Add all edges that is connected to candidate end
             for succ in encompassed_nodes:
@@ -536,7 +582,10 @@ class FixLoop(ControlFlowTemplate):
 
         # Match Else node if applicable
         if else_node in else_candidates:
-            LoopElse.try_match(cfg, else_node)
+            loop_else = LoopElse.try_match(cfg, else_node)
+            # the code after the loop now follows the else body
+            if loop_else is not None and break_target is not None and break_target in cfg:
+                cfg.add_edge(loop_else, break_target, kind=EdgeKind.Fall)
 
         cfg.iterate()
         return

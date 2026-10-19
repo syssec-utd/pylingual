@@ -12,7 +12,7 @@ import pathlib
 class PYCFile(EditableBytecode):
     """Represents a .pyc file. Upon creation, extracts all the bytecode from it."""
 
-    def __init__(self, source, name_prefix=None):
+    def __init__(self, source, name_prefix=None, reference=None, previous=None):
         self.pyc_path = None
         self.source = source
         source_tuple = (None, None, None, None, None, None, None, None)
@@ -45,6 +45,8 @@ class PYCFile(EditableBytecode):
             opcode,
             self.version,
             name_prefix=name_prefix,
+            reference=reference,
+            previous=previous,
         )
 
     def copy(self):
