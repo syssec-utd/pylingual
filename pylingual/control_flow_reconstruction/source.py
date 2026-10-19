@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import keyword
+from collections import defaultdict
 import inspect
 import ast
 import re
@@ -15,6 +16,7 @@ from pylingual.utils.use_escape_sequences import use_escape_sequences
 from pylingual.utils.version import PythonVersion
 
 if TYPE_CHECKING:
+    from pylingual.editable_bytecode import Inst
     from .cft import ControlFlowTemplate
 
 
@@ -64,6 +66,9 @@ class SourceContext:
         self.lines = sanitize_lines(lines)
         self.cfts = cfts
         self.cache: dict[ControlFlowTemplate, list[SourceLine]] = {}
+        # lines read while rendering each code object's templates, so cached sources can be kept when other lines change
+        self.reads: dict[Code3, dict[Inst, str | None]] = defaultdict(dict)
+        self.rendering: list[Code3] = []
         self.header_lines: list[SourceLine] = []
         self.purged_cfts: list[ControlFlowTemplate] = []
         self.init_header()
@@ -101,11 +106,30 @@ class SourceContext:
             template, indent = template
         else:
             indent = 0
-        if template not in self.cache:
-            self.cache[template] = template.to_indented_source(self)
+        if self.rendering and template.blame is not self.rendering[-1]:
+            # reads would be blamed on the wrong code object, so don't cache
+            self.rendering.append(template.blame)
+            try:
+                src = template.to_indented_source(self)
+            finally:
+                self.rendering.pop()
+        else:
+            if template not in self.cache:
+                self.rendering.append(template.blame)
+                try:
+                    self.cache[template] = template.to_indented_source(self)
+                finally:
+                    self.rendering.pop()
+            src = self.cache[template]
         if indent:
-            return indent_lines(template.header_lines + self.cache[template], indent)
-        return template.header_lines + self.cache[template]
+            return indent_lines(template.header_lines + src, indent)
+        return template.header_lines + src
+
+    def line_of(self, inst: Inst) -> str | None:
+        line = None if inst.starts_line is None else self.lines[inst.starts_line - 1]
+        for co in set(self.rendering):
+            self.reads[co][inst] = line
+        return line
 
     def source_lines_of(self, co: Code3, i=0) -> Generator[SourceLine]:
         lines = self[self.cfts[co], i]
@@ -189,4 +213,19 @@ class SourceContext:
 
     def update_lines(self, lines: list[str]):
         self.lines = sanitize_lines(lines)
+        # only rebuild the sources of code objects that read a line that changed
+        changed = {co for co, reads in self.reads.items() if any((None if inst.starts_line is None else self.lines[inst.starts_line - 1]) != line for inst, line in reads.items())}
+        for co in changed:
+            del self.reads[co]
+        for template in [t for t in self.cache if t.blame in changed]:
+            del self.cache[template]
+
+    def snapshot(self):
+        return self.lines, self.cache.copy(), {co: reads.copy() for co, reads in self.reads.items()}
+
+    def restore(self, snapshot):
+        self.lines, cache, reads = snapshot
         self.cache.clear()
+        self.cache.update(cache)
+        self.reads.clear()
+        self.reads.update(reads)

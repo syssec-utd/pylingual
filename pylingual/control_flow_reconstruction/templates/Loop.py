@@ -133,7 +133,7 @@ class SelfLoop3_10(ControlFlowTemplate):
         header = source[self.loop_header]
         body = source[self.loop_body, 1]
         RET_CONST = source[self.RET_CONST]
-        if not any(source.lines[i.starts_line - 1].strip().startswith("while ") for i in self.loop_header.get_instructions() if i.starts_line is not None):
+        if not any(line.strip().startswith("while ") for i in self.loop_header.get_instructions() if (line := source.line_of(i)) is not None):
             return list(chain(header, self.line("while True:"), body))
         else:
             return list(chain(header, body))

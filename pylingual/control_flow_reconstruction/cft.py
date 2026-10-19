@@ -391,7 +391,8 @@ class InstTemplate(ControlFlowTemplate):
 
     @override
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
-        lines = [] if self.inst.starts_line is None or not source.lines[self.inst.starts_line - 1] else self.line(source.lines[self.inst.starts_line - 1])
+        line = source.line_of(self.inst)
+        lines = self.line(line) if line else []
         if self.inst.opname == "LOAD_CONST" and iscode(self.inst.argval):
             if self.inst.argval in source.cfts and self.inst.argval.co_name not in comprehension_names:  # type: ignore
                 lines.append(SourceLine("", 1, self.inst.argval, self.inst.argval))

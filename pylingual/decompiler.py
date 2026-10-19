@@ -434,8 +434,7 @@ class Decompiler:
         original_prediction = [r["entity"] for r in self.segmentation_results[i]]
         original_translation = self.translation_results[i]
         previous_lines, previous_indented_source = self.source_lines, self.indented_source
-        previous_context_lines = self.source_context.lines
-        previous_cache = self.source_context.cache.copy()
+        previous_context = self.source_context.snapshot()
         previous_starts = [(inst, inst.starts_line) for insts in self.ordered_instructions for inst in insts]
         passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
         strategy = functools.partial(m_deep_top_k, priority_function=naive_confidence_priority, m=2, k=self.top_k + 1)
@@ -483,9 +482,7 @@ class Decompiler:
                     self.translation_results[i] = original_translation
                     self.source_lines = previous_lines
                     self.indented_source = previous_indented_source
-                    self.source_context.lines = previous_context_lines
-                    self.source_context.cache.clear()
-                    self.source_context.cache.update(previous_cache)
+                    self.source_context.restore(previous_context)
         logger.info(f"Could not fix segmentation for {self.ordered_bytecodes[i].name}")
         return False
 
