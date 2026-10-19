@@ -131,6 +131,8 @@ class Decompiler:
         self.trust_lnotab = trust_lnotab
         self.timeout = timeout
         self.start_time = time.time()
+        self.unmask_cache = {}
+        self.unmask_cache_size = None
 
     def check_timeout(self):
         if self.timeout is not None and time.time() - self.start_time > self.timeout:
@@ -255,7 +257,13 @@ class Decompiler:
     def unmask_lines(self):
         logger.info(f"Unmasking lines for {self.name}...")
         try:
-            self.source_lines = restore_masked_source_text(self.source_lines, self.global_masker)
+            # lines are unmasked independently, so lines of unchanged code objects are only unmasked once
+            if self.unmask_cache_size != len(self.global_masker.global_tab):
+                self.unmask_cache = {}
+                self.unmask_cache_size = len(self.global_masker.global_tab)
+            new_lines = [line for line in dict.fromkeys(self.source_lines) if line not in self.unmask_cache]
+            self.unmask_cache.update(zip(new_lines, restore_masked_source_text(new_lines, self.global_masker)))
+            self.source_lines = [self.unmask_cache[line] for line in self.source_lines]
         except Exception as e:
             e.add_note("From masking bytecode")
             raise
