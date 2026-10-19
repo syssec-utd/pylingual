@@ -19,7 +19,7 @@ Code3.__eq__ = lambda self, o: (
     and self.co_cellvars == o.co_cellvars
     and self.co_kwonlyargcount == o.co_kwonlyargcount
 )
-Code3.__hash__ = lambda self: hash(self.co_code)
+Code3.__hash__ = lambda self: hash((self.co_code, self.co_name, self.co_firstlineno))
 
 import datetime
 import functools
