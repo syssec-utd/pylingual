@@ -92,7 +92,32 @@ class Except3_11(ControlFlowTemplate):
             return x
 
 
+def implicit_return_exit(node):
+    # the except body leaves through the function's lineless `return None`
+    insts = node.get_instructions()
+    for i, inst in enumerate(insts):
+        if inst.opname != "POP_EXCEPT":
+            continue
+        rest = insts[i + 1 :]
+        # skip the cleanup of a named exception
+        if len(rest) > 3 and rest[0].opname in ("LOAD_CONST", "LOAD_COMMON_CONSTANT") and rest[0].argval is None and rest[1].opname in ("STORE_FAST", "STORE_NAME") and rest[2].opname in ("DELETE_FAST", "DELETE_NAME"):
+            rest = rest[3:]
+        if rest and rest[0].opname == "RETURN_CONST":
+            ret = rest[:1]
+        elif len(rest) > 1 and rest[0].opname in ("LOAD_CONST", "LOAD_COMMON_CONSTANT") and rest[1].opname == "RETURN_VALUE":
+            ret = rest[:2]
+        else:
+            continue
+        # a lined POP_EXCEPT ends a `pass`; an explicit `return` would carry the line instead
+        if inst.starts_line is not None and inst.source_line.strip() not in ("pass", "..."):
+            continue
+        if ret[0].argval is None and all(x.starts_line is None for x in ret):
+            return True
+    return False
+
+
 @register_template(0, 0, *versions_from(3, 12))
+@register_template(2, 0, *versions_from(3, 12))
 class Try3_12(ControlFlowTemplate):
     template = T(
         try_header=N("try_body"),
@@ -102,17 +127,27 @@ class Try3_12(ControlFlowTemplate):
         tail=N.tail(),
     )
 
-    try_match = revert_on_fail(
-        make_try_match(
-            {
-                EdgeKind.Fall: "tail",
-            },
-            "try_header",
-            "try_body",
-            "except_body",
-            "reraise",
-        )
+    _try_match = make_try_match(
+        {
+            EdgeKind.Fall: "tail",
+        },
+        "try_header",
+        "try_body",
+        "except_body",
+        "reraise",
     )
+
+    @classmethod
+    def _match(cls, cfg, node):
+        if (x := cls._try_match(cfg, node)) is None:
+            return None
+        # a lined tail only reachable from the try body when the except returns is an else body; let TryElse take it once it is structured
+        tail = next((dst for _, dst, kind in cfg.out_edges(x, data="kind") if kind is EdgeKind.Fall), None)
+        if cfg.run != 2 and tail is not None and tail is not cfg.end and implicit_return_exit(x.except_body) and has_some_lines(cfg, tail):
+            return None
+        return x
+
+    try_match = revert_on_fail(_match)
 
     @to_indented_source
     def to_indented_source():
@@ -331,11 +366,15 @@ class NamedExcTail3_11(ControlFlowTemplate):
     to_indented_source = defer_source_to("tail")
 
 
+# 3.15 loads None with LOAD_COMMON_CONSTANT
+named_exc_cleanup = [exact_instructions(load, store, delete, "RERAISE") for load in ("LOAD_CONST", "LOAD_COMMON_CONSTANT") for store, delete in (("STORE_FAST", "DELETE_FAST"), ("STORE_NAME", "DELETE_NAME"))]
+
+
 class NamedExc3_11(ExcBody3_11):
     template = T(
         STORE=N("body", None, "reraise").with_cond(exact_instructions("STORE_FAST"), exact_instructions("STORE_NAME")),
         body=N("tail.", None, "cleanup"),
-        cleanup=N(E.exc("reraise")).with_cond(exact_instructions("LOAD_CONST", "STORE_FAST", "DELETE_FAST", "RERAISE"), exact_instructions("LOAD_CONST", "STORE_NAME", "DELETE_NAME", "RERAISE")),
+        cleanup=N(E.exc("reraise")).with_cond(*named_exc_cleanup),
         reraise=reraise,
         tail=N.tail().of_subtemplate(NamedExcTail3_11),
     )
@@ -344,7 +383,7 @@ class NamedExc3_11(ExcBody3_11):
         STORE=N("prefix", None, "reraise").with_cond(exact_instructions("STORE_FAST"), exact_instructions("STORE_NAME")),
         prefix=N("body").with_in_deg(1).with_cond(lambda cfg, node: node is not None and bool(node.get_instructions()) and all(i.opname == "NOP" for i in node.get_instructions())),
         body=N("tail.", None, "cleanup"),
-        cleanup=N(E.exc("reraise")).with_cond(exact_instructions("LOAD_CONST", "STORE_FAST", "DELETE_FAST", "RERAISE"), exact_instructions("LOAD_CONST", "STORE_NAME", "DELETE_NAME", "RERAISE")),
+        cleanup=N(E.exc("reraise")).with_cond(*named_exc_cleanup),
         reraise=reraise,
         tail=N.tail().of_subtemplate(NamedExcTail3_11),
     )
