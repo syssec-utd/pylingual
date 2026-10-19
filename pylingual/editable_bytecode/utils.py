@@ -63,7 +63,9 @@ def line_shift(a, b) -> int | None:
     stack = [(a, b)]
     while stack:
         x, y = stack.pop()
-        if y.co_firstlineno - x.co_firstlineno != delta or any(getattr(x, attr, None) != getattr(y, attr, None) for attr in ("co_lnotab", "co_linetable")):
+        # co_linetable replaced co_lnotab in 3.10
+        table = "co_linetable" if hasattr(x, "co_linetable") else "co_lnotab"
+        if y.co_firstlineno - x.co_firstlineno != delta or getattr(x, table, None) != getattr(y, table, None):
             return None
         stack.extend((c, d) for c, d in zip(x.co_consts, y.co_consts) if iscode(c))
     return delta
