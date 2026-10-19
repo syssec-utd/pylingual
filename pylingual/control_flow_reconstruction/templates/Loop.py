@@ -541,14 +541,18 @@ class FixLoop(ControlFlowTemplate):
                         else_node = succ
             
             # Matching Continue statements and removing edges to loop header
+            # Only condense real back edges, and keep the last one when it is the only
+            # way the loop header is reached (e.g. a continue in an except handler).
+            back_edges = [c for c in back_edges if cfg.has_edge(c, node) or (loop_header is not cfg.start and cfg.has_edge(c, loop_header))]
             for candidate in back_edges:
                 cont_node = ContinueTemplate.try_match(cfg, candidate)
-                if cont_node is not None:
+                # keep the last back edge so the loop header is still recognized as a loop
+                if cont_node is not None and len(back_edges) > 1:
                     if cfg.has_edge(cont_node, node):
                         cfg.remove_edge(cont_node, node)
                     if cfg.has_edge(cont_node, loop_header):
                         cfg.remove_edge(cont_node, loop_header)
-                        
+
             # Finding all nodes encompassed by the loop excluding source node
             dfs_edges = cfg.dfs_labeled_edges_no_loop(source=node)
             candidates = [v for u, v, d in dfs_edges if d == "forward"][1:]

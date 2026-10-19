@@ -453,10 +453,21 @@ def condense_mapping(
         out_edges[cfg.end] = EdgeKind.Meta.prop()
     if out_filter:
         out_edges = {k: v for k, v in out_edges.items() if EdgeCategory.from_kind(v["kind"]) not in out_filter}
+    # A back edge to a template's root becomes a self edge so the enclosing loop
+    # is still recognized after the root is folded into this template.
+    is_try = cls.__name__.startswith(("Try", "Except"))
+    root = in_template[nodes[0]] if nodes and is_try else None
+    matched = {x for x in in_template.values() if x is not None}
+    back_edges = {prop["kind"]: prop for src, _, prop in cfg.in_edges(root, data=True) if src in matched and src is not root} if root is not None else {}
+
     remove_nodes(cfg, mapping, *in_template)
     cfg.add_node(template)
     cfg.add_edges_from((src, template, prop) for src, prop in in_edges.items())
     cfg.add_edges_from((template, dst, prop) for dst, prop in out_edges.items())
+    cfg.add_edges_from((template, template, prop) for prop in back_edges.values())
+    # stale edge endpoints can resurrect a folded loop header, drop them again
+    if is_try:
+        cfg.remove_nodes_from(n for n in matched if n in cfg)
     cfg.iterate()
     return template
 
