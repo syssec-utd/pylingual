@@ -326,16 +326,53 @@ class InlinedComprehensionTemplate(ControlFlowTemplate):
     to_indented_source = defer_source_to("comp")
 
 
+def inlined_return_start(opcodes):
+    """Return the index of an inlined loop-exit return, or None.
+
+    CPython turns a break followed by a loop-exit return into stack cleanup, a load
+    of the returned value, and a return. The load keeps the loop-exit line, while
+    the cleanup belongs to the break line. A genuine in-loop return loads its value
+    on its own line and cleans up after the load instead.
+    """
+    if len(opcodes) < 2 or opcodes[-1].opname not in {"RETURN_VALUE", "RETURN_CONST"}:
+        return None
+    load = opcodes[-2]
+    if not load.opname.startswith("LOAD_"):
+        return None
+    # The model can put the break line on the cleanup instead of the load, so also
+    # detect the loaded value when a cleanup line reads as a return.
+    if load.starts_line is not None and load.source_line.strip().startswith("return"):
+        pass
+    elif load.argval is not None and any(o.starts_line is not None and o.source_line.strip().startswith("return") for o in opcodes[:-2]):
+        pass
+    else:
+        return None
+    i = len(opcodes) - 2
+    while i > 0 and opcodes[i - 1].opname in {"POP_TOP", "POP_BLOCK", "POP_ITER"}:
+        src = opcodes[i - 1].source_line.strip()
+        if opcodes[i - 1].starts_line is not None and not src.startswith("return"):
+            break
+        i -= 1
+    if i == len(opcodes) - 2 or any(op.opname == "END_FOR" for op in opcodes[:i]):
+        return None
+    return i
+
+
 def ends_in_break(cfg, node):
-    break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_CONST", "LOAD_COMMON_CONSTANT", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
+    break_candidates = {"POP_TOP", "LOAD_FAST", "LOAD_FAST_BORROW", "LOAD_CONST", "LOAD_COMMON_CONSTANT", "RETURN_VALUE", "RETURN_CONST", "JUMP_ABSOLUTE", "JUMP_FORWARD", "JUMP_BACKWARD", "BREAK_LOOP", "POP_BLOCK"}
+
+    if isinstance(node, BlockTemplate):
+        opcodes = [x.inst for x in node.members if isinstance(x, InstTemplate)]
+    elif isinstance(node, InstTemplate):
+        opcodes = [node.inst]
+    else:
+        opcodes = []
+
+    if inlined_return_start(opcodes) is not None:
+        return True
 
     if not with_top_level_instructions(*break_candidates)(cfg, node) or has_no_lines(cfg, node):
         return False
-
-    if isinstance(node, BlockTemplate):
-        opcodes = list(x.inst for x in node.members if isinstance(x, InstTemplate))
-    if isinstance(node, InstTemplate):
-        opcodes = [node.inst]
 
     i = len(opcodes) - 1
     while i >= 0:
@@ -359,6 +396,10 @@ class BreakTemplate(ControlFlowTemplate):
         return condense_mapping(cls, cfg, {"child": node}, "child")
 
     def to_indented_source(self, source):
+        if isinstance(self.child, BlockTemplate) and (start := inlined_return_start(self.child.get_instructions())) is not None:
+            # the inlined return is compiler bookkeeping for the break, not a statement
+            head = self.child.members[:start]
+            return (BlockTemplate(head).to_indented_source(source) if head else []) + self.line("break")
         return self.child.to_indented_source(source) + self.line("break")
 
 
@@ -493,6 +534,9 @@ class FixLoop(ControlFlowTemplate):
                 if len(targets) == 1 and not has_no_lines(cfg, else_node):
                     candidate_end = break_target = targets.pop()
                     encompassed_nodes = [n for n, _ in jumps]
+                elif any(inlined_return_start(n.get_instructions()) is not None for n in encompassed_nodes):
+                    # an inlined break return exits the loop through this tail, so it is not an else
+                    else_node = None
 
             # Add all edges that is connected to candidate end
             for succ in encompassed_nodes:

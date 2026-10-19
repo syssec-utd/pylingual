@@ -41,7 +41,7 @@ class EarlyRet(ControlFlowTemplate):
             without_instructions("JUMP_BACKWARD_NO_INTERRUPT", "POP_JUMP_IF_TRUE", "JUMP_FORWARD", "JUMP_BACKWARD", "POP_JUMP_IF_NOT_NONE", "POP_JUMP_IF_NONE", "POP_JUMP_IF_FALSE", "YIELD_VALUE"),
         ).with_in_deg(1),
         early_ret=N(E.meta("end")).with_cond(ending_instructions("RETURN_VALUE"), ending_instructions("RETURN_CONST")).of_type(BlockTemplate, InstTemplate).with_cond(
-            without_instructions("JUMP_BACKWARD_NO_INTERRUPT", "POP_JUMP_IF_TRUE", "JUMP_FORWARD", "JUMP_BACKWARD", "POP_JUMP_IF_NOT_NONE", "POP_JUMP_IF_NONE", "POP_JUMP_IF_FALSE", "LOAD_FAST"),
+            without_instructions("JUMP_BACKWARD_NO_INTERRUPT", "POP_JUMP_IF_TRUE", "JUMP_FORWARD", "JUMP_BACKWARD", "POP_JUMP_IF_NOT_NONE", "POP_JUMP_IF_NONE", "POP_JUMP_IF_FALSE", "LOAD_FAST", "LOAD_FAST_BORROW"),
         ).with_in_deg(1),
         end=N(None).of_type(MetaTemplate),
     )
