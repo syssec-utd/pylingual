@@ -24,6 +24,7 @@ Code3.__hash__ = lambda self: hash(self.co_code)
 import datetime
 import functools
 import importlib.resources
+import io
 import itertools
 import logging
 import re
@@ -31,6 +32,7 @@ import tempfile
 import sys
 import shutil
 import time
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -64,6 +66,22 @@ lno_regex = re.compile(r"(?<=line )\d+")
 
 def has_comp_error(results: list[TestResult]) -> bool:
     return bool(results) and isinstance(results[0], Exception)
+
+
+# an unclosed bracket makes python report the next statement, so find the line that opened it
+def unclosed_bracket_line(source: str, lno: int) -> int | None:
+    stack = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.start[0] >= lno:
+                break
+            if tok.type == tokenize.OP and tok.string in "([{":
+                stack.append(tok.start[0])
+            elif tok.type == tokenize.OP and tok.string in ")]}" and stack:
+                stack.pop()
+    except (tokenize.TokenError, SyntaxError):
+        pass
+    return stack[0] if stack else None
 
 
 @dataclass
@@ -153,9 +171,12 @@ class Decompiler:
         lno = lno_regex.search(str(results[0]))
         if lno is None:
             return None
-        lno = int(lno.group(0)) - 1
-        # get offending codeobj
-        bad_codeobj = self.source_context.source_lines()[lno].blame
+        lno = int(lno.group(0))
+        lno = unclosed_bracket_line(str(self.source_context), lno) or lno
+        # get offending codeobj, counting physical lines since unmasked strings can span several
+        source_lines = self.source_context.source_lines()
+        ends = itertools.accumulate(x.line.count("\n") + 1 for x in source_lines)
+        bad_codeobj = source_lines[next((i for i, end in enumerate(ends) if end >= lno), len(source_lines) - 1)].blame
 
         bad_idx = next(i for i, e in enumerate(self.ordered_bytecodes) if e.codeobj == bad_codeobj)
         return bad_idx
