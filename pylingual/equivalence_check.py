@@ -184,10 +184,11 @@ class PatchedPYC:
     """
     Patched copy of a pyc with lazily built block graphs.
     Pass one to compare_pyc to avoid re-preparing a pyc that is compared repeatedly.
+    Code objects identical to ones in reference (ignoring line info) are shared with it instead of rebuilt.
     """
 
-    def __init__(self, pyc: PYCFile | Path):
-        self.pyc = pyc.copy() if isinstance(pyc, PYCFile) else PYCFile(pyc)
+    def __init__(self, pyc: PYCFile | Path, reference: PYCFile | None = None):
+        self.pyc = pyc.copy() if isinstance(pyc, PYCFile) else PYCFile(pyc, reference=reference)
         self.pyc.apply_patches(PATCHES)
         self.block_graphs = {}
 
@@ -209,7 +210,7 @@ def compare_pyc(pyc_a: PYCFile | Path | PatchedPYC, pyc_b: PYCFile | Path) -> li
     """
 
     pyc_a = pyc_a if isinstance(pyc_a, PatchedPYC) else PatchedPYC(pyc_a)
-    pyc_b = PatchedPYC(pyc_b)
+    pyc_b = PatchedPYC(pyc_b, reference=pyc_a.pyc)
 
     results = []
 
@@ -221,6 +222,10 @@ def compare_pyc(pyc_a: PYCFile | Path | PatchedPYC, pyc_b: PYCFile | Path) -> li
         if bytecode_b is None:
             test_result = TestResult(False, "Missing bytecode", bytecode_a, None)
             results.append(test_result)
+            continue
+        if bytecode_a is bytecode_b:
+            # shared with pyc_a since the code object was identical
+            results.append(TestResult(True, "Equal", bytecode_a, bytecode_b))
             continue
         bytecode_result = compare_bytecode(bytecode_a, bytecode_b)
         if bytecode_result.result:

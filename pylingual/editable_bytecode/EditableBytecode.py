@@ -12,7 +12,7 @@ from xdis.bytecode import parse_exception_table, _ExceptionTableEntry
 from pylingual.utils.version import PythonVersion
 
 from .Instruction import Inst
-from .utils import codeobj_replace, comprehension_names, unwrap
+from .utils import codeobj_replace, comprehension_names, same_code, unwrap
 from .control_flow_graph import bytecode_to_control_flow_graph
 
 from typing import Callable
@@ -50,6 +50,7 @@ class EditableBytecode:
         version,
         name_prefix: Optional[str] = None,
         parent=None,
+        reference=None,
     ):
         self.codeobj = codeobj
         self.opcode = opcode
@@ -120,12 +121,24 @@ class EditableBytecode:
         self.child_bytecodes = []
         self.bytecode_lookup = {}
 
+        # children of reference are reused in place of identical children (ignoring line info)
+        # reused children belong to reference, so they must not be edited
+        self.reused_bytecodes = []
+        code_indices = [i for i, const in enumerate(self.co_consts) if iscode(const)]
+        references = [None] * len(code_indices)
+        if reference is not None and [unwrap(self.co_consts[i].co_name) for i in code_indices] == [unwrap(bc.codeobj.co_name) for bc in reference.child_bytecodes]:
+            references = reference.child_bytecodes
+
         # Initialize recursive structure
-        for i, const in enumerate(self.co_consts):
-            if iscode(const):
-                self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self)
-                self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
-                self.bytecode_lookup[const.co_name] = self.co_consts[i]
+        for i, ref in zip(code_indices, references):
+            const = self.co_consts[i]
+            if ref is not None and same_code(ref.codeobj, const):
+                self.co_consts[i] = ref
+                self.reused_bytecodes.append(ref)
+            else:
+                self.co_consts[i] = EditableBytecode(const, opcode, self.version, name_prefix=self.name, parent=self, reference=ref)
+            self.child_bytecodes.append(self.co_consts[i])  # Keeps it in order
+            self.bytecode_lookup[const.co_name] = self.co_consts[i]
     def fix_make_function_argval(self):
         """In Python 3.13 the argval for MAKE_FUNCTION is determined by an optional subsequent SET_FUNCTION_ATTRIBUTE instruction"""
 
@@ -636,6 +649,15 @@ class EditableBytecode:
             for bc in bytecode.iter_bytecodes():
                 yield bc
 
+    def iter_owned_bytecodes(self):
+        """Iterates through all EditableBytecode objects in the recursive object, skipping reused ones."""
+
+        yield self
+
+        for bytecode in self.child_bytecodes:
+            if bytecode not in self.reused_bytecodes:
+                yield from bytecode.iter_owned_bytecodes()
+
     def copy(self):
         """Returns a copy of the current bytecode object, as it stands."""
         try:
@@ -744,7 +766,7 @@ class EditableBytecode:
 
     def apply_patches(self, patch_functions: list[Callable[["EditableBytecode"], None]]) -> None:
         for patch in patch_functions:
-            for bc in self.iter_bytecodes():
+            for bc in self.iter_owned_bytecodes():
                 patch(bc)
 
     def _change_jump_targets(self, jump_target_mapping: dict[Inst, Inst]):

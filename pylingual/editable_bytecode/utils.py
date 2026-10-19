@@ -25,6 +25,36 @@ def unwrap(x):
     return x
 
 
+# every code attribute except filename and line info
+SAME_CODE_ATTRS = ("co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_stacksize", "co_flags", "co_code", "co_names", "co_varnames", "co_freevars", "co_cellvars", "co_name", "co_qualname", "co_exceptiontable")
+
+
+def same_const(a, b) -> bool:
+    if iscode(a) or iscode(b):
+        return iscode(a) and iscode(b) and same_code(a, b)
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, tuple):
+        return len(a) == len(b) and all(same_const(x, y) for x, y in zip(a, b))
+    if isinstance(a, frozenset):
+        return sorted(map(repr, a)) == sorted(map(repr, b))
+    if isinstance(a, (float, complex)):
+        # nan never compares equal and -0.0 should stay distinct
+        return a == b and repr(a) == repr(b)
+    return a == b
+
+
+def same_code(a, b) -> bool:
+    """
+    Checks if two code objects are identical, ignoring filenames and line info
+    """
+    if a is b:
+        return True
+    if any(getattr(a, attr, None) != getattr(b, attr, None) for attr in SAME_CODE_ATTRS):
+        return False
+    return len(a.co_consts) == len(b.co_consts) and all(same_const(x, y) for x, y in zip(a.co_consts, b.co_consts))
+
+
 def codeobj_replace(codeobj, **kwargs):
     if hasattr(codeobj, "replace"):
         return codeobj.replace(**kwargs)
