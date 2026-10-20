@@ -42,6 +42,32 @@ def test_identical_code_objects_are_shared(tmp_path):
     assert {r.name_a for r in results if r.bc_a is r.bc_b} >= {"<module>.f", "<module>.C.g", "<module>.C.h"}
 
 
+def test_split_loads_keeps_correct_local_indices():
+    # Explicit combined instructions exercise the patch on every host version.
+    import sys
+    from xdis import get_opcode
+    from pylingual.editable_bytecode import EditableBytecode
+    from pylingual.editable_bytecode.Instruction import Inst
+    from pylingual.editable_bytecode.bytecode_patches.split_loads import split_loads
+
+    opc = get_opcode((3, 13), False)
+    names = [f"local{i}" for i in range(16)]
+    code = compile("pass", "<split-loads>", "exec")
+    for first in range(16):
+        for second in range(16):
+            bc = EditableBytecode(code, get_opcode(sys.version_info[:2], False), sys.version_info[:3])
+            bc.opcode = opc
+            bc.co_varnames = names.copy()
+            inst = Inst(bc, "LOAD_FAST_LOAD_FAST", opc.LOAD_FAST_LOAD_FAST, "local", 2, (first << 4) | second, (names[first], names[second]), "", True, 0, 1, False, False)
+            bc.instructions = [inst]
+            bc._edited = True
+            split_loads(bc)
+            assert [i.opname for i in bc] == ["LOAD_FAST", "LOAD_FAST"]
+            assert [i.arg for i in bc] == [first, second]
+            assert [i.argval for i in bc] == [names[first], names[second]]
+            assert all(bc.co_varnames[i.arg] == i.argval for i in bc)
+
+
 def test_chained_compares_match_fresh_compares(tmp_path):
     original = _pyc(tmp_path, "original", ORIGINAL)
     lines_before = [inst.starts_line for bc in PatchedPYC(original).pyc.iter_bytecodes() for inst in bc.instructions]
