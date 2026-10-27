@@ -453,10 +453,30 @@ def condense_mapping(
         out_edges[cfg.end] = EdgeKind.Meta.prop()
     if out_filter:
         out_edges = {k: v for k, v in out_edges.items() if EdgeCategory.from_kind(v["kind"]) not in out_filter}
+    # Folding a try template around a loop can hide the loop: the back edge that
+    # returned to the folded root disappears with the node. Keep genuine back edges
+    # (a jump from later bytecode) as a self edge on the folded template.
+    is_try = cls.__name__.startswith(("Try", "Except"))
+    root = in_template[nodes[0]] if nodes and is_try else None
+    back_edges = {}
+    matched = set()
+    if root is not None:
+        matched = {x for x in in_template.values() if x is not None}
+        for src, _, prop in cfg.in_edges(root, data=True):
+            if src not in matched or src.offset is None or root.offset is None or src.offset <= root.offset:
+                continue
+            if EdgeCategory.from_kind(prop["kind"]) is EdgeCategory.Exception:
+                continue
+            back_edges[prop["kind"]] = prop
+
     remove_nodes(cfg, mapping, *in_template)
     cfg.add_node(template)
     cfg.add_edges_from((src, template, prop) for src, prop in in_edges.items())
     cfg.add_edges_from((template, dst, prop) for dst, prop in out_edges.items())
+    cfg.add_edges_from((template, template, prop) for prop in back_edges.values())
+    # stale edge endpoints can resurrect a folded loop header, drop them again
+    if is_try:
+        cfg.remove_nodes_from(n for n in matched if n in cfg)
     cfg.iterate()
     return template
 
