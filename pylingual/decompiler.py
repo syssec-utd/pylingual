@@ -357,7 +357,7 @@ class Decompiler:
             cfts = {bc.codeobj: bc_to_cft(bc, self.source_lines) for bc in TrackedList(CFLOW_STEP, self.ordered_bytecodes, check_timeout=self.check_timeout)}
             self.source_context = SourceContext(self.pyc, self.source_lines, cfts)
             version = magicint2version.get(self.pyc.magic, "?")
-            time = datetime.datetime.fromtimestamp(self.pyc.timestamp, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+            time = datetime.datetime.fromtimestamp(self.pyc.timestamp, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S UTC") if self.pyc.timestamp is not None else "unknown"
             self.source_context.header_lines = [
                 SourceLine("# Decompiled with PyLingual (https://pylingual.io)", 0, self.pyc.codeobj, meta=True),
                 SourceLine(f"# Internal filename: {self.pyc.codeobj.co_filename!r}", 0, self.pyc.codeobj, meta=True),
