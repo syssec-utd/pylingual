@@ -85,7 +85,10 @@ def evaluate_binop_optimizations(node: ast.BinOp, version):
             # don't simplify if the calculation throws an error
             try:
                 value = eval(compile(ast.fix_missing_locations(ast.Expression(binop)), "", "eval"))
-            except (TypeError, ZeroDivisionError):
+            except (TypeError, ZeroDivisionError, ValueError):
+                # ValueError: shifts with a negative count (1 << -1) raise at
+                # runtime; CPython aborts folding for them and keeps the
+                # expression. Catching it here prevents source masking from crashing.
                 return binop
             # following two checks are for catching cases where the compiler will not premptively evaluate the expression
             # see max sizes in cpython: https://github.com/python/cpython/blob/34e93d3998bab8acd651c50724eb1977f4860a08/Python/ast_opt.c#LL156C1-L156C1
