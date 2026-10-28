@@ -1,7 +1,11 @@
+import py_compile
+import runpy
+
 import pytest
 
+from pylingual.editable_bytecode import PYCFile
 from pylingual.masking.global_masker import Masker
-from pylingual.masking.model_disasm import restore_masked_source_text
+from pylingual.masking.model_disasm import create_global_masker, mask_source, restore_masked_source, restore_masked_source_text
 
 
 @pytest.mark.parametrize("mask", ["<mask_0>", "'<mask_0>'", '"<mask_0>"'])
@@ -105,3 +109,33 @@ def test_string_mask_in_fstring_literal_doubles_braces():
     source = "value = f'<mask_0>{<mask_2>}<mask_1>' + '<mask_0>'"
 
     assert restore_masked_source_text([source], masker) == ["value = f'{{{var}}}' + '{'"]
+
+
+@pytest.mark.parametrize("text", ["", "value = <mask_0>", "value = <mask_0>\n", "value = <mask_0>\n\nother = <mask_0>"])
+def test_restore_masked_source_file_wrapper(tmp_path, text):
+    masker = Masker()
+    masker.global_tab["secret"] = "<mask_0>"
+    masked_file = tmp_path / "masked.py"
+    masked_file.write_text(text)
+
+    restored = restore_masked_source(masked_file, masker, (3, 13))
+    assert restored == "\n".join(restore_masked_source_text(text.splitlines(), masker))
+    assert isinstance(restored, str)
+
+
+@pytest.mark.parametrize("source", ["result = 42\n", "result = 'hello'\n", "values = [2, 3]\nresult = values[0] + values[1]\n"])
+def test_restore_masked_source_file_wrapper_pyc_round_trip(tmp_path, source):
+    original = tmp_path / "original.py"
+    original.write_text(source)
+    original_pyc = tmp_path / "original.pyc"
+    py_compile.compile(str(original), cfile=str(original_pyc), doraise=True)
+    masker = create_global_masker(PYCFile(original_pyc))
+    masked = tmp_path / "masked.py"
+    masked.write_text(mask_source(original, masker, masker.version))
+
+    restored = tmp_path / "restored.py"
+    restored.write_text(restore_masked_source(masked, masker, masker.version))
+    restored_pyc = tmp_path / "restored.pyc"
+    py_compile.compile(str(restored), cfile=str(restored_pyc), doraise=True)
+
+    assert runpy.run_path(str(restored_pyc))["result"] == runpy.run_path(str(original_pyc))["result"]

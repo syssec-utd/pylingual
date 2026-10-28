@@ -134,7 +134,7 @@ def mask_source(file_path: pathlib.Path, masker: Masker, python_version: PythonV
 def restore_masked_source(file_path: pathlib.Path, masker: Masker, python_version: PythonVersion) -> str:
     """Creates a large regex of all the tokens and their respective values
     Replaces everything in file text in one pass."""
-    return restore_masked_source_text(file_path.read_text(), masker, python_version)
+    return "\n".join(restore_masked_source_text(file_path.read_text().splitlines(), masker))
 
 
 def format_source_replacement(mask_value: str) -> str:
