@@ -25,11 +25,23 @@ git clone https://github.com/syssec-utd/pylingual
 uv tool install ./pylingual
 ```
 
+### Universal base models
+
+The default configuration loads one trained universal segmentation model and one trained
+universal statement-translation model for Python 3.6–3.15. The flat configuration in
+`pylingual/decompiler_config.yaml` pins both model revisions and their shared tokenizer family.
+The same model pair is reused for every Python version.
+
+The frozen tokenizers replace only opcode fields with their registered atomic tokens and keep
+operands intact. Segmentation is aligned to instructions, not tokenizer subwords. Translation
+consumes the opcode representation directly, without a version prefix. All supported versions
+occurred in training.
+
 ### Redis translation cache (optional)
 
 The CLI can reuse translation-model predictions across files and runs using Redis,
 with the same cache used by [the dataset evaluator](https://github.com/syssec-utd/pylingual_eval_dataset).
-Entries are keyed by Python version and normalized bytecode. Repeated statements can
+Entries are keyed by model/tokenizer revision and normalized bytecode. Repeated statements can
 skip translation-model inference; the first uncached translation still runs the model,
 and segmentation and model loading are not cached by Redis.
 
@@ -53,9 +65,6 @@ in a POSIX shell, or `$env:PYLINGUAL_REDIS_HOST = '127.0.0.1'` in PowerShell.
 Without a host, Redis caching remains disabled. Use `--redis-port` or
 `PYLINGUAL_REDIS_PORT` for a different port; the CLI defaults to `6379`.
 Command-line settings override their environment variables.
-
-Cache keys do not include the translation model revision. Use a separate Redis
-instance when switching translation models to avoid reusing predictions from another model.
 
 ## Usage
 

@@ -55,8 +55,8 @@ from pylingual.utils.version import PythonVersion
 from pylingual.utils.tracked_list import CFLOW_STEP, CORRECTION_STEP, SEGMENTATION_STEP, TrackedList, TrackedDataset
 
 if TYPE_CHECKING:
-    import transformers
     from pylingual.editable_bytecode.Instruction import Inst
+    from pylingual.opcode_models import OpcodeSegmenter
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class Decompiler:
     :param trust_lnotab: Decides whether or not to use line number information
     """
 
-    def __init__(self, pyc: PYCFile, segmenter: transformers.Pipeline, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
+    def __init__(self, pyc: PYCFile, segmenter: OpcodeSegmenter, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
         self.pyc = pyc
         self.name = pyc.pyc_path.name if pyc.pyc_path is not None else repr(pyc)
         self.segmenter = segmenter
@@ -282,11 +282,11 @@ class Decompiler:
             # make a list of instructions with their token lengths, can be turned into a list comp but readability suffers and complexity is increased
             for codeobj_instructions in codeobj_list_instructions:
                 token_list = []
-                tokenized_insts = self.segmenter.tokenizer(codeobj_instructions)
+                token_lengths = self.segmenter.instruction_token_lengths(codeobj_instructions)
 
                 # map token length to instruction
-                for i, inst in enumerate(codeobj_instructions):
-                    token_list.append([inst, len(tokenized_insts[i])])
+                for inst, token_length in zip(codeobj_instructions, token_lengths):
+                    token_list.append([inst, token_length])
 
                 # map to codeobject
                 codeobj_token_list.append(token_list)
@@ -515,7 +515,7 @@ def decompile(
     :param pyc: PYCFile or Path to decompile.
     :param save_to: Path to save decompilation results to or None.
     :param config_file: Path to decompiler_config.yaml to load. Use None to load the default PyLingual config (recommended).
-    :param version: Loads the models corresponding to this python version. if None, automatically detects version based on input PYC file.
+    :param version: Python bytecode version. If None, automatically detects it from the input PYC file.
     :param top_k: Max number of pyc segmentations to consider.
     :param trust_lnotab: Trust the lnotab in the input PYC for segmentation (False recommended).
     :param timeout: Maximum time in seconds to allow decompilation to run.
@@ -549,7 +549,7 @@ def decompile(
     if not config_file.exists():
         raise FileNotFoundError(f"Decompiler config {config_file} not found")
 
-    segmenter, translator = load_models(config_file, pversion, redis_cache_server_ip, redis_port)
+    segmenter, translator = load_models(config_file, redis_cache_server_ip, redis_port)
 
     if save_to:
         logger.info(f"Decompiling pyc {pyc.pyc_path.resolve() if pyc.pyc_path else repr(pyc)} to {save_to.resolve()}")
