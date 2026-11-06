@@ -12,22 +12,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pylingual.masking.model_disasm import (
+    encode_opcodes,
     fix_jump_targets,
     normalize_masks,
     restore_masks,
 )
 from pylingual.utils.tracked_list import TrackedDataset, TRANSLATION_STEP
 from pylingual.utils.lazy import lazy_import
-from pylingual.opcode_models import OpcodeRegistry, OpcodeSegmenter
 
 if TYPE_CHECKING:
     import torch
     import transformers
-    import huggingface_hub
 else:
     lazy_import("torch")
     lazy_import("transformers")
-    lazy_import("huggingface_hub")
 
 logger = logging.getLogger(__name__)
 
@@ -40,26 +38,15 @@ class CacheTranslator:
     :param maxsize : The maximum amount of cached items
     """
 
-    def __init__(
-        self,
-        model: transformers.T5ForConditionalGeneration,
-        tokenizer: transformers.PreTrainedTokenizerFast,
-        opcode_registry: OpcodeRegistry,
-        *,
-        cache_namespace: str,
-        redis_cache_server_ip: str = None,
-        redis_port: int = 1679,
-        device="cpu",
-        maxsize=50000,
-    ):
+    def __init__(self, model: transformers.T5ForConditionalGeneration, tokenizer: transformers.PreTrainedTokenizerFast, *, cache_namespace: str, redis_cache_server_ip: str = None, redis_port: int = 1679, device="cpu", maxsize=50000):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
-        self.opcode_registry = opcode_registry
         roles = ("bos", "eos", "pad", "unk", "mask", "cls", "sep")
-        self.decode_excluded_ids = {identifier for role in roles if (identifier := getattr(tokenizer, f"{role}_token_id", None)) is not None} | set(opcode_registry.forbidden_ids)
+        self.decode_excluded_ids = {identifier for role in roles if (identifier := getattr(tokenizer, f"{role}_token_id", None)) is not None}
+        self.decode_excluded_ids.update(identifier for group in model.generation_config.bad_words_ids or [] for identifier in group)
         self.model.to(self.device)
         self.model.eval()
 
@@ -76,10 +63,10 @@ class CacheTranslator:
 
     def _translate_and_decode(self, batch: list[str]) -> list[str]:
         """Translate a single batch of requests"""
-        batch = [self.opcode_registry.bind(text) for text in batch]
+        batch = [encode_opcodes(text) for text in batch]
         encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
         with torch.no_grad():
-            output = self.model.generate(**encoded, max_length=512, bad_words_ids=[[identifier] for identifier in self.opcode_registry.forbidden_ids])
+            output = self.model.generate(**encoded, max_length=512)
 
         decoded_results = []
         for tokens in output:
@@ -156,11 +143,8 @@ def _cached_first(fn, *args, **kwargs):
         logger.info(f"{getattr(fn, '__qualname__', fn)} not found in local cache for {args[:1]}, downloading...")
         return fn(*args, local_files_only=False, **kwargs)
 
-def _load_opcode_tokenizer(config, task, token):
-    options = {"revision": config["REVISION"], "subfolder": task, "token": token}
-    tokenizer = _cached_first(transformers.PreTrainedTokenizerFast.from_pretrained, config["REPO"], **options)
-    registry_file = _cached_first(huggingface_hub.hf_hub_download, repo_id=config["REPO"], filename="opcode_registry.json", **options)
-    return tokenizer, OpcodeRegistry.load(registry_file, tokenizer)
+def _load_tokenizer(config, task, token):
+    return _cached_first(transformers.PreTrainedTokenizerFast.from_pretrained, config["REPO"], revision=config["REVISION"], subfolder=task, token=token)
 
 
 def _free_device_memory():
@@ -200,7 +184,7 @@ def load_models(
     redis_port: int = 1679,
     token=False,
     device: torch.device | None = None,
-) -> tuple[OpcodeSegmenter, CacheTranslator]:
+) -> tuple[transformers.Pipeline, CacheTranslator]:
     logger.info("Loading universal models...")
     with config_file.open() as f:
         config = yaml.safe_load(f)
@@ -218,7 +202,7 @@ def load_models(
         token=token,
     )
 
-    segmentation_tokenizer, seg_registry = _load_opcode_tokenizer(tokenizer_config, "segmentation", token)
+    segmentation_tokenizer = _load_tokenizer(tokenizer_config, "segmentation", token)
     if segmentation_model.get_input_embeddings().num_embeddings != len(segmentation_tokenizer):
         raise ValueError("Segmentation model vocabulary differs from its frozen tokenizer")
     if device is not None:
@@ -231,8 +215,13 @@ def load_models(
         # CPU for this workload, so it is not used even when available.
         logger.info("Using CPU for models")
         device = torch.device("cpu")
-    segmentation_model.to(device).eval()
-    segmenter = OpcodeSegmenter(segmentation_model, segmentation_tokenizer, seg_registry)
+    segmenter = transformers.pipeline(
+        "token-classification",
+        model=segmentation_model,
+        tokenizer=segmentation_tokenizer,
+        aggregation_strategy="none",
+        device=device,
+    )
     #########################################
     # Sequence translation model components #
     #########################################
@@ -244,14 +233,13 @@ def load_models(
         token=token,
     )
    
-    translation_tokenizer, stmt_registry = _load_opcode_tokenizer(tokenizer_config, "statement", token)
+    translation_tokenizer = _load_tokenizer(tokenizer_config, "statement", token)
     if translation_model.get_input_embeddings().num_embeddings != len(translation_tokenizer):
         raise ValueError("Translation model vocabulary differs from its frozen tokenizer")
     namespace = f"{stmt_config['REPO']}@{stmt_config['REVISION']}:{tokenizer_config['REPO']}@{tokenizer_config['REVISION']}"
     translator = CacheTranslator(
         translation_model,
         translation_tokenizer,
-        stmt_registry,
         cache_namespace=namespace,
         redis_cache_server_ip=redis_cache_server_ip,
         redis_port=redis_port,
