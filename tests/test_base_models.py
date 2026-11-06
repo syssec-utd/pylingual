@@ -1,212 +1,95 @@
-"""Universal model loading and frozen opcode preprocessing."""
+"""Frozen input encoding and shared model loading."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import huggingface_hub
 import pytest
 import torch
-from tokenizers import AddedToken, Tokenizer, models as token_models, pre_tokenizers, processors
-from transformers import PreTrainedTokenizerFast
 import yaml
+from tokenizers import Tokenizer, models as token_models, pre_tokenizers, processors
+from transformers import PreTrainedTokenizerFast
 
 from pylingual import models
-from pylingual.opcode_models import OpcodeRegistry, OpcodeSegmenter
+from pylingual.masking.model_disasm import encode_opcodes
+from pylingual.segmentation.segmentation_search_strategies import filter_subwords
 
 
 @pytest.fixture
-def inputs(tmp_path):
-    tokens = ["[PAD]", "[CLS]", "[SEP]", "[UNK]", "[MASK]", "LOAD_CONST", "<mask_0>", "None", "<SEP>", "Python", "3.15:"]
-    opcodes = ["LOAD_CONST", "RETURN_VALUE"]
-    atomic = [f"<opcode:{name}>" for name in opcodes] + [f"<future_opcode_{i:02d}>" for i in range(64)]
-    vocabulary = {token: i for i, token in enumerate(tokens + atomic)}
-    backend = Tokenizer(token_models.WordLevel(vocabulary, unk_token="[UNK]"))
+def tokenizer():
+    tokens = ["[PAD]", "[CLS]", "[SEP]", "[UNK]", "[MASK]", "LOAD_CONST", "<mask_0>", "None", "<SEP>", "<opcode:LOAD_CONST>", "<opcode:RETURN_VALUE>", "<future_opcode_00>"]
+    backend = Tokenizer(token_models.WordLevel({token: i for i, token in enumerate(tokens)}, unk_token="[UNK]"))
     backend.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
     backend.post_processor = processors.TemplateProcessing(single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 1), ("[SEP]", 2)])
     tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, pad_token="[PAD]", cls_token="[CLS]", sep_token="[SEP]", unk_token="[UNK]", mask_token="[MASK]")
-    tokenizer.add_tokens([AddedToken(token) for token in atomic])
-    # Real statement tokenizers also mark ordinary Python/source masks special.
     tokenizer.add_special_tokens({"additional_special_tokens": ["None", "<mask_0>"]})
-    data = {
-        "format": 1,
-        "preprocessing": "opcode-field-placeholders-v1",
-        "known_opcodes": {name: {"token": f"<opcode:{name}>", "id": vocabulary[f"<opcode:{name}>"]} for name in opcodes},
-        "reserved_slots": [{"slot": i, "token": f"<future_opcode_{i:02d}>", "id": vocabulary[f"<future_opcode_{i:02d}>"]} for i in range(64)],
-        "source_generation_forbidden_ids": [vocabulary[token] for token in atomic],
-    }
-    path = tmp_path / "opcode_registry.json"
-    path.write_text(json.dumps(data))
-    return tokenizer, data, path
+    return tokenizer
 
 
-class SegmentModel(torch.nn.Module):
+class TranslationModel(torch.nn.Module):
     def __init__(self, tokenizer):
         super().__init__()
         self.embedding = torch.nn.Embedding(len(tokenizer), 1)
-        self.config = SimpleNamespace(max_position_embeddings=128, id2label={0: "B", 1: "I", 2: "E"})
-        self.tokenizer = tokenizer
+        self.generation_config = SimpleNamespace(bad_words_ids=[[9], [10], [11]])
 
     def get_input_embeddings(self):
         return self.embedding
 
-    def forward(self, input_ids, **kwargs):
-        logits = torch.zeros((*input_ids.shape, 3), device=input_ids.device)
-        logits[..., 1] = 3
-        logits[..., 0][input_ids == self.tokenizer.convert_tokens_to_ids("<opcode:LOAD_CONST>")] = 9
-        logits[..., 2][input_ids == self.tokenizer.convert_tokens_to_ids("<opcode:RETURN_VALUE>")] = 9
-        return SimpleNamespace(logits=logits)
-
-
-class TranslationModel(SegmentModel):
     def generate(self, **kwargs):
-        self.last_generation = kwargs
-        ids = [0, 1, self.tokenizer.convert_tokens_to_ids("None"), self.tokenizer.convert_tokens_to_ids("<mask_0>"), self.tokenizer.convert_tokens_to_ids("<opcode:LOAD_CONST>"), self.tokenizer.convert_tokens_to_ids("<future_opcode_00>"), 2]
-        return torch.tensor([ids] * len(kwargs["input_ids"]))
+        self.input_ids = kwargs["input_ids"]
+        return torch.tensor([[0, 1, 7, 6, 9, 11, 2]] * len(self.input_ids))
 
 
-def test_registry_changes_only_opcode_fields(inputs):
-    tokenizer, data, path = inputs
-    registry = OpcodeRegistry.load(path, tokenizer)
-    assert registry.bind("E-> ^~> TARGET_1 LOAD_CONST LOAD_CONST <mask_0> <SEP> RETURN_VALUE") == "E-> ^~> TARGET_1 <opcode:LOAD_CONST> LOAD_CONST <mask_0> <SEP> <opcode:RETURN_VALUE>"
-    with pytest.raises(ValueError, match="opcode"):
-        registry.bind("UNKNOWN_OPCODE")
-    assert len(registry.forbidden_ids) == 66
+def test_encoding_changes_only_opcode_fields():
+    assert encode_opcodes("E-> ^~> TARGET_1 LOAD_CONST LOAD_CONST <mask_0> <SEP> RETURN_VALUE") == "E-> ^~> TARGET_1 <opcode:LOAD_CONST> LOAD_CONST <mask_0> <SEP> <opcode:RETURN_VALUE>"
 
 
-@pytest.mark.parametrize("damage", ["slots", "id", "forbidden", "preprocessing"])
-def test_registry_rejects_incompatible_token_ids(inputs, damage):
-    tokenizer, data, path = inputs
-    if damage == "slots":
-        data["reserved_slots"].pop()
-    elif damage == "id":
-        data["known_opcodes"]["LOAD_CONST"]["id"] = 0
-    elif damage == "forbidden":
-        data["source_generation_forbidden_ids"] = []
-    else:
-        data["preprocessing"] = "wrong-contract"
-    path.write_text(json.dumps(data))
-    with pytest.raises(ValueError):
-        OpcodeRegistry.load(path, tokenizer)
+@pytest.mark.parametrize("prefix", ["", "E-> ^~> TARGET_1 "])
+def test_segmentation_selects_first_token_per_instruction(tokenizer, prefix):
+    text = encode_opcodes(prefix + "LOAD_CONST LOAD_CONST <SEP> RETURN_VALUE")
+    offsets = tokenizer(text, return_offsets_mapping=True)["offset_mapping"]
+    predictions = [{"start": start, "end": end, "entity": "I", "score": 1.0} for start, end in offsets if start != end]
+    predictions[0]["entity"], predictions[-1]["entity"] = "B", "E"
+    assert [row["entity"] for row in filter_subwords(predictions, text)] == ["B", "E"]
+    with pytest.raises(ValueError, match="instruction"):
+        filter_subwords(predictions[:-1], text)
 
 
-def test_segmentation_returns_one_prediction_per_instruction(inputs):
-    tokenizer, _, path = inputs
-    segmenter = OpcodeSegmenter(SegmentModel(tokenizer), tokenizer, OpcodeRegistry.load(path, tokenizer))
-    text = "LOAD_CONST LOAD_CONST <SEP> RETURN_VALUE"
-    results = segmenter([text, text], batch_size=1)
-    assert [[r["entity"] for r in row] for row in results] == [["B", "E"], ["B", "E"]]
-    assert [r["word"] for r in results[0]] == text.split(" <SEP> ")
-    assert [r["index"] for r in results[0]] == [1, 2]
-    assert segmenter.instruction_token_lengths(["LOAD_CONST LOAD_CONST"]) == [len(tokenizer("<opcode:LOAD_CONST> LOAD_CONST")["input_ids"])]
-    assert segmenter(text) == results[0]
-    with pytest.raises(ValueError):
-        segmenter([text], batch_size=0)
-
-
-def test_segmenter_checks_capacity_and_instruction_coverage(inputs):
-    tokenizer, _, path = inputs
-    model = SegmentModel(tokenizer)
-    segmenter = OpcodeSegmenter(model, tokenizer, OpcodeRegistry.load(path, tokenizer))
-    model.config.max_position_embeddings = 4
-    with pytest.raises(ValueError, match="capacity"):
-        segmenter(["LOAD_CONST LOAD_CONST <SEP> RETURN_VALUE"])
-
-
-def test_translator_preserves_source_masks_and_forbids_input_only_tokens(inputs):
-    tokenizer, _, path = inputs
-    registry = OpcodeRegistry.load(path, tokenizer)
+def test_translation_preserves_source_masks_and_uses_frozen_generation_settings(tokenizer):
     model = TranslationModel(tokenizer)
-    translator = models.CacheTranslator(model, tokenizer, registry, cache_namespace="statement@revision")
+    translator = models.CacheTranslator(model, tokenizer, cache_namespace="statement@revision")
     assert translator._translate_and_decode(["LOAD_CONST LOAD_CONST"]) == ["None <mask_0>"]
-    assert tokenizer.decode(model.last_generation["input_ids"][0], skip_special_tokens=False).startswith("[CLS] <opcode:LOAD_CONST> LOAD_CONST")
-    assert model.last_generation["bad_words_ids"] == [[i] for i in registry.forbidden_ids]
+    assert tokenizer.decode(model.input_ids[0], skip_special_tokens=False) == "[CLS] <opcode:LOAD_CONST> LOAD_CONST [SEP]"
+    assert model.generation_config.bad_words_ids == [[9], [10], [11]]
 
 
-def test_default_config_pins_one_flat_model_pair_and_tokenizer_family():
+def test_flat_configuration_pins_one_model_pair():
     config = yaml.safe_load((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
-    assert set(config) == {"SEGMENTATION_MODEL", "STATEMENT_MODEL", "TOKENIZER"}
-    assert config["STATEMENT_MODEL"]["REVISION"] == "a20bc4d28fe8641df0f90aa3665431368930c329"
-    assert config["SEGMENTATION_MODEL"]["REVISION"] == "37cfee8f8e7bc16c4050056ffcdead83f714c7cf"
-    assert config["TOKENIZER"]["REVISION"] == "d23233a4bb237dcc3b1660e46a42f9189eaf0f6c"
-    assert all(set(entry) == {"REPO", "REVISION"} for entry in config.values())
+    assert config == {
+        "SEGMENTATION_MODEL": {"REPO": "syssec-utd/pylingual-shared-segmentation-v3", "REVISION": "37cfee8f8e7bc16c4050056ffcdead83f714c7cf"},
+        "STATEMENT_MODEL": {"REPO": "syssec-utd/pylingual-shared-statement-v3", "REVISION": "a20bc4d28fe8641df0f90aa3665431368930c329"},
+        "TOKENIZER": {"REPO": "syssec-utd/pylingual-shared-tokenizer-v1", "REVISION": "d23233a4bb237dcc3b1660e46a42f9189eaf0f6c"},
+    }
 
 
-def test_loading_reuses_one_model_pair_and_translation_cache(inputs, tmp_path):
-    tokenizer, _, registry_path = inputs
-    config = yaml.safe_load((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
+def test_loading_reuses_the_standard_pipeline_and_translation_cache(tokenizer, tmp_path):
     path = tmp_path / "models.yaml"
-    path.write_text(yaml.safe_dump(config))
-    segmentation, translation = SegmentModel(tokenizer), TranslationModel(tokenizer)
+    path.write_text((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
+    segmentation, translation = TranslationModel(tokenizer), TranslationModel(tokenizer)
     with (
         patch.object(models.transformers.AutoModelForTokenClassification, "from_pretrained", return_value=segmentation) as seg_load,
         patch.object(models.transformers.T5ForConditionalGeneration, "from_pretrained", return_value=translation) as stmt_load,
         patch.object(models.transformers.PreTrainedTokenizerFast, "from_pretrained", return_value=tokenizer) as tokenizer_load,
-        patch.object(huggingface_hub, "hf_hub_download", return_value=str(registry_path)) as download,
+        patch.object(models.transformers, "pipeline", return_value=Mock(model=segmentation, tokenizer=tokenizer)) as pipeline,
         patch.object(models, "_free_device_memory"),
         patch.object(models.redis, "StrictRedis", return_value=Mock()),
     ):
         first = models.load_models(path, redis_cache_server_ip="localhost", device=torch.device("cpu"))
         last = models.load_models(path, redis_cache_server_ip="localhost", device=torch.device("cpu"))
-    assert first[0] is last[0]
-    assert first[1].model is last[1].model is translation
-    assert first[1] is last[1]
-    assert first[1].cache is last[1].cache
-    statement, tokenizer_config = config["STATEMENT_MODEL"], config["TOKENIZER"]
-    assert first[1].redis_namespace_prefix == f"{statement['REPO']}@{statement['REVISION']}:{tokenizer_config['REPO']}@{tokenizer_config['REVISION']}:"
-    assert seg_load.call_count == stmt_load.call_count == 1
-    assert tokenizer_load.call_count == download.call_count == 2
-    assert all(call.kwargs["revision"] == "d23233a4bb237dcc3b1660e46a42f9189eaf0f6c" for call in tokenizer_load.call_args_list)
+    assert first[0] is last[0] is pipeline.return_value
+    assert first[1] is last[1] and first[1].model is translation
+    assert seg_load.call_count == stmt_load.call_count == pipeline.call_count == 1
+    assert tokenizer_load.call_count == 2
     assert {call.kwargs["subfolder"] for call in tokenizer_load.call_args_list} == {"statement", "segmentation"}
-
-
-def test_redis_cache_is_namespaced_by_model_identity(inputs):
-    tokenizer, _, path = inputs
-    registry = OpcodeRegistry.load(path, tokenizer)
-    with patch.object(models.redis, "StrictRedis", return_value=Mock()):
-        first = models.CacheTranslator(TranslationModel(tokenizer), tokenizer, registry, redis_cache_server_ip="localhost", cache_namespace="statement@one")
-        second = models.CacheTranslator(TranslationModel(tokenizer), tokenizer, registry, redis_cache_server_ip="localhost", cache_namespace="statement@two")
-    assert first.redis_namespace_prefix == "statement@one:"
-    assert second.redis_namespace_prefix == "statement@two:"
-
-
-def test_loading_rejects_wrong_vocabulary_before_translation(inputs, tmp_path):
-    tokenizer, _, registry_path = inputs
-    path = tmp_path / "models.yaml"
-    path.write_text((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
-    wrong = SegmentModel(tokenizer)
-    wrong.embedding = torch.nn.Embedding(len(tokenizer) + 1, 1)
-    with (
-        patch.object(models.transformers.AutoModelForTokenClassification, "from_pretrained", return_value=wrong),
-        patch.object(models.transformers.PreTrainedTokenizerFast, "from_pretrained", return_value=tokenizer),
-        patch.object(huggingface_hub, "hf_hub_download", return_value=str(registry_path)),
-        patch.object(models.transformers.T5ForConditionalGeneration, "from_pretrained") as translation,
-        patch.object(models, "_free_device_memory"),
-    ):
-        with pytest.raises(ValueError, match="vocabulary"):
-            models.load_models(path, device=torch.device("cpu"))
-    translation.assert_not_called()
-
-
-def test_segmentation_rejects_wrong_labels_and_empty_instructions(inputs):
-    tokenizer, _, path = inputs
-    registry = OpcodeRegistry.load(path, tokenizer)
-    model = SegmentModel(tokenizer)
-    segmenter = OpcodeSegmenter(model, tokenizer, registry)
-    with pytest.raises(ValueError, match="opcode"):
-        segmenter(["LOAD_CONST None <SEP> "])
-    model.config.id2label = {0: "I", 1: "B", 2: "E"}
-    with pytest.raises(ValueError, match="labels"):
-        OpcodeSegmenter(model, tokenizer, registry)
-
-
-def test_tokenizer_only_family_does_not_require_a_model_configuration(inputs, tmp_path):
-    tokenizer, _, registry_path = inputs
-    root = tmp_path / "tokenizer-only-family"
-    tokenizer.save_pretrained(root / "segmentation")
-    config = {"REPO": str(root), "REVISION": "frozen"}
-    with patch.object(huggingface_hub, "hf_hub_download", return_value=str(registry_path)):
-        loaded, registry = models._load_opcode_tokenizer(config, "segmentation", False)
-    assert len(loaded) == len(tokenizer)
-    assert registry.bind("LOAD_CONST None") == "<opcode:LOAD_CONST> None"
+    assert pipeline.call_args.kwargs["aggregation_strategy"] == "none"
+    assert first[1].redis_namespace_prefix.startswith("syssec-utd/pylingual-shared-statement-v3@a20bc4")

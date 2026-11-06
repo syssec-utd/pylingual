@@ -45,7 +45,7 @@ from pylingual.control_flow_reconstruction.cft import MetaTemplate
 from pylingual.equivalence_check import PatchedPYC, TestResult, compare_pyc
 from pylingual.models import CacheTranslator, load_models
 from pylingual.utils.generate_bytecode import CompileError, PyenvError, compile_version
-from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text
+from pylingual.masking.model_disasm import create_global_masker, restore_masked_source_text, encode_opcodes
 from pylingual.preprocessor import Preprocessor
 from pylingual.editable_bytecode import PYCFile
 from pylingual.segmentation.segmentation_search_strategies import get_top_k_predictions, m_deep_top_k, naive_confidence_priority, filter_subwords
@@ -55,8 +55,8 @@ from pylingual.utils.version import PythonVersion
 from pylingual.utils.tracked_list import CFLOW_STEP, CORRECTION_STEP, SEGMENTATION_STEP, TrackedList, TrackedDataset
 
 if TYPE_CHECKING:
+    import transformers
     from pylingual.editable_bytecode.Instruction import Inst
-    from pylingual.opcode_models import OpcodeSegmenter
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class Decompiler:
     :param trust_lnotab: Decides whether or not to use line number information
     """
 
-    def __init__(self, pyc: PYCFile, segmenter: OpcodeSegmenter, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
+    def __init__(self, pyc: PYCFile, segmenter: transformers.Pipeline, translator: CacheTranslator, version: PythonVersion, top_k=10, trust_lnotab=False, timeout=None):
         self.pyc = pyc
         self.name = pyc.pyc_path.name if pyc.pyc_path is not None else repr(pyc)
         self.segmenter = segmenter
@@ -282,7 +282,7 @@ class Decompiler:
             # make a list of instructions with their token lengths, can be turned into a list comp but readability suffers and complexity is increased
             for codeobj_instructions in codeobj_list_instructions:
                 token_list = []
-                token_lengths = self.segmenter.instruction_token_lengths(codeobj_instructions)
+                token_lengths = [len(tokens) for tokens in self.segmenter.tokenizer([encode_opcodes(inst) for inst in codeobj_instructions])["input_ids"]]
 
                 # map token length to instruction
                 for inst, token_length in zip(codeobj_instructions, token_lengths):
@@ -298,7 +298,9 @@ class Decompiler:
 
             window_coordinates, flat_window_requests, inst_index = zip(*window_segmentation_requests)
 
-            window_segmentation_results = [filter_subwords(segmentation_result) for segmentation_result in self.segmenter(TrackedDataset(SEGMENTATION_STEP, list(flat_window_requests), check_timeout=self.check_timeout), batch_size=8)]
+            encoded_requests = [encode_opcodes(text) for text in flat_window_requests]
+            predictions = self.segmenter(TrackedDataset(SEGMENTATION_STEP, encoded_requests, check_timeout=self.check_timeout), batch_size=8)
+            window_segmentation_results = [filter_subwords(result, text) for result, text in zip(predictions, encoded_requests)]
 
             self.segmentation_results = merge(list(window_coordinates), window_segmentation_results, list(inst_index), MAX_WINDOW_LENGTH, STEP_SIZE)  # merge everything
 

@@ -17,6 +17,7 @@ from pylingual.masking.ast_masker import RewriteMasks, custom_unparse
 from pylingual.masking.global_masker import Masker
 
 mask_regex = re.compile(r"(?<=<mask_)\d+(?=>)")
+opcode_regex = re.compile(r"^(\s*(?:(?:E->|\^~>|v~>)\s+)*(?:(?:\d+|TARGET_\d+)\s+)?)([A-Z][A-Z0-9_]*)(?=\s|,|-FUTURE(?:\s|$)|$)")
 
 
 def create_global_masker(bytecode: EditableBytecode) -> Masker:
@@ -269,6 +270,11 @@ def unmask(source_line: str, replacements: dict, container_masks: set[str], re_p
 
     text = re_pattern.sub(m, source_line)
     return re_rel_pattern.sub(lambda match: f"{match.group(1)}{match.group(2)} {'.' * int(match.group(3))}{match.group(4)}", text)
+
+
+def encode_opcodes(bytecode: str) -> str:
+    """Replace opcode fields with frozen atomic tokens without changing operands."""
+    return " <SEP> ".join(opcode_regex.sub(r"\1<opcode:\2>", instruction, count=1) for instruction in bytecode.split(" <SEP> "))
 
 
 def fix_jump_targets(disasm: str) -> str:

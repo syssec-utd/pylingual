@@ -19,9 +19,20 @@ else:
 #############
 
 
-def filter_subwords(results):
-    # Get results that are not associated with a subword
-    return [result for result in results if not result["word"].startswith("##")]
+def filter_subwords(results, text):
+    """Keep the first token prediction overlapping each encoded instruction."""
+    results = iter(results)
+    current = next(results, None)
+    filtered, start = [], 0
+    for instruction in text.split(" <SEP> "):
+        end = start + len(instruction)
+        while current is not None and current["end"] <= start:
+            current = next(results, None)
+        if current is None or current["start"] >= end:
+            raise ValueError("Segmentation does not cover every instruction")
+        filtered.append(current)
+        start = end + len(" <SEP> ")
+    return filtered
 
 
 # incrementally generates the index-representation of bitstrings of length length and with num_ones ones
