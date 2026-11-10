@@ -21,6 +21,8 @@ else:
 
 def filter_subwords(results, text):
     """Keep the first token prediction overlapping each encoded instruction."""
+    if not text:
+        return []
     results = iter(results)
     current = next(results, None)
     filtered, start = [], 0

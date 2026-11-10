@@ -11,6 +11,7 @@ from tokenizers import Tokenizer, models as token_models, pre_tokenizers, proces
 from transformers import PreTrainedTokenizerFast
 
 from pylingual import models
+from pylingual.decompiler import Decompiler
 from pylingual.masking.model_disasm import encode_opcodes
 from pylingual.segmentation.segmentation_search_strategies import filter_subwords
 
@@ -53,6 +54,28 @@ def test_segmentation_selects_first_token_per_instruction(tokenizer, prefix):
     assert [row["entity"] for row in filter_subwords(predictions, text)] == ["B", "E"]
     with pytest.raises(ValueError, match="instruction"):
         filter_subwords(predictions[:-1], text)
+
+
+def test_segmentation_empty_code_object_has_no_boundaries():
+    assert filter_subwords([], "") == []
+
+
+@pytest.mark.parametrize("requests", [[""], ["", "LOAD_CONST None <SEP> RETURN_VALUE", "", "RETURN_VALUE", ""]])
+def test_segmentation_preserves_empty_code_object_positions(tokenizer, requests):
+    def predictions(texts, **kwargs):
+        return [[{"start": start, "end": end, "entity": "I", "score": 1.0} for start, end in tokenizer(text, return_offsets_mapping=True)["offset_mapping"] if start != end] for text in texts]
+
+    decompiler = Decompiler.__new__(Decompiler)
+    decompiler.name = "empty-code-object-regression"
+    decompiler.trust_lnotab = False
+    decompiler.segmentation_requests = requests
+    decompiler.segmenter = Mock(tokenizer=tokenizer, side_effect=predictions)
+    decompiler.check_timeout = Mock()
+    decompiler.update_starts_line = Mock()
+    decompiler.run_segmentation()
+    assert [len(result) for result in decompiler.segmentation_results] == [len(text.split(" <SEP> ")) if text else 0 for text in requests]
+    assert all(not result or result[0]["entity"] == "B" for result in decompiler.segmentation_results)
+    decompiler.update_starts_line.assert_called_once_with()
 
 
 def test_translation_preserves_source_masks_and_uses_frozen_generation_settings(tokenizer):
