@@ -130,6 +130,38 @@ class CacheTranslator:
             self.cache.popitem(last=False)
         return results
 
+class OpcodeSegmenter:
+    """Keep the trained instruction confidences used by segmentation correction."""
+
+    def __init__(self, model, tokenizer, device):
+        self.model = model.to(device).eval()
+        self.tokenizer = tokenizer
+        self.device = device
+
+    def __call__(self, requests, batch_size=8, **_):
+        if isinstance(requests, str):
+            return self([requests], batch_size=batch_size)[0]
+        if type(batch_size) is not int or batch_size < 1:
+            raise ValueError("Positive segmentation batch size required")
+        results = []
+        with torch.no_grad():
+            for start in range(0, len(requests), batch_size):
+                texts = [requests[i] for i in range(start, min(start + batch_size, len(requests)))]
+                encoded = self.tokenizer(texts, padding=True, return_tensors="pt", return_offsets_mapping=True)
+                offsets = encoded.pop("offset_mapping").tolist()
+                # The correction search ranks these confidences. NumPy softmax in
+                # the generic pipeline changes rounding and can change its candidates.
+                scores = self.model(**encoded.to(self.device)).logits.softmax(-1)
+                confidences, labels = scores.max(-1)
+                for spans, row_scores, row_labels in zip(offsets, confidences.tolist(), labels.tolist()):
+                    results.append([
+                        {"start": left, "end": right, "entity": self.model.config.id2label[label], "score": confidence}
+                        for (left, right), confidence, label in zip(spans, row_scores, row_labels)
+                        if left != right
+                    ])
+        return results
+
+
 # offline support if models are downloaded
 def _cached_first(fn, *args, **kwargs):
     """Try the local HF cache first; fall back to downloading if it's missing."""
@@ -184,7 +216,7 @@ def load_models(
     redis_port: int = 1679,
     token=False,
     device: torch.device | None = None,
-) -> tuple[transformers.Pipeline, CacheTranslator]:
+) -> tuple[OpcodeSegmenter, CacheTranslator]:
     logger.info("Loading universal models...")
     with config_file.open() as f:
         config = yaml.safe_load(f)
@@ -215,13 +247,7 @@ def load_models(
         # CPU for this workload, so it is not used even when available.
         logger.info("Using CPU for models")
         device = torch.device("cpu")
-    segmenter = transformers.pipeline(
-        "token-classification",
-        model=segmentation_model,
-        tokenizer=segmentation_tokenizer,
-        aggregation_strategy="none",
-        device=device,
-    )
+    segmenter = OpcodeSegmenter(segmentation_model, segmentation_tokenizer, device)
     #########################################
     # Sequence translation model components #
     #########################################
