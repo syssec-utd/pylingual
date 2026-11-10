@@ -8,7 +8,8 @@ import pytest
 import torch
 import yaml
 from tokenizers import Tokenizer, models as token_models, pre_tokenizers, processors
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, RobertaConfig, RobertaForTokenClassification
+from transformers.modeling_outputs import TokenClassifierOutput
 
 from pylingual import models
 from pylingual.decompiler import Decompiler
@@ -95,7 +96,35 @@ def test_flat_configuration_pins_one_model_pair():
     }
 
 
-def test_loading_reuses_the_standard_pipeline_and_translation_cache(tokenizer, tmp_path):
+def test_segmentation_preserves_reference_torch_confidence(tokenizer, tmp_path):
+    config_file = tmp_path / "models.yaml"
+    config_file.write_text((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
+    config = RobertaConfig(vocab_size=len(tokenizer), hidden_size=8, num_hidden_layers=1, num_attention_heads=2, intermediate_size=16, num_labels=3, id2label={0: "B", 1: "I", 2: "E"})
+    model = RobertaForTokenClassification(config)
+    # NumPy softmax rounds this confidence differently from Torch. The correction
+    # search ranks these scores, so preserving only the winning label is not enough.
+    logits = torch.tensor([-4.756705284118652, 7.19916296005249, 8.583805084228516])
+    expected = float(logits.softmax(-1).max())
+    model.forward = lambda input_ids, **kwargs: TokenClassifierOutput(logits=logits.expand(*input_ids.shape, 3))
+    with (
+        patch.object(models.transformers.AutoModelForTokenClassification, "from_pretrained", return_value=model),
+        patch.object(models.transformers.T5ForConditionalGeneration, "from_pretrained", return_value=TranslationModel(tokenizer)),
+        patch.object(models.transformers.PreTrainedTokenizerFast, "from_pretrained", return_value=tokenizer),
+    ):
+        segmenter, _ = models.load_models.__wrapped__(config_file, device=torch.device("cpu"))
+    for predictions in segmenter(["LOAD_CONST None", "RETURN_VALUE"], batch_size=2):
+        assert predictions
+        assert all(row["entity"] == "E" for row in predictions)
+        assert all(float(row["score"]) == expected for row in predictions)
+    assert segmenter([]) == []
+    assert segmenter("") == []
+    assert [bool(row) for row in segmenter(["", "RETURN_VALUE", ""], batch_size=1)] == [False, True, False]
+    with pytest.raises(ValueError, match="batch size"):
+        segmenter(["RETURN_VALUE"], batch_size=0)
+    assert not segmenter.model.training
+
+
+def test_loading_reuses_segmentation_model_and_translation_cache(tokenizer, tmp_path):
     path = tmp_path / "models.yaml"
     path.write_text((Path(models.__file__).parent / "decompiler_config.yaml").read_text())
     segmentation, translation = TranslationModel(tokenizer), TranslationModel(tokenizer)
@@ -103,16 +132,15 @@ def test_loading_reuses_the_standard_pipeline_and_translation_cache(tokenizer, t
         patch.object(models.transformers.AutoModelForTokenClassification, "from_pretrained", return_value=segmentation) as seg_load,
         patch.object(models.transformers.T5ForConditionalGeneration, "from_pretrained", return_value=translation) as stmt_load,
         patch.object(models.transformers.PreTrainedTokenizerFast, "from_pretrained", return_value=tokenizer) as tokenizer_load,
-        patch.object(models.transformers, "pipeline", return_value=Mock(model=segmentation, tokenizer=tokenizer)) as pipeline,
         patch.object(models, "_free_device_memory"),
         patch.object(models.redis, "StrictRedis", return_value=Mock()),
     ):
         first = models.load_models(path, redis_cache_server_ip="localhost", device=torch.device("cpu"))
         last = models.load_models(path, redis_cache_server_ip="localhost", device=torch.device("cpu"))
-    assert first[0] is last[0] is pipeline.return_value
+    assert first[0] is last[0] and first[0].model is segmentation
+    assert isinstance(first[0], models.OpcodeSegmenter)
     assert first[1] is last[1] and first[1].model is translation
-    assert seg_load.call_count == stmt_load.call_count == pipeline.call_count == 1
+    assert seg_load.call_count == stmt_load.call_count == 1
     assert tokenizer_load.call_count == 2
     assert {call.kwargs["subfolder"] for call in tokenizer_load.call_args_list} == {"statement", "segmentation"}
-    assert pipeline.call_args.kwargs["aggregation_strategy"] == "none"
     assert first[1].redis_namespace_prefix.startswith("syssec-utd/pylingual-shared-statement-v3@a20bc4")
