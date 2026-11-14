@@ -10,10 +10,16 @@ from pylingual.decompiler import Decompiler
 from pylingual.equivalence_check import TestResult
 
 
+class FakeInst:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
 class SequenceTemplate:
     def __init__(self, instructions):
         self.instructions = instructions
         self.templates = [InstTemplate(inst) for inst in instructions]
+        self.blame = instructions[0].bytecode.codeobj
         self.header_lines = []
 
     def get_instructions(self):
@@ -29,9 +35,12 @@ def make_decompiler():
     d.ordered_bytecodes = [SimpleNamespace(codeobj=co, name=f"fixture_{i}", globals=[], nonlocals=[], parent=None) for i, co in enumerate(codes)]
     d.ordered_instructions = []
     for bc in d.ordered_bytecodes:
-        d.ordered_instructions.append([SimpleNamespace(bytecode=bc, starts_line=None, opname="NOP", offset=j * 2) for j in range(2)])
+        d.ordered_instructions.append([FakeInst(bytecode=bc, starts_line=None, opname="NOP", offset=j * 2) for j in range(2)])
     d.segmentation_results = [[{"entity": "B", "score": 0.5}, {"entity": "B", "score": 0.5}] for _ in codes]
     d.translation_results = [[f"value = {i}", "value = MASK_10"] for i in range(3)]
+    d.codeobj_instruction_lists = [["NOP", "NOP"] for _ in codes]
+    d.unmask_cache = {}
+    d.unmask_cache_size = None
     d.global_masker = SimpleNamespace(global_tab={10: "MASK_10"}, get_model_view=lambda inst: "NOP")
     d.pyc = SimpleNamespace(codeobj=codes[0], version=(3, 11), iter_bytecodes=lambda: iter(d.ordered_bytecodes), fix_while=lambda lines: None)
     d.version = (3, 11)
@@ -122,6 +131,12 @@ class SegmentationCorrectionTests(unittest.TestCase):
         d.check_reconstruction.return_value = []
         with predictions("BI"):
             self.assertFalse(d.correct_segmentation(0, from_comp_error=True))
+        self.assert_restored(d, original)
+
+    def test_out_of_range_index_is_skipped(self):
+        d = make_decompiler()
+        original = self.snapshot(d)
+        self.assertFalse(d.correct_segmentation(len(d.ordered_bytecodes)))
         self.assert_restored(d, original)
 
     def test_extra_candidate_code_object_does_not_select_wrong_result(self):
