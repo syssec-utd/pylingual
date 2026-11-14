@@ -151,6 +151,7 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
         progress.add_task(TRANSLATION_STEP, start=False)
         progress.add_task(CFLOW_STEP, start=False)
         progress.add_task(CORRECTION_STEP, start=False)
+        produced = 0
 
         for i, (pyc_path, save_path) in enumerate(tasks_to_process):
             for task in progress.tasks:
@@ -166,6 +167,7 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
                 continue
             if save_path.exists() and not force:
                 logger.warning(f"Output file {save_path} already exists. Skipping.")
+                produced += 1
                 continue
 
             try:
@@ -180,6 +182,7 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
                     redis_cache_server_ip=redis_host or None,
                     redis_port=redis_port,
                 )
+                produced += 1
                 pyc = result.original_pyc
                 print_result(f"Equivalence Results for {pyc.pyc_path.name if pyc.pyc_path else repr(pyc)}", result.equivalence_results)
             except TimeoutError as e:
@@ -188,6 +191,10 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
             except Exception:
                 logger.exception(f"Failed to decompile {pyc_path}")
             console.rule()
+
+    if produced == 0:
+        logger.error("No output files were produced.")
+        raise click.exceptions.Exit(1)
 
 
 def install_pyenv():
