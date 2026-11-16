@@ -252,9 +252,6 @@ class Decompiler:
                     equivalence_results[equivalence_results.index(r)] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
             self.source_context.purged_cfts = []
             return equivalence_results
-        except TimeoutError:
-            self.source_context.purged_cfts = []
-            raise
         except:
             self.source_context.purged_cfts = []
             return []
@@ -538,66 +535,30 @@ class Decompiler:
         previous_starts = [(inst, inst.starts_line) for insts in self.ordered_instructions for inst in insts]
         passing = self.passing_bytecodes()
         strategy = functools.partial(m_deep_top_k, priority_function=naive_confidence_priority, m=2, k=self.top_k + 1)
-        # skip first prediction since it is the same as original
-        candidates = [(k, prediction) for k, prediction in enumerate(get_top_k_predictions(strategy, self.segmentation_results[i])[1:], start=1) if prediction[0] == "B"]
         bc = self.ordered_bytecodes[i]
-
-        def apply(prediction, translation=None):
-            # All source representations and instruction line numbers belong
-            # to the same candidate. Keep them together until it is checked.
-            for r, p in zip(self.segmentation_results[i], prediction):
-                r["entity"] = p
-            self.update_starts_line()
-            if translation is not None:
-                self.translation_results[i] = translation
-                self.update_source_lines()
-                self.unmask_lines()
-
-        def restore():
-            for r, p in zip(self.segmentation_results[i], original_prediction):
-                r["entity"] = p
-            for inst, starts_line in previous_starts:
-                inst.starts_line = starts_line
-            self.translation_results[i] = original_translation
-            self.cflow_requests[i], self.cflow_results[i] = previous_request, previous_result
-            self.source_lines = previous_lines
-            self.indented_source = previous_indented_source
-            self.source_context.restore(previous_context)
-
-        # translate and predict every candidate in one batch each, then check them in order as before
-        try:
-            translation_requests = []
-            for _, prediction in candidates:
-                apply(prediction)
-                translation_requests.append(self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i]))
-            try:
-                flat = self.translator(list(itertools.chain.from_iterable(translation_requests)), check_timeout=self.check_timeout) if translation_requests else []
-            except Exception as e:
-                e.add_note("From translation")
-                raise
-            translations = []
-            for request in translation_requests:
-                translations.append(flat[: len(request)])
-                flat = flat[len(request) :]
-            requests = []
-            for (_, prediction), translation in zip(candidates, translations):
-                apply(prediction, translation)
-                # skeletons refer to the old statements, so predict again
-                requests.append(cflow_request(bc, self.source_lines))
-            skeletons = self.predict_skeletons(requests) if requests else []
-        finally:
-            restore()
-
-        for (k, prediction), translation, request, skeleton in zip(candidates, translations, requests, skeletons):
+        # skip first prediction since it is the same as original
+        for k, prediction in enumerate(get_top_k_predictions(strategy, self.segmentation_results[i])[1:], start=1):
+            if prediction[0] != "B":
+                continue
             accepted = False
             try:
+                # All source representations and instruction line numbers belong
+                # to the same candidate. Keep them together until it is checked.
+                for r, p in zip(self.segmentation_results[i], prediction):
+                    r["entity"] = p
+                self.update_starts_line()
+                translation_request = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
                 try:
-                    apply(prediction, translation)
+                    self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
+                    self.update_source_lines()
+                    self.unmask_lines()
                 except Exception as e:
                     e.add_note("From translation")
                     raise
                 self.source_context.update_lines(self.source_lines)
-                self.cflow_requests[i], self.cflow_results[i] = request, skeleton
+                # skeletons refer to the old statements, so predict again
+                self.cflow_requests[i] = cflow_request(bc, self.source_lines)
+                self.cflow_results[i] = self.predict_skeletons([self.cflow_requests[i]])[0]
                 self.source_context.update_cft(bc, self.make_cft(i))
                 self.reconstruct_source()
                 equivalence_results = self.check_reconstruction(self.indented_source)
@@ -609,7 +570,15 @@ class Decompiler:
                     return True
             finally:
                 if not accepted:
-                    restore()
+                    for r, p in zip(self.segmentation_results[i], original_prediction):
+                        r["entity"] = p
+                    for inst, starts_line in previous_starts:
+                        inst.starts_line = starts_line
+                    self.translation_results[i] = original_translation
+                    self.cflow_requests[i], self.cflow_results[i] = previous_request, previous_result
+                    self.source_lines = previous_lines
+                    self.indented_source = previous_indented_source
+                    self.source_context.restore(previous_context)
         logger.info(f"Could not fix segmentation for {self.ordered_bytecodes[i].name}")
         return False
 
