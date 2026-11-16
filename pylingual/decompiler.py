@@ -439,19 +439,46 @@ class Decompiler:
         passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
         strategy = functools.partial(m_deep_top_k, priority_function=naive_confidence_priority, m=2, k=self.top_k + 1)
         # skip first prediction since it is the same as original
-        for k, prediction in enumerate(get_top_k_predictions(strategy, self.segmentation_results[i])[1:], start=1):
-            if prediction[0] != "B":
-                continue
+        candidates = [(k, prediction) for k, prediction in enumerate(get_top_k_predictions(strategy, self.segmentation_results[i])[1:], start=1) if prediction[0] == "B"]
+
+        def segment(prediction):
+            for r, p in zip(self.segmentation_results[i], prediction):
+                r["entity"] = p
+            self.update_starts_line()
+
+        def restore():
+            for r, p in zip(self.segmentation_results[i], original_prediction):
+                r["entity"] = p
+            for inst, starts_line in previous_starts:
+                inst.starts_line = starts_line
+            self.translation_results[i] = original_translation
+            self.source_lines = previous_lines
+            self.indented_source = previous_indented_source
+            self.source_context.restore(previous_context)
+
+        # translate every candidate in one call rather than one call each, then check them in order
+        try:
+            requests = []
+            for _, prediction in candidates:
+                segment(prediction)
+                requests.append(self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i]))
+            translated = self.translator(list(itertools.chain.from_iterable(requests)), check_timeout=self.check_timeout) if requests else []
+        except Exception as e:
+            e.add_note("From translation")
+            raise
+        finally:
+            restore()
+        ends = list(itertools.accumulate(map(len, requests)))
+        translations = [translated[end - len(request) : end] for request, end in zip(requests, ends)]
+
+        for (k, prediction), translation in zip(candidates, translations):
             accepted = False
             try:
                 # All source representations and instruction line numbers belong
                 # to the same candidate. Keep them together until it is checked.
-                for r, p in zip(self.segmentation_results[i], prediction):
-                    r["entity"] = p
-                self.update_starts_line()
-                translation_request = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
+                segment(prediction)
+                self.translation_results[i] = translation
                 try:
-                    self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
                     self.update_source_lines()
                     self.unmask_lines()
                 except Exception as e:
@@ -475,14 +502,7 @@ class Decompiler:
                     return True
             finally:
                 if not accepted:
-                    for r, p in zip(self.segmentation_results[i], original_prediction):
-                        r["entity"] = p
-                    for inst, starts_line in previous_starts:
-                        inst.starts_line = starts_line
-                    self.translation_results[i] = original_translation
-                    self.source_lines = previous_lines
-                    self.indented_source = previous_indented_source
-                    self.source_context.restore(previous_context)
+                    restore()
         logger.info(f"Could not fix segmentation for {self.ordered_bytecodes[i].name}")
         return False
 
