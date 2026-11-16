@@ -230,6 +230,9 @@ class Decompiler:
                     equivalence_results[equivalence_results.index(r)] = TestResult(False, "Compilation Error", r.bc_a, r.bc_b)
             self.source_context.purged_cfts = []
             return equivalence_results
+        except TimeoutError:
+            self.source_context.purged_cfts = []
+            raise
         except:
             self.source_context.purged_cfts = []
             return []
