@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import itertools
-from typing import TYPE_CHECKING
-from pathlib import Path
+from itertools import chain
+from typing import TYPE_CHECKING, override
 
 import networkx as nx
-import pydot
 
-from pylingual.editable_bytecode import EditableBytecode
-from pylingual.utils.lists import flatten
-from .cft import ControlFlowTemplate, EdgeKind, InstTemplate, MetaTemplate
-from .templates.Block import BlockTemplate
+from pylingual.editable_bytecode import EditableBytecode, Inst
+from .cft import ControlFlowTemplate, EdgeCategory, EdgeKind, InstTemplate, MetaTemplate, indent_str, out_edge_dict
+from .source import SourceContext, SourceLine
 
 if TYPE_CHECKING:
     DiGraph_CFT = nx.DiGraph[ControlFlowTemplate]
@@ -19,39 +16,18 @@ else:
 
 
 class CFG(DiGraph_CFT):
-    bytecode: EditableBytecode
-    i: int
+    """Control flow graph of a code object's instructions, merged into basic blocks, which the equivalence check compares."""
+
     start: ControlFlowTemplate
     end: ControlFlowTemplate
-    iteration_graphs: list[list[str | list]]
-    run: int
 
     @staticmethod
-    def enable_graphing(graph_path: Path | str, fmt: str = "jpg"):
-        CFG.visualize = CFG._visualize
-        CFG.layout_nodes = CFG._layout_nodes
-        CFG.graph_path = Path(graph_path)
-        CFG.graph_path.mkdir(exist_ok=True, parents=True)
-        CFG.graph_format = fmt
-
-    @staticmethod
-    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode, iterate=True, source=None) -> CFG:
+    def from_graph(cfg: nx.DiGraph, bytecode: EditableBytecode) -> CFG:
         self = CFG(cfg)
-
-        self.bytecode = bytecode
-        self.i = 0
         self.start = MetaTemplate("start", bytecode.codeobj)
         self.end = MetaTemplate("end", bytecode.codeobj)
-        self.iteration_graphs = []
-        self.run = 0
 
         InstTemplate.match_all(self)
-        for n in self.nodes:
-            if source is not None and n.inst.starts_line is not None:
-                n.inst.source_line = source[n.inst.starts_line - 1]
-            else:
-                n.inst.source_line = ""
-
         for _a, _b, _p in self.edges(data=True):
             self[_a][_b]["kind"] = EdgeKind(_p["type"])
 
@@ -61,167 +37,71 @@ class CFG(DiGraph_CFT):
         self.add_edges_from((node, self.end, EdgeKind.Meta.prop()) for node in self.nodes if isinstance(node, InstTemplate) and self.out_degree(node) == 0)
 
         BlockTemplate.match_all(self)
-        if iterate:
-            self.iterate()
-
         return self
 
-    def iterate(self):
-        if not self.iteration_graphs:
-            self.i += 1
-        self.visualize()
 
-    def speculate(self):
-        self.iteration_graphs.append([])
+# basic blocks: the equivalence check compares code objects block by block
+class BlockTemplate(ControlFlowTemplate):
+    members: list[ControlFlowTemplate]
 
-    def drop_graphs(self):
-        self.iteration_graphs.pop()
+    def __init__(self, members: list[ControlFlowTemplate]):
+        self.members = members  # type: ignore
+        self.offset = members[0].offset if members else -1
+        self.header_lines = []
+        self.blame = members[0].blame
 
-    def ordered_iter(self):
-        self._create_dominator_tree()
-        return nx.dfs_postorder_nodes(self, source=self.start, sort_neighbors=lambda nodes: sorted(nodes, key=lambda x: x.offset, reverse=True))
-
-    def is_loop_header(self, node):
-        # Check all predecessors
-        for predecessor in self.predecessors(node):
-            # A back edge exists if the predecessor is dominated by this node
-            if self.dominates(node, predecessor):
-                return True
-        return False
-
-    def dfs_labeled_edges_no_loop(self, source=None, depth_limit=None, *, sort_neighbors=None):
-        if source is None:
-            # edges for all components
-            nodes = self
-        else:
-            # edges for components with source
-            nodes = [source]
-        if depth_limit is None:
-            depth_limit = len(self)
-
-        get_children = self.neighbors if sort_neighbors is None else lambda n: iter(sort_neighbors(self.neighbors(n)))
-
-        visited = set()
-        for start in nodes:
-            if start in visited:
+    @staticmethod
+    def match_all(cfg: CFG):
+        for node in list(cfg.nodes):
+            if isinstance(node, MetaTemplate) or node not in cfg.nodes:
                 continue
-            yield start, start, "forward"
-            visited.add(start)
-            stack = [(start, get_children(start))]
-            depth_now = 1
-            while stack:
-                parent, children = stack[-1]
-                for child in children:
-                    if child in visited or self.is_loop_header(child) or not all(p in visited for p in self.predecessors(child)):
-                        yield parent, child, "nontree"
-                    else:
-                        yield parent, child, "forward"
-                        visited.add(child)
-                        if depth_now < depth_limit:
-                            stack.append((child, iter(get_children(child))))
-                            depth_now += 1
-                            break
-                        else:
-                            yield parent, child, "reverse-depth_limit"
-                else:
-                    stack.pop()
-                    depth_now -= 1
-                    if stack:
-                        yield stack[-1][0], parent, "reverse"
-            yield start, start, "reverse"
+            BlockTemplate.try_match(cfg, node)
 
-    def apply_graphs(self):
-        graphs = self.iteration_graphs.pop()
-        if self.iteration_graphs:
-            self.iteration_graphs[-1].append(graphs)
-        else:
-            for x in flatten(graphs):
-                g = pydot.graph_from_dot_data(x)[0]
-                g.write(str(CFG.graph_path / g.get_name().replace('"', "")), prog=["neato", "-n"], format=CFG.graph_format)
-
-    def layout_nodes(self):
-        pass
-
-    def _layout_nodes(self):
-        relabeled = nx.convert_node_labels_to_integers(self, label_attribute="template")  # type: ignore
-
-        root = next(i for i in relabeled.nodes if relabeled.nodes[i]["template"] == self.start)
-        for i, pos in nx.nx_pydot.pydot_layout(relabeled, prog="dot", root=root).items():
-            relabeled.nodes[i]["template"]._pos = [pos]
-
-    def node_by_offset(self, offset: int):
-        return next(x for x in self.nodes if x.offset == offset)
-
-    def _create_dominator_tree(self):
-        self._dt = nx.create_empty_copy(self)
-        self._dt.add_edges_from(nx.immediate_dominators(self, self.start).items())
-        # In NetworkX 3.5 and below, the start node dominates itself; this was changed in NetworkX 3.6
-        if self._dt.has_edge(self.start, self.start):
-            self._dt.remove_edge(self.start, self.start)
-        # number the dominator tree so dominance is an interval check; the transitive closure is quadratic on deep trees
-        self._span = span = {}
-        count = 0
-        stack = [(self.start, iter(self._dt.predecessors(self.start)))]
-        span[self.start] = [count, None]
-        while stack:
-            node, children = stack[-1]
-            for child in children:
-                count += 1
-                span[child] = [count, None]
-                stack.append((child, iter(self._dt.predecessors(child))))
+    @classmethod
+    def try_match(cls, cfg, node) -> ControlFlowTemplate | None:
+        members: list[ControlFlowTemplate] = []
+        out = out_edge_dict(cfg, node)
+        exc = out[EdgeCategory.Exception]
+        current = node
+        while True:
+            if out[EdgeCategory.Exception] != exc:
                 break
-            else:
-                span[node][1] = count
-                stack.pop()
+            if current != node and cfg.in_degree(current) > 1:  # type: ignore
+                break
+            if current in members:
+                break
+            members.append(current)
+            next = out[EdgeCategory.Natural]
+            if next is None:
+                break
+            if cfg.get_edge_data(current, next).get("kind") != EdgeKind.Fall:
+                break
+            if out[EdgeCategory.Conditional] is not None:
+                break
+            out = out_edge_dict(cfg, next)
+            current = next
+        if len(members) < 2:
+            return None
+        template = BlockTemplate([x for m in members for x in (m.members if isinstance(m, BlockTemplate) else [m])])
+        in_edges = [(src, template, prop) for src, _, prop in cfg.in_edges(node, data=True) if src not in members]
+        out_edges = [(template, template, prop) if dst in members else (template, dst, prop) for _, dst, prop in cfg.out_edges(members[-1], data=True)]
+        cfg.remove_nodes_from(members)
+        cfg.add_node(template)
+        cfg.add_edges_from(chain(in_edges, out_edges))
+        return template
 
-    def dominates(self, node_a, node_b):
-        if node_a == node_b:
-            return True
-        a = self._span.get(node_a)
-        b = self._span.get(node_b)
-        return a is not None and b is not None and a[0] <= b[0] <= a[1]
+    @override
+    def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
+        return list(chain.from_iterable(source[m] for m in self.members))
 
-    def visualize(self):
-        pass
+    @override
+    def get_instructions(self) -> list[Inst]:
+        insts: list[Inst] = []
+        for member in self.members:
+            insts.extend(member.get_instructions())
+        return insts
 
-    def _visualize(self):
-        for n in self.nodes:
-            self.nodes[n]["label"] = repr(n)
-
-        if not self.start._pos:
-            self.layout_nodes()
-
-        i = "-".join([str(self.i)] + [str(len(x)) for x in self.iteration_graphs])
-        out = Path(f"{CFG.graph_path}/{self.bytecode.name}_{self.bytecode.version[1]}_{i}.{CFG.graph_format}")
-        dot = pydot.Dot(out.name, splines=True)
-        nodes = {}
-
-        for node, data in self.nodes.data():
-            nodes[node] = pydot.Node(str(hash(node)), label=repr(node).replace("\n", "\\l").replace("\t", "|    ") + "\\l", fontname="Noto Sans", labeljust="l", shape="box", pos=node.pos())
-            dot.add_node(nodes[node])
-        for a, b, data in self.edges.data():
-            dot.add_edge(pydot.Edge(nodes[a], nodes[b], **data, label=data["kind"].value, color=data["kind"].color(), fontname="Noto Sans", labeljust="l"))
-        if not self.iteration_graphs:
-            dot.write(out, prog=["neato", "-n"], format=CFG.graph_format)
-        else:
-            self.iteration_graphs[-1].append(dot.to_string())
-
-    def cdg(self) -> CFG:
-        self.add_nodes_from([self.start, self.end])
-        self.add_edges_from((self.start, n, EdgeKind.Meta.prop()) for n in self.nodes if self.in_degree(n) == 0)
-        self.add_edges_from((n, self.end, EdgeKind.Meta.prop()) for n in self.nodes if all(e["kind"] is EdgeKind.Exception for _, _, e in self.out_edges(n, data=True)))
-        pdt = nx.create_empty_copy(self)
-        pdt.add_edges_from((B, A) for A, B in nx.immediate_dominators(self.reverse(), self.end).items())
-
-        # In NetworkX 3.5 and below, the start node dominates itself; this was changed in NetworkX 3.6
-        if pdt.has_edge(self.end, self.end):
-            pdt.remove_edge(self.end, self.end)
-        pdr = nx.transitive_closure_dag(pdt)
-        postdominates = lambda A, B: pdr.has_edge(A, B) or A == B
-        control_dependent = lambda A, B: 0 < sum(postdominates(A, succ) for succ in self.successors(B)) < self.out_degree(B)
-        cdg = nx.create_empty_copy(self)
-        cdg.add_edges_from((B, A, {"kind": EdgeKind.Fall}) for A, B in itertools.product(self.nodes, self.nodes) if A != B and control_dependent(A, B))
-        cdg.remove_node(self.end)
-        start_nodes = [n for n in cdg.nodes if cdg.in_degree(n) == 0 and n != self.start]
-        cdg.add_edges_from(((self.start, n) for n in start_nodes), kind=EdgeKind.Fall)
-        return cdg
+    @override
+    def __repr__(self) -> str:
+        components = indent_str("\n".join(repr(member) for member in self.members))
+        return f"BlockTemplate[\n{components}]"

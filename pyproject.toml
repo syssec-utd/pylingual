@@ -102,6 +102,9 @@ skip-magic-trailing-comma = false
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
 
+[tool.pytest.ini_options]
+pythonpath = [".", "dev_scripts"]
+
 [tool.uv.workspace]
 members = [
     "pylingual/tools",

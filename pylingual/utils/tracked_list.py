@@ -8,6 +8,7 @@ else:
 
 SEGMENTATION_STEP = "Segmentation"
 TRANSLATION_STEP = "Translation"
+CFLOW_MODEL_STEP = "Control Flow Model"
 CFLOW_STEP = "Control Flow"
 CORRECTION_STEP = "Error Correction"
 

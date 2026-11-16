@@ -82,6 +82,9 @@ Options:
   -h, --help              Show this message and exit.
 ```
 
+Control flow is reconstructed by a control flow model, the `CONTROL_FLOW_MODEL` of the config file; see
+`dev_scripts/README.md` for training one.
+
 ## Demo
 
 ![demo gif](demo.gif)

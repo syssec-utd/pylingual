@@ -1,0 +1,30 @@
+{
+    "base_repo_name": "sample_user/sample_name-transition-unified",
+    "dataset_dirs": [
+        "./cache-dir/datasets/py36-cflow/cflow",
+        "./cache-dir/datasets/py37-cflow/cflow",
+        "./cache-dir/datasets/py38-cflow/cflow",
+        "./cache-dir/datasets/py39-cflow/cflow",
+        "./cache-dir/datasets/py310-cflow/cflow",
+        "./cache-dir/datasets/py311-cflow/cflow",
+        "./cache-dir/datasets/py312-cflow/cflow",
+        "./cache-dir/datasets/py313-cflow/cflow",
+        "./cache-dir/datasets/py314-cflow/cflow",
+        "./cache-dir/datasets/py315-cflow/cflow"
+    ],
+    "cache_dir": "./cache-dir",
+    "max_stmts": 2048,
+    "max_input_tokens": 8192,
+    "push_to_hub": false,
+    "model_parameters": {
+        "d_model": 256,
+        "layers": 4,
+        "heads": 8,
+        "d_ff": 1024
+    },
+    "training_parameters": {
+        "batch_size": 64,
+        "epochs": 48,
+        "learning_rate": 1e-3
+    }
+}

@@ -11,7 +11,7 @@ from pylingual.equivalence_check import TestResult
 import pylingual.utils.ascii_art as ascii_art
 from pylingual.utils.generate_bytecode import CompileError
 from pylingual.utils.version import PythonVersion, supported_versions
-from pylingual.utils.tracked_list import TrackedList, SEGMENTATION_STEP, TRANSLATION_STEP, CFLOW_STEP, CORRECTION_STEP
+from pylingual.utils.tracked_list import TrackedList, SEGMENTATION_STEP, TRANSLATION_STEP, CFLOW_MODEL_STEP, CFLOW_STEP, CORRECTION_STEP
 from pylingual.utils.lazy import lazy_import
 from pylingual.decompiler import decompile
 
@@ -131,6 +131,7 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
         self.task = next(x for x in progress.tasks if x.description == self.name)
         self.task.total = len(self.x) + 1
         progress.start_task(self.task.id)
+        progress.update(self.task.id, visible=True)
 
     TrackedList.init = init
     TrackedList.progress = lambda self, i: progress.advance(self.task.id, i)
@@ -149,6 +150,8 @@ def main(files: list[Path], out_dir: Path | None, config_file: Path | None, vers
         transformers.logging.add_handler(log_handler)
         progress.add_task(SEGMENTATION_STEP, start=False)
         progress.add_task(TRANSLATION_STEP, start=False)
+        # shown once a control flow model is used
+        progress.add_task(CFLOW_MODEL_STEP, start=False, visible=False)
         progress.add_task(CFLOW_STEP, start=False)
         progress.add_task(CORRECTION_STEP, start=False)
 

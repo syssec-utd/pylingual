@@ -11,18 +11,23 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pylingual.control_flow_reconstruction.block_grammar import consistent
+from pylingual.control_flow_reconstruction.model_view import is_straight_line
+from pylingual.control_flow_reconstruction.skeleton import ref
 from pylingual.masking.model_disasm import (
     fix_jump_targets,
     normalize_masks,
     restore_masks,
 )
 from pylingual.utils.lists import flatten
-from pylingual.utils.tracked_list import TrackedDataset, TRANSLATION_STEP
+from pylingual.utils.tracked_list import TrackedDataset, TrackedList, CFLOW_MODEL_STEP, TRANSLATION_STEP
 from pylingual.utils.version import PythonVersion
 from pylingual.utils.lazy import lazy_import
 
 if TYPE_CHECKING:
     import torch
+
+    from pylingual.control_flow_reconstruction.model_view import CflowRequest
     import transformers
     import huggingface_hub
 else:
@@ -129,6 +134,106 @@ class CacheTranslator:
             self.cache.popitem(last=False)
         return results
 
+# control flow models
+class ControlFlowPredictor:
+    """
+    Predicts control flow skeletons for control flow model requests (see control_flow_reconstruction/model_view.py).
+    Every skeleton it returns fits its request's block grammar (control_flow_reconstruction/block_grammar.py), so it
+    renders to source that compiles. A model implements `_generate`.
+
+    Every request gets a skeleton: one the model cannot predict (too large, failed, no candidate in the grammar) gets
+    its statements in order (CflowRequest.in_order).
+
+    :param max_stmts: Requests with more statements are not predicted by the model
+    :param max_input_tokens: Requests with longer inputs are not predicted by the model
+    """
+
+    BATCH_SIZE = 16
+
+    def __init__(self, max_stmts: int, max_input_tokens: int):
+        self.max_stmts = max_stmts
+        self.max_input_tokens = max_input_tokens
+
+    def _generate(self, batch: list[CflowRequest], num_beams: int) -> list[list[list[str]]]:
+        """Up to `num_beams` skeleton candidates (source order, best first) for each request of a batch"""
+        raise NotImplementedError
+
+    def __call__(self, requests: list[CflowRequest | None], num_beams: int = 1, check_timeout: callable = None) -> list[list[list[str]] | None]:
+        """
+        Candidate skeletons (source order, best first) for each request, all accepted by its block grammar.
+        Statements in order for inputs over the model's limits and when the model fails or gives no valid skeleton, and
+        without blocks when no skeleton fits (inconsistent shapes, from a mistranslation). None only for no request.
+        """
+        results = [None] * len(requests)
+        todo = []
+        for i, request in enumerate(requests):
+            if request is None or not consistent(request.shapes):
+                continue
+            # straight-line code needs no model, however long it is
+            in_order = [ref(k) for k in range(request.n)]
+            if is_straight_line(request.tokens) and request.grammar().accepts(in_order):
+                results[i] = [in_order]
+            elif request.n <= self.max_stmts and len(request.tokens) < self.max_input_tokens:
+                todo.append(i)
+        # sorted by length so batches need less padding
+        todo = TrackedList(CFLOW_MODEL_STEP, sorted(todo, key=lambda i: len(requests[i].tokens)), check_timeout=check_timeout)
+        for start in range(0, len(todo), self.BATCH_SIZE):
+            batch = todo[start : start + self.BATCH_SIZE]
+            try:
+                for i, skeletons in zip(batch, self._generate([requests[i] for i in batch], num_beams)):
+                    grammar = requests[i].grammar()
+                    results[i] = [s for s in skeletons if grammar.accepts(s)] or None
+                continue
+            except TimeoutError:
+                raise
+            except Exception as e:
+                error = repr(e)
+            # handled outside the except block so tensors can be freed; these code objects get their statements in order
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info(f"Control flow model failed on {len(batch)} code objects, using statement order ({error})")
+        for i, request in enumerate(requests):
+            if results[i] is None and request is not None:
+                results[i] = [request.in_order()]
+        return results
+
+
+class TransitionPredictor(ControlFlowPredictor):
+    """
+    Statement encoder and grammar action decoder (see control_flow_reconstruction/transition.py)
+
+    The model runs on inputs up to LIMIT_SCALE times the limits it was trained with.
+
+    :param model: The loaded TransitionModel, its config holds the limits it was trained with
+    """
+
+    LIMIT_SCALE = 4
+
+    def __init__(self, model, device="cpu"):
+        super().__init__(self.LIMIT_SCALE * model.config.max_stmts, self.LIMIT_SCALE * model.config.max_input_tokens)
+        self.model = model.to(device).eval()
+
+    @classmethod
+    def from_pretrained(cls, repo: str, revision: str | None = None, token=False, device="cpu") -> TransitionPredictor:
+        from pylingual.control_flow_reconstruction.transition import TransitionModel
+
+        return cls(_cached_first(TransitionModel.from_pretrained, repo, revision=revision, token=token), device=device)
+
+    def _generate(self, batch: list[CflowRequest], num_beams: int) -> list[list[list[str]]]:
+        try:
+            return self.model.generate(batch, num_beams)
+        except torch.OutOfMemoryError:
+            if len(batch) == 1:
+                return [[]]  # in order, see __call__
+        torch.cuda.empty_cache()  # outside the except block, so the failed batch's tensors can be freed
+        half = len(batch) // 2
+        return self._generate(batch[:half], num_beams) + self._generate(batch[half:], num_beams)
+
+
+def control_flow_config(config: dict, version: PythonVersion) -> dict | None:
+    """The CONTROL_FLOW_MODEL entry for `version`: its own, else the top-level one shared by every version, else None."""
+    return config[f"v{version}"].get("CONTROL_FLOW_MODEL", config.get("CONTROL_FLOW_MODEL"))
+
 # offline support if models are downloaded
 def _cached_first(fn, *args, **kwargs):
     """Try the local HF cache first; fall back to downloading if it's missing."""
@@ -180,12 +285,15 @@ def load_models(
     redis_port: int = 1679,
     token=False,
     device: torch.device | None = None,
-) -> tuple[transformers.Pipeline, CacheTranslator]:
+) -> tuple[transformers.Pipeline, CacheTranslator, ControlFlowPredictor]:
     logger.info(f"Loading models for {version}...")
     with config_file.open() as f:
         config = yaml.safe_load(f)
         seg_config = config[f"v{version}"]["SEGMENTATION_MODEL"]
         stmt_config = config[f"v{version}"]["STATEMENT_MODEL"]
+        cflow_config = control_flow_config(config, version)
+    if cflow_config is None:
+        raise ValueError(f"{config_file} gives no CONTROL_FLOW_MODEL for {version}: control flow reconstruction needs a control flow model")
 
     #################################
     # Segmentation model components #
@@ -246,4 +354,11 @@ def load_models(
         token=token,
     )
 
-    return segmenter, CacheTranslator(translation_model, translation_tokenizer, python_version=version.as_str(), redis_cache_server_ip=redis_cache_server_ip, redis_port=redis_port, device=device)
+    translator = CacheTranslator(translation_model, translation_tokenizer, python_version=version.as_str(), redis_cache_server_ip=redis_cache_server_ip, redis_port=redis_port, device=device)
+
+    ############################
+    # Control flow model       #
+    ############################
+    cflow_model = TransitionPredictor.from_pretrained(cflow_config["REPO"], revision=cflow_config.get("REVISION"), token=token, device=device)
+
+    return segmenter, translator, cflow_model
