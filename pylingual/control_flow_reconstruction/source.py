@@ -39,8 +39,10 @@ class SourceLine(NamedTuple):
 compiler_generated_assignment = re.compile(r"(__static_attributes__|__firstlineno__|__classdictcell__|__classcell__)\s*=[^=]")
 
 
-def sanitize_lines(lines: list[str]) -> list[str]:
-    return ["" if x in ("break", "continue", "except:", "while True:", "try:") or compiler_generated_assignment.match(x) else x for x in (x[2:] if x.startswith("elif ") else x for x in (x.strip() for x in lines))]
+def sanitize_line(x: str) -> str:
+    x = x.strip()
+    x = x[2:] if x.startswith("elif ") else x
+    return "" if x in ("break", "continue", "except:", "while True:", "try:") or compiler_generated_assignment.match(x) else x
 
 
 def fake_header(co: Code3):
@@ -63,10 +65,10 @@ def valid_header(line: SourceLine, version: PythonVersion):
 class SourceContext:
     def __init__(self, pyc: PYCFile, lines: list[str], cfts: dict[Code3, ControlFlowTemplate]):
         self.pyc = pyc
-        self.lines = sanitize_lines(lines)
+        self.lines = [x.strip() for x in lines]
         self.cfts = cfts
         self.cache: dict[ControlFlowTemplate, list[SourceLine]] = {}
-        # lines read while rendering each code object's templates, so cached sources can be kept when other lines change
+        # lines read while rendering each code object, so cached sources can be kept when other lines change
         self.reads: dict[Code3, dict[Inst, str | None]] = defaultdict(dict)
         self.rendering: list[Code3] = []
         self.header_lines: list[SourceLine] = []
@@ -125,11 +127,12 @@ class SourceContext:
             return indent_lines(template.header_lines + src, indent)
         return template.header_lines + src
 
-    def line_of(self, inst: Inst) -> str | None:
+    def line_of(self, inst: Inst, raw: bool = False) -> str | None:
+        """Sanitized line of `inst` (unsanitized if `raw`), recorded as read by the code objects being rendered."""
         line = None if inst.starts_line is None else self.lines[inst.starts_line - 1]
         for co in set(self.rendering):
             self.reads[co][inst] = line
-        return line
+        return line if line is None or raw else sanitize_line(line)
 
     def source_lines_of(self, co: Code3, i=0) -> Generator[SourceLine]:
         lines = self[self.cfts[co], i]
@@ -205,14 +208,12 @@ class SourceContext:
         return "\n".join("    " * x.indent + x.line for x in self.source_lines())
 
     def update_cft(self, bc: EditableBytecode, template: ControlFlowTemplate):
-        x = bc
-        while x.parent is not None:
-            del self.cache[self.cfts[x.codeobj]]
-            x = x.parent
+        """Use `template` for `bc`. Cached parents resolve children through cfts."""
+        template.header_lines = self.cfts[bc.codeobj].header_lines
         self.cfts[bc.codeobj] = template
 
     def update_lines(self, lines: list[str]):
-        self.lines = sanitize_lines(lines)
+        self.lines = [x.strip() for x in lines]
         # only rebuild the sources of code objects that read a line that changed
         changed = {co for co, reads in self.reads.items() if any((None if inst.starts_line is None else self.lines[inst.starts_line - 1]) != line for inst, line in reads.items())}
         for co in changed:
@@ -221,11 +222,13 @@ class SourceContext:
             del self.cache[template]
 
     def snapshot(self):
-        return self.lines, self.cache.copy(), {co: reads.copy() for co, reads in self.reads.items()}
+        return self.lines, self.cache.copy(), {co: reads.copy() for co, reads in self.reads.items()}, dict(self.cfts)
 
     def restore(self, snapshot):
-        self.lines, cache, reads = snapshot
+        self.lines, cache, reads, cfts = snapshot
         self.cache.clear()
         self.cache.update(cache)
         self.reads.clear()
         self.reads.update(reads)
+        self.cfts.clear()
+        self.cfts.update(cfts)

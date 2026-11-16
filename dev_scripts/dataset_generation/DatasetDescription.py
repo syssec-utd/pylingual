@@ -62,6 +62,10 @@ class DatasetDescription:
     def csv_dir(self):
         return self.save_to_dir / self.name / "csv"
 
+    @property
+    def cflow_dir(self):
+        return self.save_to_dir / self.name / "cflow"
+
     def __post_init__(self):
         self.save_to_dir = pathlib.Path(self.save_to_dir)
         self.version = tuple(self.version)

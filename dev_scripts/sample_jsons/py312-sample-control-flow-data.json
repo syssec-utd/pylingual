@@ -1,0 +1,24 @@
+{
+    "name": "py312-cflow",
+    "version": [3, 12],
+    "save_to_dir": "./cache-dir/datasets",
+    "huggingface_user": "sample_user",
+
+    "data_requests":
+    [
+        {
+            "name": "pypi",
+            "source_path": "./dataset/pypi",
+            "num_train": 13230,
+            "num_test": 135,
+            "num_valid": 135
+        },
+        {
+            "name": "csn",
+            "source_path": "./dataset/csn",
+            "num_train": 1470,
+            "num_test": 15,
+            "num_valid": 15
+        }
+    ]
+}

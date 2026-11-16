@@ -201,7 +201,7 @@ class PatchedPYC:
 
     def block_graph(self, bytecode: EditableBytecode) -> CFG:
         if bytecode not in self.block_graphs:
-            self.block_graphs[bytecode] = CFG.from_graph(bytecode_to_control_flow_graph(bytecode), bytecode, iterate=False)
+            self.block_graphs[bytecode] = CFG.from_graph(bytecode_to_control_flow_graph(bytecode), bytecode)
         return self.block_graphs[bytecode]
 
 
