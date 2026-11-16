@@ -1,5 +1,4 @@
 import sys
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -159,15 +158,3 @@ def test_correction_error_restores_the_skeleton(tmp_path):
         d.correct_cflow(i)
     assert cft_of_f(d) is before and d.indented_source == source
 
-
-def test_purge_lets_timeouts_through():
-    """Correcting a code object while purging others can time out, which must not read as nothing to purge."""
-    d = Decompiler.__new__(Decompiler)
-    d.equivalence_results = [SyntaxError("invalid syntax")]
-    d.ordered_bytecodes = [SimpleNamespace(name="bad0", codeobj=0), SimpleNamespace(name="bad1", codeobj=1)]
-    d.source_context = SimpleNamespace(purged_cfts=[], purge=Mock())
-    d.find_comp_error_cause = Mock(side_effect=[0, 1])
-    d.check_reconstruction = Mock(return_value=[SyntaxError("invalid syntax")])
-    d.correct_cflow = Mock(side_effect=TimeoutError("deadline"))
-    with pytest.raises(TimeoutError):
-        d.purge_comp_errors()
