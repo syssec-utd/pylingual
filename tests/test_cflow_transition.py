@@ -8,7 +8,7 @@ import torch
 from dataset_generation.bytecode2cflow import make_examples
 from pylingual.control_flow_reconstruction.model_view import INPUT_TOKENS, CflowRequest
 from pylingual.control_flow_reconstruction.skeleton_template import SkeletonTemplate
-from pylingual.control_flow_reconstruction.transition import CHAINS, FRAME_KINDS, MAX_DEPTH, SPECIAL, TOKENS, CapturedSteps, TransitionConfig, TransitionModel
+from pylingual.control_flow_reconstruction.transition import CHAINS, FRAME_KINDS, MAX_DEPTH, SPECIAL, TOKENS, TransitionConfig, TransitionModel
 from pylingual.decompiler import has_comp_error
 from pylingual.editable_bytecode import PYCFile
 from pylingual.models import TransitionPredictor, control_flow_config
@@ -101,26 +101,6 @@ def test_decode_step_is_the_teacher_forced_step(products):
         h, _ = model.lstm(model.step_inputs(stmts, feats))
         reference = model.scores(h, memory, mask, stmts, feats[..., 4])[:, 0]
     assert torch.allclose(cached, reference, atol=1e-5)
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs need a GPU")
-@pytest.mark.parametrize("products", [False, True])
-def test_captured_steps_give_the_eager_skeletons(products, tmp_path):
-    """Decoding through captured CUDA graph steps, captured and then reused, gives the eager decoder's skeletons."""
-    src, pyc_path = compiled_fixture("Exception", PythonVersion("3.12"), tmp_path)
-    requests = sorted((CflowRequest.from_row(e) for e in make_examples(PYCFile(str(pyc_path)), src)), key=lambda r: len(r.tokens))
-    batches = [requests[i : i + 4] for i in range(0, len(requests), 4)]
-    model = tiny_model(products=products).cuda()
-    eager = CapturedSteps()
-    eager.MAX_ROWS = 0  # never captures
-    for k in (1, 4):
-        model.captured_steps = eager
-        expected = [model.generate(batch, k) for batch in batches]
-        model.captured_steps = CapturedSteps()
-        model.captured_steps.MIN_STMTS = 0
-        assert [model.generate(batch, k) for batch in batches] == expected  # captures
-        assert model.captured_steps.steps
-        assert [model.generate(batch, k) for batch in batches] == expected  # reuses
 
 
 def test_shared_control_flow_config():

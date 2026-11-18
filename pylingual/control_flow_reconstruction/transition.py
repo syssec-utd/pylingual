@@ -16,7 +16,6 @@ Trained models store their input vocabulary; changing the lists below needs new 
 from __future__ import annotations
 
 import math
-from collections import OrderedDict
 from typing import NamedTuple
 
 import numpy as np
@@ -149,112 +148,6 @@ class Stepper:
         return total.topk(self.top, -1)
 
 
-class CapturedStep:
-    """
-    A decoding step captured as a CUDA graph for one shape: a step is about 30 small kernels, whose launches cost far
-    more than their work, and a replay launches them all at once. The kernels are the same as the eager step's, so the
-    results are too. The call's cache tensors, the decoder state and the step's inputs live in fixed buffers; a new call
-    of the same shape copies its cache tensors in, and each step copies in its lookups (with the parents) and its mask.
-    """
-
-    # one stream for every capture (cuBLAS keeps a workspace per stream for good), and one memory pool, so the memory of
-    # a dropped step is reused by the next capture; steps run one at a time, so sharing the pool is safe
-    _stream: torch.cuda.Stream | None = None
-    _pool = None
-
-    def __init__(self, model: TransitionModel, cache: DecodingCache, requests: int, k: int, width: int):
-        self.model, self.requests, self.k, self.width = model, requests, k, width
-        self.top = min(2 * k, k * width)
-        self.cache = DecodingCache(*(t.clone() if isinstance(t, torch.Tensor) else t for t in cache))
-        rows, layers, d = requests * k, model.config.decoder_layers, model.config.d_model
-        columns = 1 + 11 + cache.n1 - 1  # parents, then step_indices
-        device = model.device
-        self.index = torch.zeros(rows, columns, dtype=torch.long, device=device)
-        self.index[:, 0] = torch.arange(rows, device=device)
-        self.masks = torch.zeros(rows, width + 1, device=device)
-        self.h = torch.zeros(layers, rows, d, device=device)
-        self.c = torch.zeros(layers, rows, d, device=device)
-        self.staging = (torch.zeros(rows, columns, dtype=torch.long).pin_memory(), torch.zeros(rows, width + 1).pin_memory())
-        if CapturedStep._stream is None:
-            CapturedStep._stream, CapturedStep._pool = torch.cuda.Stream(), torch.cuda.graph_pool_handle()
-        side = CapturedStep._stream
-        side.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(side):  # warm up (workspaces, kernel choices) before capturing
-            self.body()
-        torch.cuda.current_stream().wait_stream(side)
-        self.graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self.graph, pool=CapturedStep._pool, stream=side):
-            self.out = self.body()
-        self.h.zero_()
-        self.c.zero_()
-
-    def load(self, cache: DecodingCache):
-        """Take a new call's cache tensors and start from the zero decoder state."""
-        for mine, theirs in zip(self.cache, cache):
-            if isinstance(mine, torch.Tensor):
-                mine.copy_(theirs)
-        self.h.zero_()
-        self.c.zero_()
-
-    def body(self):
-        parents = self.index[:, 0]
-        state = (self.h.index_select(1, parents), self.c.index_select(1, parents))
-        logits, (h, c) = self.model.decode_indexed(self.cache, self.index[:, 1:], state, self.k)
-        total = ((logits + self.masks[:, : self.width]).log_softmax(-1) + self.masks[:, self.width :]).view(self.requests, -1)
-        top = total.topk(self.top, -1)
-        self.h.copy_(h)
-        self.c.copy_(c)
-        return top
-
-    def __call__(self, feats, masks, parents):
-        index, masks_cpu = self.staging
-        index[:, 0] = torch.tensor(parents)
-        index[:, 1:] = torch.from_numpy(self.model.step_indices(self.cache, feats, self.k))
-        masks_cpu.copy_(torch.from_numpy(masks))
-        self.index.copy_(index, non_blocking=True)
-        self.masks.copy_(masks_cpu, non_blocking=True)
-        self.graph.replay()
-        scores, actions = self.out
-        return scores.tolist(), actions.tolist()
-
-
-class CapturedSteps:
-    """
-    Captured steps of a model by shape, least recently used first. Capturing costs about as much as ten eager steps, so
-    a call captures only when it is long enough to pay for it, and later calls of the same shape reuse the capture.
-    Only small shapes are captured (large calls are dominated by their kernels' work), within a memory budget.
-    """
-
-    MAX_ROWS, MAX_STMTS, MAX_TOKENS = 64, 256, 512
-    MIN_STMTS = 8  # a call whose longest request has fewer statements runs eagerly unless its shape is captured
-    BUDGET = 64 << 20  # GPU memory the kept steps may hold: their buffers and graph memory
-
-    def __init__(self):
-        self.steps: OrderedDict[tuple, CapturedStep] = OrderedDict()
-
-    def stepper(self, model: TransitionModel, cache: DecodingCache, requests: int, k: int, width: int, longest: int) -> Stepper | CapturedStep:
-        length = cache.keys.shape[2]
-        if model.device.type != "cuda" or requests * k > self.MAX_ROWS or cache.n1 - 1 > self.MAX_STMTS or length > self.MAX_TOKENS:
-            return Stepper(model, cache, requests, k, width)
-        key = (requests, k, cache.n1, length, cache.products is None)
-        step = self.steps.get(key)
-        if step is not None:
-            self.steps.move_to_end(key)
-            step.load(cache)
-            return step
-        if longest < self.MIN_STMTS:
-            return Stepper(model, cache, requests, k, width)
-        torch.cuda.synchronize()
-        before = torch.cuda.memory_allocated()
-        step = CapturedStep(model, cache, requests, k, width)
-        torch.cuda.synchronize()
-        step.bytes = torch.cuda.memory_allocated() - before
-        self.steps[key] = step
-        while sum(s.bytes for s in self.steps.values()) > self.BUDGET and len(self.steps) > 1:
-            self.steps.popitem(last=False)  # its memory goes back to the shared pool for the next capture
-        return step
-
-
 class TransitionConfig(transformers.PretrainedConfig):
     model_type = "cflow_transition"
 
@@ -296,12 +189,6 @@ class TransitionModel(transformers.PreTrainedModel):
         self.distance = nn.Linear(d, DISTANCES)
         self.token_head = nn.Linear(d, len(TOKENS))
         self.post_init()
-        self.captured_steps = CapturedSteps()
-
-    def _apply(self, fn, *args, **kwargs):
-        # moving or casting the model replaces its parameters' storage, which captured steps read directly
-        self.captured_steps = CapturedSteps()
-        return super()._apply(fn, *args, **kwargs)
 
     def encode(self, input_ids, refs, attention_mask, stmt_pos):
         """Encoder states and statement vectors."""
@@ -400,10 +287,7 @@ class TransitionModel(transformers.PreTrainedModel):
 
     def decode_step(self, cache: DecodingCache, feats: np.ndarray, state, k: int):
         """Action logits [R * k, N + len(TOKENS)] of one step for `features` rows [R * k, 9] (numpy), k rows per request."""
-        return self.decode_indexed(cache, torch.from_numpy(self.step_indices(cache, feats, k)).to(self.device), state, k)
-
-    def decode_indexed(self, cache: DecodingCache, index: torch.Tensor, state, k: int):
-        """decode_step with the step's lookups (step_indices) already on the device."""
+        index = torch.from_numpy(self.step_indices(cache, feats, k)).to(self.device)
         r = cache.pointing.shape[0]
         d, heads = self.config.d_model, self.config.heads
         x = nn.functional.embedding(index[:, :9], cache.rows).sum(1) + self.step_in.bias
@@ -450,7 +334,7 @@ class TransitionModel(transformers.PreTrainedModel):
         cache = self.decoding_cache(memory, stmts, inputs["attention_mask"])
         del memory
         width = n + len(TOKENS)
-        stepper = self.captured_steps.stepper(self, cache, len(requests), k, width, max(r.n for r in requests))
+        stepper = Stepper(self, cache, len(requests), k, width)
         grammars = [r.grammar() for r in requests]
         limits = [4 * r.n + 16 for r in requests]
         beams = [[(0.0, Parse(g.start()), [])] for g in grammars]  # (log prob, parse, tokens) in slots r * k + j
