@@ -6,8 +6,8 @@ model-agnostic invariants on generated masked Python statements:
 - Exact per-request input-mask whitelist for both atomic ``<mask_N>`` tokens and
   multi-piece BPE spellings of ``<mask_N>`` (enforced when ``>`` closes a complete mask).
 - Character-level delimiter, quote, and f-string stack PDA rejecting provably
-  unmatched closers, forbidding EOS while delimiters/strings/escapes are open,
-  and enforcing Python < 3.12 PEP 701 f-string quote/backslash rules inside
+  unmatched closers, forbidding EOS on empty output or while delimiters/strings/escapes
+  are open, and enforcing Python < 3.12 PEP 701 f-string quote/backslash rules inside
   replacement expressions.
 """
 
@@ -56,6 +56,7 @@ class LexState(NamedTuple):
     pending_fbrace_close: bool = False  # saw single '}' inside FSTR_LIT; next char must be '}'
     mask_partial: str = ""  # prefix of "<mask_<digits>" currently being spelled across tokens
     abstained: bool = False  # unsupported exotic construct (e.g. 3.14 t-string); skip lexical gating
+    has_content: bool = False  # at least one non-special content char or mask token has been emitted
 
 
 INITIAL_STATE = LexState()
@@ -124,7 +125,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         return None
 
     if state.abstained:
-        return state._replace(mask_partial=mask_partial)
+        return state._replace(mask_partial=mask_partial, has_content=True)
 
     stack = state.stack
     top = stack[-1] if stack else None
@@ -133,11 +134,11 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
     if isinstance(top, tuple) and top[0] == "STR":
         quote = top[1]
         if state.in_escape:
-            return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial)
+            return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial, has_content=True)
         if ch == "\\":
             if py_lt_312 and _any_fstr_expr(stack):
                 return None
-            return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial)
+            return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial, has_content=True)
         if len(quote) == 1:
             if ch == quote:
                 # Could be empty '' followed by a 3rd quote -> triple-quoted string
@@ -148,40 +149,42 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
                     just_closed_kind=just_kind,
                     just_closed_quote=just_q,
                     mask_partial=mask_partial,
+                    has_content=True,
                 )
-            return state._replace(triple_close=0, mask_partial=mask_partial)
+            return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
         # Triple-quoted string
         if ch == quote[0]:
             cnt = state.triple_close + 1
             if cnt == 3:
-                return LexState(stack=stack[:-1], mask_partial=mask_partial)
-            return state._replace(triple_close=cnt, mask_partial=mask_partial)
-        return state._replace(triple_close=0, mask_partial=mask_partial)
+                return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
+            return state._replace(triple_close=cnt, mask_partial=mask_partial, has_content=True)
+        return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
 
     # 2. Inside an f-string literal text segment
     if isinstance(top, tuple) and top[0] == "FSTR_LIT":
         quote = top[1]
         if state.pending_fbrace_close:
             if ch == "}":
-                return state._replace(pending_fbrace_close=False, triple_close=0, mask_partial=mask_partial)
+                return state._replace(pending_fbrace_close=False, triple_close=0, mask_partial=mask_partial, has_content=True)
             return None
         if state.in_escape:
             # In Python f-strings, '\' does NOT escape '{' or '}'; fall through to brace handling
             if ch in ("{", "}"):
                 state = state._replace(in_escape=False)
             else:
-                return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial)
+                return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial, has_content=True)
         if ch == "\\":
             if py_lt_312 and _any_fstr_expr(stack):
                 return None
-            return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial)
+            return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial, has_content=True)
         if ch == "{":
             return LexState(
                 stack=stack + (("FSTR_EXPR", True),),
                 mask_partial=mask_partial,
+                has_content=True,
             )
         if ch == "}":
-            return state._replace(pending_fbrace_close=True, triple_close=0, mask_partial=mask_partial)
+            return state._replace(pending_fbrace_close=True, triple_close=0, mask_partial=mask_partial, has_content=True)
         if len(quote) == 1:
             if ch == quote:
                 just_kind = "FSTR_LIT" if state.triple_close == -1 else ""
@@ -191,15 +194,16 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
                     just_closed_kind=just_kind,
                     just_closed_quote=just_q,
                     mask_partial=mask_partial,
+                    has_content=True,
                 )
-            return state._replace(triple_close=0, mask_partial=mask_partial)
+            return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
         # Triple-quoted f-string literal
         if ch == quote[0]:
             cnt = state.triple_close + 1
             if cnt == 3:
-                return LexState(stack=stack[:-1], mask_partial=mask_partial)
-            return state._replace(triple_close=cnt, mask_partial=mask_partial)
-        return state._replace(triple_close=0, mask_partial=mask_partial)
+                return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
+            return state._replace(triple_close=cnt, mask_partial=mask_partial, has_content=True)
+        return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
 
     # 3. Inside an f-string format specifier
     if top == "FSTR_SPEC":
@@ -208,29 +212,37 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             if ch in ("{", "}"):
                 state = state._replace(in_escape=False)
             else:
-                return state._replace(in_escape=False, mask_partial=mask_partial)
+                return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial, has_content=True)
         if ch == "\\":
             # Legal in top-level format specs even on < 3.12, forbidden inside an enclosing FSTR_EXPR on < 3.12
             if py_lt_312 and _any_fstr_expr(stack):
                 return None
-            return state._replace(in_escape=True, mask_partial=mask_partial)
+            return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial, has_content=True)
         if ch == "{":
-            return LexState(stack=stack + (("FSTR_EXPR", False),), mask_partial=mask_partial)
+            return LexState(stack=stack + (("FSTR_EXPR", False),), mask_partial=mask_partial, has_content=True)
         if ch == "}":
-            return LexState(stack=stack[:-1], mask_partial=mask_partial)
-        # On Python < 3.12, an unescaped outer single/double quote terminates the enclosing f-string early
-        if py_lt_312 and len(stack) >= 2 and isinstance(stack[-2], tuple) and stack[-2][0] == "FSTR_LIT":
+            return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
+        # Across all Python versions (including 3.12+), an unescaped enclosing delimiter terminates the
+        # f-string prematurely inside a format spec (raising SyntaxError).
+        if len(stack) >= 2 and isinstance(stack[-2], tuple) and stack[-2][0] == "FSTR_LIT":
             outer_q = stack[-2][1]
-            if len(outer_q) == 1 and ch == outer_q:
-                return None
-        return state._replace(mask_partial=mask_partial)
+            if len(outer_q) == 1:
+                if ch == outer_q:
+                    return None
+                return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
+            if ch == outer_q[0]:
+                cnt = state.triple_close + 1
+                if cnt == 3:
+                    return None
+                return state._replace(triple_close=cnt, mask_partial=mask_partial, has_content=True)
+        return state._replace(triple_close=0, mask_partial=mask_partial, has_content=True)
 
     # 4. Code context (top-level, inside (), [], {}, or inside FSTR_EXPR)
     in_fexpr_top = isinstance(top, tuple) and top[0] == "FSTR_EXPR"
     if in_fexpr_top and top[1]:
         # Immediately after '{' inside FSTR_LIT: a second '{' is an escaped literal '{{'
         if ch == "{":
-            return LexState(stack=stack[:-1], mask_partial=mask_partial)
+            return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
         # Otherwise lock this frame as a genuine replacement expression
         stack = stack[:-1] + (("FSTR_EXPR", False),)
         top = stack[-1]
@@ -243,6 +255,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         return LexState(
             stack=stack + ((state.just_closed_kind, triple),),
             mask_partial=mask_partial,
+            has_content=True,
         )
 
     # Opening a new string or f-string
@@ -250,7 +263,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         prefix_lower = state.prefix_buf.lower()
         if "t" in prefix_lower:
             # Python 3.14+ template strings: abstain rather than risk false rejection
-            return LexState(stack=stack, abstained=True, mask_partial=mask_partial)
+            return LexState(stack=stack, abstained=True, mask_partial=mask_partial, has_content=True)
         kind = "FSTR_LIT" if "f" in prefix_lower else "STR"
         if py_lt_312 and _any_fstr_expr(stack):
             if ch in _forbidden_pre312_quotes(stack):
@@ -260,6 +273,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             stack=stack + ((kind, ch),),
             triple_close=-1,
             mask_partial=mask_partial,
+            has_content=True,
         )
 
     # Backslash in code (normalized single-line statements never use line continuations,
@@ -274,20 +288,20 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
 
     # Colon directly inside FSTR_EXPR (bracket depth 0) transitions to FSTR_SPEC
     if ch == ":" and in_fexpr_top:
-        return LexState(stack=stack[:-1] + ("FSTR_SPEC",), mask_partial=mask_partial)
+        return LexState(stack=stack[:-1] + ("FSTR_SPEC",), mask_partial=mask_partial, has_content=True)
 
     # Opening bracket / brace
     if ch in _OPEN_TO_CLOSE:
-        return LexState(stack=stack + (ch,), mask_partial=mask_partial)
+        return LexState(stack=stack + (ch,), mask_partial=mask_partial, has_content=True)
 
     # Closing bracket / brace
     if ch in _CLOSE_TO_OPEN:
         if ch == "}" and in_fexpr_top:
-            return LexState(stack=stack[:-1], mask_partial=mask_partial)
+            return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
         expected_open = _CLOSE_TO_OPEN[ch]
         if top != expected_open:
             return None
-        return LexState(stack=stack[:-1], mask_partial=mask_partial)
+        return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
 
     # Track potential string prefix letters (e.g. f, r, b, u, fr, rf, br, rb, t, tr, rt)
     is_ident_char = ch.isalnum() or ch == "_"
@@ -303,6 +317,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         prefix_buf=new_prefix,
         prev_is_ident=is_ident_char,
         mask_partial=mask_partial,
+        has_content=True,
     )
 
 
@@ -311,23 +326,24 @@ def step_atomic_mask(state: LexState, mask_idx: int, *, mask_count: int | None =
     if mask_count is not None and mask_idx >= mask_count:
         return None
     if state.abstained:
-        return state._replace(mask_partial="")
+        return state._replace(mask_partial="", has_content=True)
     stack = state.stack
     top = stack[-1] if stack else None
     if isinstance(top, tuple) and top[0] == "STR":
-        return state._replace(in_escape=False, triple_close=0, mask_partial="")
+        return state._replace(in_escape=False, triple_close=0, mask_partial="", has_content=True)
     if isinstance(top, tuple) and top[0] == "FSTR_LIT":
         if state.pending_fbrace_close:
             return None
-        return state._replace(in_escape=False, triple_close=0, mask_partial="")
+        return state._replace(in_escape=False, triple_close=0, mask_partial="", has_content=True)
     if top == "FSTR_SPEC":
-        return state._replace(in_escape=False, mask_partial="")
+        return state._replace(in_escape=False, triple_close=0, mask_partial="", has_content=True)
     if isinstance(top, tuple) and top[0] == "FSTR_EXPR" and top[1]:
         stack = stack[:-1] + (("FSTR_EXPR", False),)
     return LexState(
         stack=stack,
         prev_is_ident=True,
         mask_partial="",
+        has_content=True,
     )
 
 
@@ -342,7 +358,9 @@ def step_text(state: LexState, text: str, *, py_lt_312: bool = False, mask_count
 
 
 def is_eos_allowed(state: LexState) -> bool:
-    """Whether EOS is allowed at ``state`` (no open brackets, strings, escapes, or pending '}')."""
+    """Whether EOS is allowed at ``state`` (non-empty content, and no open brackets/strings/escapes)."""
+    if not state.has_content:
+        return False
     if state.abstained:
         return True
     return not state.stack and not state.in_escape and not state.pending_fbrace_close
@@ -477,21 +495,19 @@ class TokenizerConstraintIndex:
     def check_token_sequence(self, token_ids: list[int], *, py_lt_312: bool = False, mask_count: int | None = None) -> bool:
         """Validate a tokenized target sequence against the exact inference constraint contract."""
         state: LexState | None = INITIAL_STATE
-        saw_content = False
         for step_idx, tid in enumerate(token_ids):
             if tid < 0 or tid >= self.vocab_size:
                 return False
             if tid == self.eos_token_id:
-                return saw_content and is_eos_allowed(state)
+                return is_eos_allowed(state)
             if step_idx == 0 and tid in self.allowed_initial_special_ids:
                 continue
             if self.static_ban[tid]:
                 return False
-            saw_content = True
             state = self.step_token(state, tid, py_lt_312=py_lt_312, mask_count=mask_count)
             if state is None:
                 return False
-        return saw_content and is_eos_allowed(state)
+        return is_eos_allowed(state)
 
     def _abstract_key(self, state: LexState, py_lt_312: bool, mask_count: int | None) -> tuple:
         norm_partial = state.mask_partial
@@ -502,14 +518,16 @@ class TokenizerConstraintIndex:
         key_mask_count = mask_count if (norm_partial or self._has_inline_mask_tokens) else None
 
         if state.abstained:
-            return ("ABSTAINED", norm_partial, key_mask_count)
+            return ("ABSTAINED", state.has_content, norm_partial, key_mask_count)
         tail = state.stack[-self.stack_cache_window :]
-        has_deeper = len(state.stack) > self.stack_cache_window
-        fexpr = _any_fstr_expr(state.stack) if py_lt_312 else False
-        forb = _forbidden_pre312_quotes(state.stack) if fexpr else frozenset()
+        deeper = state.stack[: -self.stack_cache_window] if len(state.stack) > self.stack_cache_window else ()
+        # Key on deeper-prefix pre-3.12 f-string context separately from tail so multi-char
+        # tokens that pop tail frames still see exact enclosing FSTR_EXPR / FSTR_LIT restrictions.
+        deeper_fexpr = _any_fstr_expr(deeper) if py_lt_312 else False
+        deeper_forb = _forbidden_pre312_quotes(deeper) if py_lt_312 else frozenset()
         return (
             tail,
-            has_deeper,
+            bool(deeper),
             state.in_escape,
             state.triple_close,
             state.prefix_buf.lower(),
@@ -517,11 +535,12 @@ class TokenizerConstraintIndex:
             state.just_closed_kind,
             state.just_closed_quote,
             state.pending_fbrace_close,
+            state.has_content,
             norm_partial,
             key_mask_count,
             py_lt_312,
-            fexpr,
-            forb,
+            deeper_fexpr,
+            deeper_forb,
         )
 
     def disallowed_mask(self, state: LexState, *, py_lt_312: bool, mask_count: int | None) -> torch.Tensor:
@@ -576,22 +595,20 @@ class StatementLogitsProcessor:
         # Step-rolling state cache: retains only the most recent prefix length (O(batch_beams) memory)
         self._last_len: int = -1
         self._last_states: dict[tuple[int, tuple[int, ...]], LexState] = {}
-        self._device_static_ban: dict[torch.device, torch.Tensor] = {}
-        self._device_atomic_ids: dict[torch.device, torch.Tensor] = {}
-        self._device_atomic_nums: dict[torch.device, torch.Tensor] = {}
-        self._request_mask_bans: dict[tuple[torch.device, int], torch.Tensor] = {}
+        self._device_static_ban: dict[tuple[torch.device, int], torch.Tensor] = {}
+        self._request_mask_bans: dict[tuple[torch.device, int, int], torch.Tensor] = {}
 
-    def _get_atomic_mask_ban(self, device: torch.device, mask_count: int) -> torch.Tensor | None:
+    def _get_atomic_mask_ban(self, device: torch.device, mask_count: int, vocab_size: int) -> torch.Tensor | None:
         if not self.index.atomic_mask_ids:
             return None
-        key = (device, mask_count)
+        key = (device, mask_count, vocab_size)
         cached = self._request_mask_bans.get(key)
         if cached is not None:
             return cached
-        if device not in self._device_atomic_ids:
-            self._device_atomic_ids[device] = self.index.atomic_mask_id_tensor.to(device)
-            self._device_atomic_nums[device] = self.index.atomic_mask_num_tensor.to(device)
-        banned_ids = self._device_atomic_ids[device][self._device_atomic_nums[device] >= mask_count]
+        # Filter on CPU once before transferring to device so hot-path GPU indexing never triggers aten::nonzero syncs
+        cpu_ids = self.index.atomic_mask_id_tensor
+        cpu_nums = self.index.atomic_mask_num_tensor
+        banned_ids = cpu_ids[(cpu_nums >= mask_count) & (cpu_ids < vocab_size)].to(device)
         self._request_mask_bans[key] = banned_ids
         return banned_ids
 
@@ -606,12 +623,12 @@ class StatementLogitsProcessor:
             prev = self._last_states.get((req_idx, prefix[:-1]))
             if prev is not None:
                 nxt = self.index.step_token(prev, prefix[-1], py_lt_312=self.py_lt_312, mask_count=mask_count)
-                return nxt if nxt is not None else LexState(abstained=True)
+                return nxt if nxt is not None else LexState(abstained=True, has_content=True)
         # Fallback for out-of-order calls (e.g. direct unit test invocations)
         state = INITIAL_STATE
         for tid in prefix:
             nxt = self.index.step_token(state, tid, py_lt_312=self.py_lt_312, mask_count=mask_count)
-            state = nxt if nxt is not None else LexState(abstained=True)
+            state = nxt if nxt is not None else LexState(abstained=True, has_content=True)
         return state
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
@@ -621,15 +638,16 @@ class StatementLogitsProcessor:
         num_reqs = len(self.mask_counts)
         beams_per_req = max(1, batch_beams // num_reqs) if num_reqs else 1
 
-        if device not in self._device_static_ban:
+        static_key = (device, vocab_size)
+        if static_key not in self._device_static_ban:
             static = self.index.static_ban
             if static.shape[0] != vocab_size:
                 resized = torch.zeros(vocab_size, dtype=torch.bool)
                 n = min(vocab_size, static.shape[0])
                 resized[:n] = static[:n]
                 static = resized
-            self._device_static_ban[device] = static.to(device)
-        static_ban_dev = self._device_static_ban[device]
+            self._device_static_ban[static_key] = static.to(device)
+        static_ban_dev = self._device_static_ban[static_key]
 
         # Single batched GPU->CPU transfer for all beam prefixes
         all_seqs = input_ids[:, 1:].tolist()
@@ -671,9 +689,8 @@ class StatementLogitsProcessor:
 
         for local_idx, mask_count in enumerate(active_mask_counts):
             if mask_count is not None:
-                oob_ids = self._get_atomic_mask_ban(device, mask_count)
-                if oob_ids is not None and oob_ids.numel() > 0:
-                    valid_oob = oob_ids[oob_ids < vocab_size]
+                valid_oob = self._get_atomic_mask_ban(device, mask_count, vocab_size)
+                if valid_oob is not None and valid_oob.numel() > 0:
                     ban_batch[local_idx, valid_oob] = True
                     fallback_ban_batch[local_idx, valid_oob] = True
 

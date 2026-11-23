@@ -168,7 +168,7 @@ class Decompiler:
 
             return DecompilerResult(str(self.source_context), self.equivalence_results, self.pyc, self.version)
 
-    def find_comp_error_line(self, results: list[TestResult]) -> tuple[int, SourceLine] | None:
+    def find_comp_error_line(self, results: list[TestResult]) -> tuple[int, SourceLine, int] | None:
         lno = lno_regex.search(str(results[0]))
         if lno is None:
             return None

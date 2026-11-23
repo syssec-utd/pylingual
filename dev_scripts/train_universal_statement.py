@@ -9,16 +9,21 @@ BF16 microbatches, exact resumable checkpoints, and paired generation evaluation
 
 from __future__ import annotations
 
+import os
+
+# Disable hf_xet before importing huggingface_hub so shard streaming never writes to ~/.cache/huggingface/xet on tight root disks.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 import argparse
 import ast
 import hashlib
 import heapq
 import json
 import math
-import os
 import random
 import re
 import shutil
+import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -150,6 +155,8 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
             candidates.append(f"try:\n    pass\n{unmasked}\n    pass")
         elif stripped.startswith("case "):
             candidates.append(f"match _c:\n    {unmasked}\n        pass")
+        elif stripped.startswith("match "):
+            candidates.append(f"{unmasked}\n    case _:\n        pass")
         elif any(stripped.startswith(p) for p in _BLOCK_STARTERS):
             candidates.append(f"{unmasked}\n    pass")
     elif stripped.startswith("@"):
@@ -161,8 +168,6 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
 
     ver_tuple = tuple(map(int, version.split(".")[:2]))
     # Python's ast.parse rejects feature_version > host version; clamp to host minor if needed
-    import sys
-
     feat_ver = min(ver_tuple, (sys.version_info.major, sys.version_info.minor))
     for cand in candidates:
         try:
@@ -313,6 +318,9 @@ def iter_corpus_shards(
                             resolved.unlink(missing_ok=True)
                     except OSError:
                         pass
+                xet_dir = hf_cache_dir / "xet"
+                if xet_dir.exists():
+                    shutil.rmtree(xet_dir, ignore_errors=True)
 
 
 def prepare_training_pools(
@@ -666,7 +674,7 @@ def evaluate_generation(
     device: torch.device,
     *,
     max_samples: int,
-    max_length: int = 256,
+    max_length: int = 512,
     retry_max_length: int = 1024,
     batch_size: int = 16,
     use_bf16: bool = False,
@@ -674,7 +682,7 @@ def evaluate_generation(
     """Evaluate actual constrained greedy generation on a fixed paired validation subset.
 
     Measures natural EOS completion, constraint compliance, Python AST syntax parseability,
-    and exact gold match across short and long validation bins.
+    and exact gold match separately for short, enc_long, and tgt_long validation bins.
     """
     if max_samples <= 0:
         return {}
@@ -720,7 +728,7 @@ def evaluate_generation(
 
     # Group by py_lt_312 so each batch runs a single StatementLogitsProcessor
     amp_enabled = use_bf16 and device.type == "cuda"
-    totals: dict[str, Counter] = {"short": Counter(), "long": Counter()}
+    totals: dict[str, Counter] = {"short": Counter(), "enc_long": Counter(), "tgt_long": Counter()}
 
     try:
         for py_lt_312 in (True, False):
@@ -762,8 +770,7 @@ def evaluate_generation(
                             rows[idx] = rr.tolist()
 
                 for ex, toks in zip(chunk, rows):
-                    bucket = "short" if ex.bin_name == "short" else "long"
-                    c = totals[bucket]
+                    c = totals[ex.bin_name]
                     c["n"] += 1
                     has_eos = eos_id is None or eos_id in toks[1:]
                     if has_eos:
@@ -785,7 +792,7 @@ def evaluate_generation(
             model.train()
 
     summary: dict[str, Any] = {}
-    for bucket in ("short", "long"):
+    for bucket in ("short", "enc_long", "tgt_long"):
         c = totals[bucket]
         n = c["n"]
         if n > 0:
@@ -805,8 +812,13 @@ def save_weights_bundle(
     *,
     use_version_prefix: bool,
     metadata: dict[str, Any],
+    trainer_state: dict[str, Any] | None = None,
 ) -> None:
-    """Crash-safe atomic replacement of a weights-only model directory via .tmp / .prev swap."""
+    """Crash-safe atomic replacement of a checkpoint directory via .tmp / .prev swap.
+
+    When ``trainer_state`` is provided, it is written inside ``tmp_dir`` before the directory
+    swap so weights, metadata, and optimizer/sampler/RNG state update atomically together.
+    """
     tmp_dir = out_dir.with_name(out_dir.name + ".tmp")
     prev_dir = out_dir.with_name(out_dir.name + ".prev")
     if tmp_dir.exists():
@@ -822,6 +834,8 @@ def save_weights_bundle(
     finally:
         model.config.use_cache = prev_use_cache
     (tmp_dir / "pylingual_training_meta.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    if trainer_state is not None:
+        torch.save(trainer_state, tmp_dir / "trainer_state.pt")
 
     moved_old = False
     if out_dir.exists():
@@ -835,13 +849,6 @@ def save_weights_bundle(
         raise
     if moved_old and prev_dir.exists():
         shutil.rmtree(prev_dir)
-
-
-def save_trainer_state(state_path: Path, state: dict[str, Any]) -> None:
-    """Atomically write full resumable trainer state (optimizer, sampler, RNGs, progress)."""
-    tmp_path = state_path.with_name(state_path.name + ".tmp")
-    torch.save(state, tmp_path)
-    os.replace(tmp_path, state_path)
 
 
 def upload_bundle_resilient(folder: Path, repo_id: str, *, public: bool, commit_message: str, retries: int = 3) -> bool:
@@ -900,7 +907,16 @@ def _preflight_checks(work_dir: Path, args: argparse.Namespace) -> tuple[torch.d
         raise RuntimeError(
             f"Insufficient free space on {work_dir}: {free_gib:.2f} GiB free < required {args.min_free_gib:.2f} GiB"
         )
+    if args.hub_repo:
+        # Validate Hub credentials and write permissions before spending GPU compute
+        HfApi().create_repo(args.hub_repo, exist_ok=True, private=not args.public)
     return device, use_bf16
+
+
+def _recover_prev_dir(target_dir: Path) -> None:
+    prev_dir = target_dir.with_name(target_dir.name + ".prev")
+    if not target_dir.exists() and prev_dir.exists():
+        prev_dir.rename(target_dir)
 
 
 def train(args: argparse.Namespace) -> dict[str, Any]:
@@ -908,6 +924,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     hf_cache_dir = work_dir / "hf_cache"
     hf_cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HOME"] = str(hf_cache_dir)
+    os.environ["HF_XET_CACHE"] = str(hf_cache_dir / "xet")
 
     device, use_bf16 = _preflight_checks(work_dir, args)
     _seed_everything(args.seed)
@@ -923,31 +941,53 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     latest_dir = work_dir / "latest_model"
-    latest_prev_dir = work_dir / "latest_model.prev"
-    state_path = work_dir / "trainer_state.pt"
+    best_dir = work_dir / "best_model"
 
     config_fingerprint = {
+        "base_model": args.base_model,
+        "base_rev": args.base_rev,
+        "tokenizer_repo": args.tokenizer_repo,
+        "tokenizer_rev": args.tokenizer_rev,
+        "corpus_repo": args.corpus_repo,
+        "corpus_rev": args.corpus_rev,
+        "max_shards": int(args.max_shards),
         "version_prefix": bool(args.version_prefix),
         "max_input_len": int(args.max_input_len),
         "max_target_len": int(args.max_target_len),
         "short_cap_per_version": int(args.short_cap_per_version),
         "enc_long_cap_per_version": int(args.enc_long_cap_per_version),
         "tgt_long_cap_per_version": int(args.tgt_long_cap_per_version),
+        "val_short_per_version": int(args.val_short_per_version),
+        "val_long_per_version": int(args.val_long_per_version),
         "holdout_files_per_version": int(args.holdout_files_per_version),
+        "max_attention_cost": int(args.max_attention_cost),
+        "weight_short": float(args.weight_short),
+        "weight_enc_long": float(args.weight_enc_long),
+        "weight_tgt_long": float(args.weight_tgt_long),
+        "max_long_exposures": int(args.max_long_exposures),
+        "steps": int(args.steps),
+        "lr": float(args.lr),
+        "min_lr": float(args.min_lr),
+        "warmup_frac": float(args.warmup_frac),
         "seed": int(args.seed),
-        "corpus_repo": args.corpus_repo,
-        "corpus_rev": args.corpus_rev,
-        "max_shards": int(args.max_shards),
     }
 
     resuming = False
     resume_state: dict[str, Any] | None = None
     if args.resume:
-        if not latest_dir.exists() and latest_prev_dir.exists():
-            latest_prev_dir.rename(latest_dir)
+        _recover_prev_dir(latest_dir)
+        _recover_prev_dir(best_dir)
+        state_path = latest_dir / "trainer_state.pt"
         if latest_dir.exists() and state_path.exists():
             resuming = True
             resume_state = torch.load(state_path, map_location="cpu", weights_only=False)
+            meta_path = latest_dir / "pylingual_training_meta.json"
+            if meta_path.exists():
+                saved_meta = json.loads(meta_path.read_text())
+                if saved_meta.get("step") != resume_state.get("step"):
+                    raise ValueError(
+                        f"Checkpoint weights/state step mismatch: meta={saved_meta.get('step')} vs state={resume_state.get('step')}"
+                    )
             saved_fp = resume_state.get("config_fingerprint")
             if saved_fp is not None and saved_fp != config_fingerprint:
                 raise ValueError(f"Resume config mismatch: saved={saved_fp} vs current={config_fingerprint}")
@@ -1037,6 +1077,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         best_score = float(resume_state["best_score"])
         best_step: int | None = resume_state.get("best_step")
         best_saved = bool(resume_state.get("best_saved", False))
+        best_uploaded_step: int | None = resume_state.get("best_uploaded_step")
         baseline_short = float(resume_state["baseline_short"])
         history: list[dict[str, Any]] = list(resume_state["history"])
     else:
@@ -1063,13 +1104,15 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         best_score = _selection_score(val0)
         best_step = None
         best_saved = False
+        best_uploaded_step = None
         history = [{"step": 0, "val": val0, "gen": gen0}]
         start_step = 1
 
     started = time.monotonic()
     model.train()
+    end_step = min(args.steps, args.stop_after_step) if args.stop_after_step > 0 else args.steps
 
-    for step in range(start_step, args.steps + 1):
+    for step in range(start_step, end_step + 1):
         lr = lr_for_step(step - 1, args.steps, args.lr, min_lr=args.min_lr, warmup_frac=args.warmup_frac)
         for group in optimizer.param_groups:
             group["lr"] = lr
@@ -1111,7 +1154,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError(f"Non-finite gradient norm at step {step}: {grad_norm}")
         optimizer.step()
 
-        if step % args.log_every == 0 or step == args.steps:
+        if step % args.log_every == 0 or step == end_step:
             rec = {
                 "event": "train",
                 "step": step,
@@ -1128,7 +1171,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             }
             print(json.dumps(rec), flush=True)
 
-        if step % args.eval_every == 0 or step == args.steps:
+        if step % args.eval_every == 0 or step == end_step:
             val = evaluate_pools(
                 model,
                 val_pools,
@@ -1181,43 +1224,60 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 "bin_draws": dict(sampler.bin_draws),
                 "data_stats": data_stats,
             }
-            save_weights_bundle(model, latest_dir, use_version_prefix=args.version_prefix, metadata=meta)
-            save_trainer_state(
-                state_path,
-                {
-                    "config_fingerprint": config_fingerprint,
-                    "step": step,
-                    "best_score": best_score,
-                    "best_step": best_step,
-                    "best_saved": best_saved,
-                    "baseline_short": baseline_short,
-                    "history": history,
-                    "data_stats": data_stats,
-                    "optimizer": optimizer.state_dict(),
-                    "sampler": sampler.state_dict(),
-                    "python_rng_state": random.getstate(),
-                    "torch_rng_state": torch.get_rng_state(),
-                    "cuda_rng_state": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
-                },
-            )
             if improved:
-                best_dir = work_dir / "best_model"
                 save_weights_bundle(model, best_dir, use_version_prefix=args.version_prefix, metadata=meta)
                 if args.hub_repo:
-                    upload_bundle_resilient(
+                    if upload_bundle_resilient(
                         best_dir,
                         args.hub_repo,
                         public=args.public,
                         commit_message=f"Best checkpoint at step {step} (val={val})",
-                    )
+                    ):
+                        best_uploaded_step = step
 
-    best_dir = work_dir / "best_model"
+            # Save latest_model weights, metadata, and trainer_state.pt together in one atomic directory swap
+            trainer_state = {
+                "config_fingerprint": config_fingerprint,
+                "step": step,
+                "best_score": best_score,
+                "best_step": best_step,
+                "best_saved": best_saved,
+                "best_uploaded_step": best_uploaded_step,
+                "baseline_short": baseline_short,
+                "history": history,
+                "data_stats": data_stats,
+                "optimizer": optimizer.state_dict(),
+                "sampler": sampler.state_dict(),
+                "python_rng_state": random.getstate(),
+                "torch_rng_state": torch.get_rng_state(),
+                "cuda_rng_state": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+            }
+            save_weights_bundle(
+                model,
+                latest_dir,
+                use_version_prefix=args.version_prefix,
+                metadata=meta,
+                trainer_state=trainer_state,
+            )
+
+    # Final upload retry if the best checkpoint failed an earlier Hub upload
+    if args.hub_repo and best_saved and best_uploaded_step != best_step and best_dir.exists():
+        if upload_bundle_resilient(
+            best_dir,
+            args.hub_repo,
+            public=args.public,
+            commit_message=f"Final upload of best checkpoint from step {best_step}",
+        ):
+            best_uploaded_step = best_step
+
     summary = {
-        "complete": True,
-        "steps": args.steps,
+        "complete": end_step >= args.steps,
+        "steps": end_step,
+        "total_steps": args.steps,
         "best_score": best_score,
         "best_step": best_step,
         "best_saved": best_saved,
+        "best_uploaded": bool(args.hub_repo and best_saved and best_uploaded_step == best_step),
         "best_model_path": str(best_dir) if best_saved and best_dir.exists() else None,
         "bin_draws": dict(sampler.bin_draws),
         "data_stats": data_stats,
@@ -1247,9 +1307,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--version-prefix", action="store_true", help="Prepend 'v{version} <SEP> ' to encoded bytecode")
     p.add_argument("--max-input-len", type=int, default=1536)
     p.add_argument("--max-target-len", type=int, default=1023, help="Max target tokens (1023 + decoder_start = 1024)")
-    p.add_argument("--short-cap-per-version", type=int, default=100000)
-    p.add_argument("--enc-long-cap-per-version", type=int, default=50000)
-    p.add_argument("--tgt-long-cap-per-version", type=int, default=50000)
+    p.add_argument("--short-cap-per-version", type=int, default=60000)
+    p.add_argument("--enc-long-cap-per-version", type=int, default=30000)
+    p.add_argument("--tgt-long-cap-per-version", type=int, default=30000)
     p.add_argument("--val-short-per-version", type=int, default=500)
     p.add_argument("--val-long-per-version", type=int, default=250)
     p.add_argument("--holdout-files-per-version", type=int, default=150)
@@ -1261,6 +1321,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-attention-cost", type=int, default=5_200_000)
     p.add_argument("--max-microbatch-size", type=int, default=64)
     p.add_argument("--steps", type=int, default=2500)
+    p.add_argument("--stop-after-step", type=int, default=0, help="Optional early stop step within --steps schedule (for smoke/resume testing)")
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--min-lr", type=float, default=1e-6)
     p.add_argument("--warmup-frac", type=float, default=0.03)
@@ -1270,7 +1331,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-gen-samples", type=int, default=120, help="Stratified val statements for constrained generation eval")
     p.add_argument("--log-every", type=int, default=25)
     p.add_argument("--seed", type=int, default=20261123)
-    p.add_argument("--min-free-gib", type=float, default=4.0, help="Minimum free disk GiB on work_dir before launch")
+    p.add_argument("--min-free-gib", type=float, default=8.0, help="Minimum free disk GiB on work_dir before launch")
     p.add_argument("--resume", action="store_true", help="Resume from latest_model and trainer_state.pt in work_dir")
     p.add_argument("--gradient-checkpointing", action="store_true", default=True)
     p.add_argument("--no-gradient-checkpointing", dest="gradient_checkpointing", action="store_false")

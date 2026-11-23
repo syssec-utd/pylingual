@@ -138,6 +138,9 @@ def test_fstring_escape_format_spec_and_pre312_rules():
     # Invalid on all Python versions
     assert not check_statement_constraints(r'f"a\}"', py_lt_312=True)
     assert not check_statement_constraints(r'f"a\}"', py_lt_312=False)
+    assert not check_statement_constraints('f"{1:"}"', py_lt_312=True)
+    assert not check_statement_constraints('f"{1:"}"', py_lt_312=False)
+    assert not check_statement_constraints('f"""{1:"""}"""', py_lt_312=False)
 
     # Forbidden on Python < 3.12 (including nested f-string literals & nested specs with backslashes)
     invalid_311 = [
@@ -213,6 +216,44 @@ def test_cache_key_soundness_for_deep_stacks_and_inline_masks():
     ban_mc10 = index.disallowed_mask(INITIAL_STATE, py_lt_312=False, mask_count=10)
     assert bool(ban_mc1[ids["<mask_9>x"]])
     assert not bool(ban_mc10[ids["<mask_9>x"]])
+
+
+def test_cache_key_soundness_for_deep_pre312_fstring_stacks():
+    # Deep FSTR_EXPR collision: outer f'''{ vs outer ((((( with shared inner tail
+    tok, ids = _make_bpe_like_tokenizer(["}'\"\\", "{'"])
+    index = TokenizerConstraintIndex(tok)
+
+    st_outer_fstr = step_text(INITIAL_STATE, "f'''{(((((f'{", py_lt_312=True)
+    st_outer_parens = step_text(INITIAL_STATE, "(((((((f'{", py_lt_312=True)
+    assert st_outer_fstr is not None and st_outer_parens is not None
+    # Query non-fstring first so a buggy cache key would poison the second lookup
+    ban_parens = index.disallowed_mask(st_outer_parens, py_lt_312=True, mask_count=0)
+    ban_fstr = index.disallowed_mask(st_outer_fstr, py_lt_312=True, mask_count=0)
+    assert not bool(ban_parens[ids["}'\"\\"]])
+    assert bool(ban_fstr[ids["}'\"\\"]])
+
+    # Deep FSTR_LIT under nested FSTR_SPEC collision: outer f' vs outer f"
+    st_single = step_text(INITIAL_STATE, "f'{a:{b:{c:{d:{e:{f:{g:", py_lt_312=True)
+    st_double = step_text(INITIAL_STATE, 'f"{a:{b:{c:{d:{e:{f:{g:', py_lt_312=True)
+    assert st_single is not None and st_double is not None
+    ban_double = index.disallowed_mask(st_double, py_lt_312=True, mask_count=0)
+    ban_single = index.disallowed_mask(st_single, py_lt_312=True, mask_count=0)
+    assert not bool(ban_double[ids["{'"]])
+    assert bool(ban_single[ids["{'"]])
+
+
+def test_empty_eos_disallowed_at_step0_and_after_bos():
+    tok, ids = _make_bpe_like_tokenizer()
+    index = TokenizerConstraintIndex(tok)
+    proc = StatementLogitsProcessor(index, mask_counts=[1], py_lt_312=False)
+    scores = torch.zeros((1, len(tok)), dtype=torch.float32)
+
+    out0 = proc(torch.tensor([[0]], dtype=torch.long), scores.clone())
+    assert torch.isneginf(out0[0, ids["</s>"]])
+    out1 = proc(torch.tensor([[0, ids["<s>"]]], dtype=torch.long), scores.clone())
+    assert torch.isneginf(out1[0, ids["</s>"]])
+    out2 = proc(torch.tensor([[0, ids["<s>"], ids["x"]]], dtype=torch.long), scores.clone())
+    assert torch.isfinite(out2[0, ids["</s>"]])
 
 
 def test_logits_processor_masks_oob_atomic_and_spelled_masks():

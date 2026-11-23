@@ -227,6 +227,7 @@ def test_pack_2d_microbatches_enforces_hard_attention_budget():
 def test_check_masked_statement_parses():
     assert check_masked_statement_parses("return <mask_0>", "3.11")
     assert check_masked_statement_parses("elif <mask_0>:", "3.11")
+    assert check_masked_statement_parses("match <mask_0>:", "3.11")
     assert check_masked_statement_parses("@<mask_0>", "3.11")
     assert not check_masked_statement_parses("x = (<mask_0>", "3.11")
 
@@ -234,6 +235,7 @@ def test_check_masked_statement_parses():
 def test_preflight_checks_fail_loudly(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     args = build_arg_parser().parse_args(["--work-dir", str(tmp_path)])
+    assert args.min_free_gib == 8.0
     with pytest.raises(RuntimeError, match="CUDA is not available"):
         _preflight_checks(tmp_path, args)
 
@@ -242,7 +244,7 @@ def test_preflight_checks_fail_loudly(tmp_path, monkeypatch):
         _preflight_checks(tmp_path, args_disk)
 
 
-def test_train_and_exact_resume_end_to_end_smoke(tmp_path):
+def test_train_and_exact_resume_equivalence(tmp_path):
     tok = _tiny_tokenizer()
     tok_dir = tmp_path / "tok" / "statement"
     tok_dir.mkdir(parents=True)
@@ -259,9 +261,9 @@ def test_train_and_exact_resume_end_to_end_smoke(tmp_path):
         eos_token_id=2,
         decoder_start_token_id=0,
     )
+    torch.manual_seed(99)
     base_dir = tmp_path / "base_model"
-    model = T5ForConditionalGeneration(cfg)
-    model.save_pretrained(base_dir)
+    T5ForConditionalGeneration(cfg).save_pretrained(base_dir)
 
     shard = tmp_path / "shard.parquet"
     rows = [
@@ -276,67 +278,87 @@ def test_train_and_exact_resume_end_to_end_smoke(tmp_path):
     ]
     pq.write_table(pa.Table.from_pylist(rows), shard)
 
-    work_dir = tmp_path / "run"
-    common = [
-        "--work-dir",
-        str(work_dir),
-        "--base-model",
-        str(base_dir),
-        "--base-rev",
-        "main",
-        "--tokenizer-repo",
-        str(tmp_path / "tok"),
-        "--tokenizer-rev",
-        "main",
-        "--local-shards",
-        str(shard),
-        "--cpu",
-        "--no-gradient-checkpointing",
-        "--version-prefix",
-        "--max-input-len",
-        "64",
-        "--max-target-len",
-        "64",
-        "--target-tokens-per-step",
-        "8",
-        "--eval-every",
-        "2",
-        "--eval-gen-samples",
-        "4",
-        "--log-every",
-        "1",
-        "--holdout-files-per-version",
-        "7500",
-        "--min-free-gib",
-        "0",
-        "--seed",
-        "1234",
-    ]
-    # Run steps 1..2
-    s1 = train(build_arg_parser().parse_args(common + ["--steps", "2"]))
-    assert s1["complete"] is True
-    assert (work_dir / "latest_model").exists()
-    assert (work_dir / "trainer_state.pt").exists()
-    assert not (work_dir / "latest_model.prev").exists()
-    assert "gen" in s1["history"][-1]
-    assert "best_saved" in s1
+    def _base_args(work_dir):
+        return [
+            "--work-dir",
+            str(work_dir),
+            "--base-model",
+            str(base_dir),
+            "--base-rev",
+            "main",
+            "--tokenizer-repo",
+            str(tmp_path / "tok"),
+            "--tokenizer-rev",
+            "main",
+            "--local-shards",
+            str(shard),
+            "--cpu",
+            "--no-gradient-checkpointing",
+            "--version-prefix",
+            "--max-input-len",
+            "64",
+            "--max-target-len",
+            "64",
+            "--target-tokens-per-step",
+            "8",
+            "--steps",
+            "4",
+            "--eval-every",
+            "2",
+            "--eval-gen-samples",
+            "4",
+            "--log-every",
+            "1",
+            "--holdout-files-per-version",
+            "7500",
+            "--min-free-gib",
+            "0",
+            "--seed",
+            "1234",
+        ]
 
-    # Resume from step 2 to step 4
-    s2 = train(build_arg_parser().parse_args(common + ["--steps", "4", "--resume"]))
-    assert s2["complete"] is True
-    assert s2["history"][-1]["step"] == 4
-    assert sum(s2["bin_draws"].values()) > sum(s1["bin_draws"].values())
+    # 1. Uninterrupted 4-step run
+    uninterrupted_dir = tmp_path / "uninterrupted"
+    s_full = train(build_arg_parser().parse_args(_base_args(uninterrupted_dir)))
+    assert s_full["complete"] is True
 
-    # Smoke check evaluate_pools, evaluate_generation, save_weights_bundle, lr_for_step
-    reloaded = T5ForConditionalGeneration.from_pretrained(work_dir / "latest_model")
-    assert reloaded.config.pylingual_version_prefix is True
-    assert reloaded.config.use_cache is True
-    save_weights_bundle(reloaded, work_dir / "latest_model", use_version_prefix=True, metadata={"step": 4})
-    assert not (work_dir / "latest_model.prev").exists()
+    # 2. Interrupted after step 2, then resumed to step 4 with identical --steps 4 schedule
+    resumed_dir = tmp_path / "resumed"
+    s_part = train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--stop-after-step", "2"]))
+    assert s_part["complete"] is False
+    assert (resumed_dir / "latest_model" / "trainer_state.pt").exists()
+    assert not (resumed_dir / "latest_model.prev").exists()
+
+    s_res = train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"]))
+    assert s_res["complete"] is True
+    assert s_res["bin_draws"] == s_full["bin_draws"]
+    assert s_res["history"][-1]["val"] == pytest.approx(s_full["history"][-1]["val"], rel=1e-6, abs=1e-6, nan_ok=True)
+
+    # Weights must match uninterrupted run bit-for-bit / numerically identically
+    m_full = T5ForConditionalGeneration.from_pretrained(uninterrupted_dir / "latest_model")
+    m_res = T5ForConditionalGeneration.from_pretrained(resumed_dir / "latest_model")
+    for (n1, p1), (n2, p2) in zip(m_full.named_parameters(), m_res.named_parameters()):
+        assert n1 == n2
+        assert torch.allclose(p1, p2, atol=1e-6), f"Weight drift on resume for {n1}"
+
+    # 3. Resume must reject config mismatch and corrupted weights/state step mismatch
+    with pytest.raises(ValueError, match="Resume config mismatch"):
+        train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume", "--max-attention-cost", "1234567"]))
+
+    meta_path = resumed_dir / "latest_model" / "pylingual_training_meta.json"
+    meta_path.write_text('{"step": 999}\n')
+    with pytest.raises(ValueError, match="step mismatch"):
+        train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"]))
+
+    # Smoke check save_weights_bundle, lr_for_step, evaluate_pools, evaluate_generation
+    assert m_res.config.pylingual_version_prefix is True
+    assert m_res.config.use_cache is True
+    save_weights_bundle(m_res, resumed_dir / "latest_model", use_version_prefix=True, metadata={"step": 4})
+    assert not (resumed_dir / "latest_model.prev").exists()
     assert lr_for_step(0, 100, 1e-5) > 0
     assert build_arg_parser().parse_args(["--work-dir", str(tmp_path)]).max_target_len == 1023
     assert build_arg_parser().parse_args(["--work-dir", str(tmp_path)]).max_attention_cost == 5_200_000
-    train_pools, val_pools, _ = prepare_training_pools(
+    _, val_pools, _ = prepare_training_pools(
         [shard],
         tok,
         use_version_prefix=True,
@@ -347,6 +369,6 @@ def test_train_and_exact_resume_end_to_end_smoke(tmp_path):
         holdout_files_per_version=7500,
         seed=1,
     )
-    assert evaluate_pools(reloaded, val_pools, 0, torch.device("cpu"), max_attention_cost=100_000, max_microbatch_size=4, use_bf16=False)["short"] > 0
-    gen_res = evaluate_generation(reloaded, tok, TokenizerConstraintIndex(tok), val_pools, torch.device("cpu"), max_samples=2, max_length=16, retry_max_length=32)
+    assert evaluate_pools(m_res, val_pools, 0, torch.device("cpu"), max_attention_cost=100_000, max_microbatch_size=4, use_bf16=False)["short"] > 0
+    gen_res = evaluate_generation(m_res, tok, TokenizerConstraintIndex(tok), val_pools, torch.device("cpu"), max_samples=2, max_length=16, retry_max_length=32)
     assert "short" in gen_res and 0.0 <= gen_res["short"]["eos_rate"] <= 1.0
