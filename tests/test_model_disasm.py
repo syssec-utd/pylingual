@@ -1,7 +1,16 @@
+import ast
+import sys
+
 import pytest
 
+from pylingual.masking.ast_masker import custom_unparse
 from pylingual.masking.global_masker import Masker
-from pylingual.masking.model_disasm import restore_masked_source_text
+from pylingual.masking.model_disasm import (
+    format_source_replacement,
+    has_oob_masks,
+    restore_masked_source_text,
+    restore_masks,
+)
 
 
 @pytest.mark.parametrize("mask", ["<mask_0>", "'<mask_0>'", '"<mask_0>"'])
@@ -105,3 +114,64 @@ def test_string_mask_in_fstring_literal_doubles_braces():
     source = "value = f'<mask_0>{<mask_2>}<mask_1>' + '<mask_0>'"
 
     assert restore_masked_source_text([source], masker) == ["value = f'{{{var}}}' + '{'"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (float("inf"), "9e999"),
+        (float("-inf"), "(-9e999)"),
+        (9, "9"),
+        (-9, "(-9)"),
+        (True, "True"),
+        (float("nan"), "nan"),
+    ],
+)
+def test_format_source_replacement_handles_infinities(value, expected):
+    assert format_source_replacement(value) == expected
+
+
+def test_restore_masks_marks_out_of_bounds_masks_as_sentinels():
+    assert restore_masks("LOAD_CONST , <mask_5>", ["10"]) == "LOAD_CONST , <oob_mask_5>"
+    assert restore_masks("LOAD_CONST , <mask_0> <mask_5>", ["10"]) == "LOAD_CONST , <mask_10> <oob_mask_5>"
+
+
+def test_out_of_bounds_mask_never_matches_an_unrelated_global_mask():
+    masker = Masker()
+    masker.global_tab[999] = "<mask_5>"
+
+    restored = restore_masks("value = <mask_5>", ["42"])
+
+    assert restored == "value = <oob_mask_5>"
+    assert has_oob_masks(restored)
+    # the sentinel must survive unconditionally, while a real <mask_5> still restores its value
+    assert restore_masked_source_text([restored], masker) == ["value = <oob_mask_5>"]
+    assert restore_masked_source_text(["value = <mask_5>"], masker) == ["value = 999"]
+
+
+def test_restore_masked_source_text_skips_code_objects():
+    masker = Masker()
+    masker.global_tab[compile("x = 1", "<test>", "exec")] = "<mask_0>"
+    masker.global_tab["value"] = "<mask_1>"
+
+    assert restore_masked_source_text(["<mask_1> = <mask_0>"], masker) == ["value = <mask_0>"]
+
+
+def test_restore_masked_source_text_handles_an_empty_global_table():
+    lines = ["value = 1", "if value:", "    value += 1"]
+
+    assert restore_masked_source_text(lines, Masker()) == lines
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="backslashes in f-string expressions require Python 3.12+")
+def test_formatted_value_backslash_gate_follows_the_target_version():
+    tree = ast.parse('value = f"{\'\\\\n\'}"')
+
+    newer = Masker()
+    newer.version = (3, 12)
+    assert "\\" in custom_unparse(tree, newer)
+
+    older = Masker()
+    older.version = (3, 11)
+    with pytest.raises(ValueError, match="backslash"):
+        custom_unparse(tree, older)

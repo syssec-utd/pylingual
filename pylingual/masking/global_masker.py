@@ -209,7 +209,13 @@ class Masker:
             elif type(inst.argval) in (list, tuple, frozenset, set):
                 def replace_list(consts):
                     for idx, const in enumerate(consts):
-                        if isinstance(const, str):
+                        if iscode(const):
+                            # never mask a code object itself; mask the name it defines
+                            if const.co_name in comprehension_names:
+                                consts[idx] = f"<codeobj:{const.co_name}>"
+                            else:
+                                consts[idx] = f"<codeobj:{self.mask(inst.bytecode.resolve_namespace(const.co_name))}>"
+                        elif isinstance(const, str):
                             consts[idx] = repr(self.mask(inst.bytecode.resolve_namespace(const)))
                         elif const is None:
                             continue
