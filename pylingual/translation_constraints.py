@@ -2,9 +2,9 @@
 
 Provides a lightweight, tokenizer-indexed HuggingFace ``LogitsProcessor`` enforcing
 model-agnostic invariants on generated masked Python statements:
-- Static output bans (control bytes, raw newlines, invalid UTF-8, ``<extra_id_*>``).
+- Static output bans (ASCII control bytes, raw newlines, ``<extra_id_*>``, bad words).
 - Exact per-request input-mask whitelist for both atomic ``<mask_N>`` tokens and
-  multi-piece BPE spellings of ``<mask_N>``.
+  multi-piece BPE spellings of ``<mask_N>`` (enforced when ``>`` closes a complete mask).
 - Character-level delimiter, quote, and f-string stack PDA rejecting provably
   unmatched closers, forbidding EOS while delimiters/strings/escapes are open,
   and enforcing Python < 3.12 PEP 701 f-string quote/backslash rules inside
@@ -22,16 +22,18 @@ import torch
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
 
-_ATOMIC_MASK_RE = re.compile(r"^<mask_(\d+)>$")
-_EXTRA_ID_RE = re.compile(r"^<extra_id_\d+>$")
+_ATOMIC_MASK_RE = re.compile(r"^<mask_(0|[1-9][0-9]*)>$", re.ASCII)
+_CANONICAL_MASK_RE = re.compile(r"<mask_(0|[1-9][0-9]*)>", re.ASCII)
+_INLINE_MASK_RE = re.compile(r"<mask_[0-9]+>", re.ASCII)
+_EXTRA_ID_FULL_RE = re.compile(r"^<extra_id_\d+>$")
+_EXTRA_ID_SUBSTR_RE = re.compile(r"<extra_id_\d+>")
 _MASK_PREFIX = "<mask_"
 _OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}"}
 _CLOSE_TO_OPEN = {")": "(", "]": "[", "}": "{"}
 _STRING_PREFIX_CHARS = frozenset("rRbBuUfFtT")
 _VALID_PREFIX_PAIRS = frozenset(("fr", "rf", "br", "rb", "tr", "rt"))
-_SYNTAX_CHARS = frozenset("()[]{}'\"\\#:<>\n\r")
-_MASK_SPELL_CHARS = frozenset("<mask_0123456789>")
-_STACK_CACHE_WINDOW = 6
+_SYNTAX_CHARS = frozenset("()[]{}'\"\\#:<>")
+_MIN_STACK_CACHE_WINDOW = 6
 _MAX_MASK_CACHE = 4096
 
 
@@ -59,18 +61,9 @@ class LexState(NamedTuple):
 INITIAL_STATE = LexState()
 
 
-def _in_fstr_expr(stack: tuple) -> bool:
-    """True if currently inside an f-string replacement expression (not its format spec)."""
-    for frame in reversed(stack):
-        if frame == "FSTR_SPEC":
-            return False
-        if isinstance(frame, tuple):
-            tag = frame[0]
-            if tag == "FSTR_EXPR":
-                return True
-            if tag == "FSTR_LIT":
-                return False
-    return False
+def _any_fstr_expr(stack: tuple) -> bool:
+    """True if any enclosing frame is an f-string replacement expression."""
+    return any(isinstance(frame, tuple) and frame[0] == "FSTR_EXPR" for frame in stack)
 
 
 def _forbidden_pre312_quotes(stack: tuple) -> frozenset[str]:
@@ -91,37 +84,36 @@ def _forbidden_pre312_quotes(stack: tuple) -> frozenset[str]:
 
 
 def _advance_mask_partial(partial: str, ch: str, mask_count: int | None) -> tuple[str, bool]:
-    """Update partial '<mask_<digits>' state. Returns (new_partial, allowed)."""
+    """Update partial '<mask_<digits>' state. Enforces membership only when '>' closes a full mask."""
     if not partial:
         return ("<", True) if ch == "<" else ("", True)
 
-    # Matching "<mask_" character by character
+    # Matching "<mask_" character by character (never reject before '>' closes a complete mask)
     if len(partial) < len(_MASK_PREFIX):
         if ch == _MASK_PREFIX[len(partial)]:
-            nxt = partial + ch
-            if nxt == _MASK_PREFIX and mask_count == 0:
-                return ("", False)
-            return (nxt, True)
+            return (partial + ch, True)
         return ("<", True) if ch == "<" else ("", True)
 
     digits = partial[len(_MASK_PREFIX) :]
-    if ch.isdigit():
-        if digits == "0":
-            # Leading zero like <mask_01> is never a valid normalized mask
-            return ("", False)
+    if "0" <= ch <= "9":
+        if digits == "0" or digits == "!":
+            # Leading zero (e.g. <mask_01>) or overflow: mark invalid if closed by '>'
+            return ("<mask_!", True)
         new_digits = digits + ch
-        if mask_count is not None and int(new_digits) >= mask_count:
-            return ("", False)
+        if len(new_digits) > 9:
+            return ("<mask_!", True)
         return (partial + ch, True)
 
     if ch == ">":
         if not digits:
             return ("", True)
+        if digits == "!":
+            return ("", False)
         if mask_count is not None and int(digits) >= mask_count:
             return ("", False)
         return ("", True)
 
-    # Diverged from "<mask_<digits>>" (e.g. `a < mask_val`)
+    # Diverged from "<mask_<digits>>" (e.g. `a<mask_2` or `'<mask_9x'`)
     return ("<", True) if ch == "<" else ("", True)
 
 
@@ -143,7 +135,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         if state.in_escape:
             return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial)
         if ch == "\\":
-            if py_lt_312 and _in_fstr_expr(stack[:-1]):
+            if py_lt_312 and _any_fstr_expr(stack):
                 return None
             return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial)
         if len(quote) == 1:
@@ -174,8 +166,14 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
                 return state._replace(pending_fbrace_close=False, triple_close=0, mask_partial=mask_partial)
             return None
         if state.in_escape:
-            return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial)
+            # In Python f-strings, '\' does NOT escape '{' or '}'; fall through to brace handling
+            if ch in ("{", "}"):
+                state = state._replace(in_escape=False)
+            else:
+                return state._replace(in_escape=False, triple_close=0, mask_partial=mask_partial)
         if ch == "\\":
+            if py_lt_312 and _any_fstr_expr(stack):
+                return None
             return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial)
         if ch == "{":
             return LexState(
@@ -205,6 +203,17 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
 
     # 3. Inside an f-string format specifier
     if top == "FSTR_SPEC":
+        if state.in_escape:
+            # Backslash escapes quotes/backslashes in format specs, not '{' or '}'
+            if ch in ("{", "}"):
+                state = state._replace(in_escape=False)
+            else:
+                return state._replace(in_escape=False, mask_partial=mask_partial)
+        if ch == "\\":
+            # Legal in top-level format specs even on < 3.12, forbidden inside an enclosing FSTR_EXPR on < 3.12
+            if py_lt_312 and _any_fstr_expr(stack):
+                return None
+            return state._replace(in_escape=True, mask_partial=mask_partial)
         if ch == "{":
             return LexState(stack=stack + (("FSTR_EXPR", False),), mask_partial=mask_partial)
         if ch == "}":
@@ -213,8 +222,6 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
         if py_lt_312 and len(stack) >= 2 and isinstance(stack[-2], tuple) and stack[-2][0] == "FSTR_LIT":
             outer_q = stack[-2][1]
             if len(outer_q) == 1 and ch == outer_q:
-                return None
-            if ch == "\\":
                 return None
         return state._replace(mask_partial=mask_partial)
 
@@ -231,7 +238,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
     # Check if upgrading an immediately closed empty string '' or "" to triple-quoted ''' or """
     if state.just_closed_quote and ch == state.just_closed_quote:
         triple = ch * 3
-        if py_lt_312 and _in_fstr_expr(stack) and triple in _forbidden_pre312_quotes(stack):
+        if py_lt_312 and _any_fstr_expr(stack) and triple in _forbidden_pre312_quotes(stack):
             return None
         return LexState(
             stack=stack + ((state.just_closed_kind, triple),),
@@ -245,7 +252,7 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             # Python 3.14+ template strings: abstain rather than risk false rejection
             return LexState(stack=stack, abstained=True, mask_partial=mask_partial)
         kind = "FSTR_LIT" if "f" in prefix_lower else "STR"
-        if py_lt_312 and _in_fstr_expr(stack):
+        if py_lt_312 and _any_fstr_expr(stack):
             if ch in _forbidden_pre312_quotes(stack):
                 return None
         # Use triple_close=-1 as a sentinel meaning "0 chars seen inside this 1-char quote so far"
@@ -260,9 +267,8 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
     if ch == "\\":
         return None
 
-    # Comment '#' in code: abstain on any comment outside strings/format specs
-    # (normalized single-line targets from ast.unparse have no comments, but abstaining
-    # avoids falsely breaking unexpected '#' tokens if any appear)
+    # Reject '#' comments in code (normalized single-line statements never contain comments
+    # outside strings/format specs, and an accidental '#' can comment out closing delimiters)
     if ch == "#":
         return None
 
@@ -315,7 +321,7 @@ def step_atomic_mask(state: LexState, mask_idx: int, *, mask_count: int | None =
             return None
         return state._replace(in_escape=False, triple_close=0, mask_partial="")
     if top == "FSTR_SPEC":
-        return state._replace(mask_partial="")
+        return state._replace(in_escape=False, mask_partial="")
     if isinstance(top, tuple) and top[0] == "FSTR_EXPR" and top[1]:
         stack = stack[:-1] + (("FSTR_EXPR", False),)
     return LexState(
@@ -344,9 +350,15 @@ def is_eos_allowed(state: LexState) -> bool:
 
 def check_statement_constraints(text: str, *, py_lt_312: bool = False, mask_count: int | None = None) -> bool:
     """Check whether a complete masked statement satisfies all lexical and mask invariants."""
+    if not text:
+        return False
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        return False
+    if _EXTRA_ID_SUBSTR_RE.search(text):
+        return False
     state: LexState | None = INITIAL_STATE
     pos = 0
-    for match in re.finditer(r"<mask_(\d+)>", text):
+    for match in _CANONICAL_MASK_RE.finditer(text):
         if match.start() > pos:
             state = step_text(state, text[pos : match.start()], py_lt_312=py_lt_312, mask_count=mask_count)
             if state is None:
@@ -391,7 +403,8 @@ class TokenizerConstraintIndex:
         ]
 
         # Build static ban mask: existing bad_words_ids, non-EOS special role IDs,
-        # <extra_id_*>, control characters / raw newlines / invalid UTF-8.
+        # <extra_id_*>, and ASCII control characters (never banning U+FFFD so multi-byte
+        # UTF-8 byte-BPE pieces remain valid).
         static_ban = torch.zeros(self.vocab_size, dtype=torch.bool)
         for group in bad_words_ids or []:
             if len(group) == 1 and 0 <= group[0] < self.vocab_size:
@@ -404,18 +417,20 @@ class TokenizerConstraintIndex:
         self.atomic_mask_ids: list[int] = []
         self.atomic_mask_nums: list[int] = []
         self.active_ids: list[int] = []
-        self.mask_spell_ids: list[int] = []
         self.inert_ids: list[int] = []
+
+        max_closers_in_token = 0
+        has_inline_mask_tokens = False
 
         for tid in range(self.vocab_size):
             if tid == self.eos_token_id:
                 continue
             s = self.token_strings[tid]
-            if _EXTRA_ID_RE.match(s):
+            if _EXTRA_ID_FULL_RE.match(s) or _EXTRA_ID_SUBSTR_RE.search(s):
                 static_ban[tid] = True
                 continue
             if not static_ban[tid]:
-                if not s or any(ord(c) < 32 or ord(c) == 127 or c == "\ufffd" for c in s):
+                if not s or any(ord(c) < 32 or ord(c) == 127 for c in s):
                     static_ban[tid] = True
                     continue
             if static_ban[tid]:
@@ -429,20 +444,24 @@ class TokenizerConstraintIndex:
                 self.atomic_mask_nums.append(num)
                 continue
 
-            # Only tokens containing syntax characters can fail lexical checks when
-            # mask_partial is empty; tokens containing mask-spelling characters are only
-            # checked individually while a "<mask_..." prefix is active.
+            # Because _advance_mask_partial only rejects when '>' closes a full mask, only
+            # tokens containing characters in _SYNTAX_CHARS (which includes '>') can ever fail
+            # a lexical or mask-spelling transition. Everything else behaves like an inert char.
             if any(c in _SYNTAX_CHARS for c in s):
                 self.active_ids.append(tid)
-            elif any(c in _MASK_SPELL_CHARS for c in s):
-                self.mask_spell_ids.append(tid)
+                closers = sum(1 for c in s if c in ")]}'\"")
+                if closers > max_closers_in_token:
+                    max_closers_in_token = closers
+                if _INLINE_MASK_RE.search(s):
+                    has_inline_mask_tokens = True
             else:
                 self.inert_ids.append(tid)
 
+        self.stack_cache_window = max(_MIN_STACK_CACHE_WINDOW, max_closers_in_token + 1)
+        self._has_inline_mask_tokens = has_inline_mask_tokens
         self.static_ban = static_ban
         self.atomic_mask_id_tensor = torch.tensor(self.atomic_mask_ids, dtype=torch.long)
         self.atomic_mask_num_tensor = torch.tensor(self.atomic_mask_nums, dtype=torch.long)
-        self.mask_spell_id_tensor = torch.tensor(self.mask_spell_ids, dtype=torch.long)
         self.inert_id_tensor = torch.tensor(self.inert_ids, dtype=torch.long)
         self._mask_cache: OrderedDict[tuple, torch.Tensor] = OrderedDict()
 
@@ -455,13 +474,38 @@ class TokenizerConstraintIndex:
             return step_atomic_mask(state, num, mask_count=mask_count)
         return step_text(state, self.token_strings[tid], py_lt_312=py_lt_312, mask_count=mask_count)
 
+    def check_token_sequence(self, token_ids: list[int], *, py_lt_312: bool = False, mask_count: int | None = None) -> bool:
+        """Validate a tokenized target sequence against the exact inference constraint contract."""
+        state: LexState | None = INITIAL_STATE
+        saw_content = False
+        for step_idx, tid in enumerate(token_ids):
+            if tid < 0 or tid >= self.vocab_size:
+                return False
+            if tid == self.eos_token_id:
+                return saw_content and is_eos_allowed(state)
+            if step_idx == 0 and tid in self.allowed_initial_special_ids:
+                continue
+            if self.static_ban[tid]:
+                return False
+            saw_content = True
+            state = self.step_token(state, tid, py_lt_312=py_lt_312, mask_count=mask_count)
+            if state is None:
+                return False
+        return saw_content and is_eos_allowed(state)
+
     def _abstract_key(self, state: LexState, py_lt_312: bool, mask_count: int | None) -> tuple:
+        norm_partial = state.mask_partial
+        if mask_count is not None and norm_partial.startswith(_MASK_PREFIX):
+            digits = norm_partial[len(_MASK_PREFIX) :]
+            if digits and (digits == "!" or int(digits) >= mask_count):
+                norm_partial = "<mask_!"
+        key_mask_count = mask_count if (norm_partial or self._has_inline_mask_tokens) else None
+
         if state.abstained:
-            return ("ABSTAINED", state.mask_partial, mask_count if state.mask_partial else None)
-        # Only the top _STACK_CACHE_WINDOW frames plus pre-3.12 f-string context affect one-token transitions.
-        tail = state.stack[-_STACK_CACHE_WINDOW:]
-        has_deeper = len(state.stack) > _STACK_CACHE_WINDOW
-        fexpr = _in_fstr_expr(state.stack) if py_lt_312 else False
+            return ("ABSTAINED", norm_partial, key_mask_count)
+        tail = state.stack[-self.stack_cache_window :]
+        has_deeper = len(state.stack) > self.stack_cache_window
+        fexpr = _any_fstr_expr(state.stack) if py_lt_312 else False
         forb = _forbidden_pre312_quotes(state.stack) if fexpr else frozenset()
         return (
             tail,
@@ -473,8 +517,8 @@ class TokenizerConstraintIndex:
             state.just_closed_kind,
             state.just_closed_quote,
             state.pending_fbrace_close,
-            state.mask_partial,
-            mask_count if state.mask_partial else None,
+            norm_partial,
+            key_mask_count,
             py_lt_312,
             fexpr,
             forb,
@@ -492,28 +536,19 @@ class TokenizerConstraintIndex:
         if self.eos_token_id is not None and not is_eos_allowed(state):
             ban[self.eos_token_id] = True
 
-        # Inert tokens: check one representative non-syntax identifier-like string ("z")
+        # Inert tokens: check one representative non-syntax character ("z")
         inert_ok = step_text(state, "z", py_lt_312=py_lt_312, mask_count=mask_count) is not None
-        if not inert_ok:
-            if self.inert_ids:
-                ban[self.inert_id_tensor] = True
-            if self.mask_spell_ids and not state.mask_partial:
-                ban[self.mask_spell_id_tensor] = True
+        if not inert_ok and self.inert_ids:
+            ban[self.inert_id_tensor] = True
 
         # Atomic masks are valid unless pending_fbrace_close is waiting specifically for '}'
         if self.atomic_mask_ids and state.pending_fbrace_close:
             ban[self.atomic_mask_id_tensor] = True
 
-        # Check the small active subset (~150 syntax tokens)
+        # Check the compact active subset (only tokens containing characters in _SYNTAX_CHARS)
         for tid in self.active_ids:
             if step_text(state, self.token_strings[tid], py_lt_312=py_lt_312, mask_count=mask_count) is None:
                 ban[tid] = True
-
-        # Check mask-spelling tokens individually only while "<mask_..." is actively being spelled
-        if state.mask_partial:
-            for tid in self.mask_spell_ids:
-                if step_text(state, self.token_strings[tid], py_lt_312=py_lt_312, mask_count=mask_count) is None:
-                    ban[tid] = True
 
         self._mask_cache[key] = ban
         if len(self._mask_cache) > _MAX_MASK_CACHE:
@@ -524,8 +559,8 @@ class TokenizerConstraintIndex:
 class StatementLogitsProcessor:
     """HuggingFace-compatible LogitsProcessor enforcing statement lexical & mask invariants.
 
-    Beam-search safe: tracks immutable ``LexState`` keyed by generated token prefix so
-    reordering/forking beams never corrupts state.
+    Beam-search safe with O(batch_beams) step-rolling state tracking and batched device
+    transfers (zero per-row CUDA stream synchronizations).
     """
 
     def __init__(
@@ -534,14 +569,13 @@ class StatementLogitsProcessor:
         mask_counts: list[int | None],
         *,
         py_lt_312: bool = False,
-        num_beams: int = 1,
     ):
         self.index = index
         self.mask_counts = mask_counts
         self.py_lt_312 = py_lt_312
-        self.num_beams = num_beams
-        # Per-request prefix -> LexState caches: list of dicts, one per original batch item
-        self._prefix_states: list[dict[tuple[int, ...], LexState]] = [{(): INITIAL_STATE} for _ in mask_counts]
+        # Step-rolling state cache: retains only the most recent prefix length (O(batch_beams) memory)
+        self._last_len: int = -1
+        self._last_states: dict[tuple[int, tuple[int, ...]], LexState] = {}
         self._device_static_ban: dict[torch.device, torch.Tensor] = {}
         self._device_atomic_ids: dict[torch.device, torch.Tensor] = {}
         self._device_atomic_nums: dict[torch.device, torch.Tensor] = {}
@@ -561,22 +595,23 @@ class StatementLogitsProcessor:
         self._request_mask_bans[key] = banned_ids
         return banned_ids
 
-    def _state_for_prefix(self, req_idx: int, prefix: tuple[int, ...], mask_count: int | None) -> LexState:
-        cache = self._prefix_states[req_idx]
-        found = cache.get(prefix)
-        if found is not None:
-            return found
-        # Walk back to the longest cached prefix and step forward
-        cur_len = len(prefix) - 1
-        while cur_len > 0 and prefix[:cur_len] not in cache:
-            cur_len -= 1
-        state = cache[prefix[:cur_len]]
-        for step_idx in range(cur_len, len(prefix)):
-            tid = prefix[step_idx]
+    def _step_or_replay(self, req_idx: int, prefix: tuple[int, ...], mask_count: int | None) -> LexState:
+        if not prefix:
+            return INITIAL_STATE
+        if len(prefix) == self._last_len:
+            same = self._last_states.get((req_idx, prefix))
+            if same is not None:
+                return same
+        if len(prefix) == self._last_len + 1:
+            prev = self._last_states.get((req_idx, prefix[:-1]))
+            if prev is not None:
+                nxt = self.index.step_token(prev, prefix[-1], py_lt_312=self.py_lt_312, mask_count=mask_count)
+                return nxt if nxt is not None else LexState(abstained=True)
+        # Fallback for out-of-order calls (e.g. direct unit test invocations)
+        state = INITIAL_STATE
+        for tid in prefix:
             nxt = self.index.step_token(state, tid, py_lt_312=self.py_lt_312, mask_count=mask_count)
-            # If an earlier liveness fallback emitted an out-of-grammar token, abstain cleanly
             state = nxt if nxt is not None else LexState(abstained=True)
-            cache[prefix[: step_idx + 1]] = state
         return state
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
@@ -587,50 +622,80 @@ class StatementLogitsProcessor:
         beams_per_req = max(1, batch_beams // num_reqs) if num_reqs else 1
 
         if device not in self._device_static_ban:
-            self._device_static_ban[device] = self.index.static_ban.to(device)
+            static = self.index.static_ban
+            if static.shape[0] != vocab_size:
+                resized = torch.zeros(vocab_size, dtype=torch.bool)
+                n = min(vocab_size, static.shape[0])
+                resized[:n] = static[:n]
+                static = resized
+            self._device_static_ban[device] = static.to(device)
         static_ban_dev = self._device_static_ban[device]
 
-        for row in range(batch_beams):
+        # Single batched GPU->CPU transfer for all beam prefixes
+        all_seqs = input_ids[:, 1:].tolist()
+        cur_len = len(all_seqs[0]) if all_seqs else 0
+
+        active_rows: list[int] = []
+        active_mask_counts: list[int | None] = []
+        cpu_bans: list[torch.Tensor] = []
+        next_states: dict[tuple[int, tuple[int, ...]], LexState] = {}
+
+        for row, seq in enumerate(all_seqs):
+            if eos_id is not None and eos_id in seq:
+                continue
             req_idx = row // beams_per_req if num_reqs else 0
             mask_count = self.mask_counts[req_idx] if req_idx < num_reqs else None
+            prefix = tuple(seq)
+            state = self._step_or_replay(req_idx, prefix, mask_count)
+            next_states[(req_idx, prefix)] = state
 
-            # T5 starts with decoder_start_token_id at position 0; strip it for lexical state
-            seq = input_ids[row, 1:].tolist()
-            if eos_id is not None and eos_id in seq:
-                # Already finished beam/sequence: leave untouched so HF can pad cleanly
-                continue
-
-            state = self._state_for_prefix(req_idx, tuple(seq), mask_count)
-            row_scores = scores[row]
-            ban = self.index.disallowed_mask(state, py_lt_312=self.py_lt_312, mask_count=mask_count).to(device)
-            if vocab_size != ban.shape[0]:
-                # Defensive guard if model embedding vocab differs slightly from tokenizer length
-                effective = torch.zeros(vocab_size, dtype=torch.bool, device=device)
+            ban = self.index.disallowed_mask(state, py_lt_312=self.py_lt_312, mask_count=mask_count)
+            if ban.shape[0] != vocab_size:
+                effective = torch.zeros(vocab_size, dtype=torch.bool)
                 n = min(vocab_size, ban.shape[0])
                 effective[:n] = ban[:n]
                 ban = effective
+            active_rows.append(row)
+            active_mask_counts.append(mask_count)
+            cpu_bans.append(ban)
 
+        self._last_len = cur_len
+        self._last_states = next_states
+
+        if not active_rows:
+            return scores
+
+        # Single batched H2D transfer for all active rows
+        ban_batch = torch.stack(cpu_bans, dim=0).to(device=device, non_blocking=(device.type == "cuda"))
+        fallback_ban_batch = static_ban_dev.unsqueeze(0).expand(len(active_rows), vocab_size).clone()
+
+        for local_idx, mask_count in enumerate(active_mask_counts):
             if mask_count is not None:
                 oob_ids = self._get_atomic_mask_ban(device, mask_count)
                 if oob_ids is not None and oob_ids.numel() > 0:
-                    ban = ban.clone()
-                    ban[oob_ids[oob_ids < vocab_size]] = True
+                    valid_oob = oob_ids[oob_ids < vocab_size]
+                    ban_batch[local_idx, valid_oob] = True
+                    fallback_ban_batch[local_idx, valid_oob] = True
 
-            # Allow BOS (<s>) at step 0 right after T5's decoder_start_token_id
-            if not seq and self.index.allowed_initial_special_ids:
-                ban = ban.clone()
-                for bos_tid in self.index.allowed_initial_special_ids:
-                    if bos_tid < vocab_size:
-                        ban[bos_tid] = False
+        # Allow BOS (<s>) at step 0 right after T5's decoder_start_token_id
+        if cur_len == 0 and self.index.allowed_initial_special_ids:
+            for bos_tid in self.index.allowed_initial_special_ids:
+                if bos_tid < vocab_size:
+                    ban_batch[:, bos_tid] = False
+                    fallback_ban_batch[:, bos_tid] = False
 
-            masked = row_scores.masked_fill(ban, float("-inf"))
-            # Mandatory liveness guard: never leave all logits -inf (causes NaN in beam log_softmax)
-            if torch.isneginf(masked).all():
-                fallback_ban = static_ban_dev[:vocab_size] if static_ban_dev.shape[0] >= vocab_size else static_ban_dev
-                if fallback_ban.shape[0] == vocab_size:
-                    masked = row_scores.masked_fill(fallback_ban, float("-inf"))
-                if torch.isneginf(masked).all():
-                    masked = row_scores
-            scores[row] = masked
+        row_idx_tensor = torch.tensor(active_rows, dtype=torch.long, device=device)
+        active_scores = scores.index_select(0, row_idx_tensor)
+        masked = active_scores.masked_fill(ban_batch, float("-inf"))
 
+        # Vectorized liveness guard (zero CUDA syncs): if lexical+mask constraints leave a row
+        # all -inf, fall back first to static+OOB bans only (preserving OOB mask protection),
+        # and only to raw scores if even that is all -inf.
+        all_inf = torch.isneginf(masked).all(dim=-1, keepdim=True)
+        fallback = active_scores.masked_fill(fallback_ban_batch, float("-inf"))
+        fallback_all_inf = torch.isneginf(fallback).all(dim=-1, keepdim=True)
+        safe_fallback = torch.where(fallback_all_inf, active_scores, fallback)
+        final_active = torch.where(all_inf, safe_fallback, masked)
+
+        scores.index_copy_(0, row_idx_tensor, final_active)
         return scores

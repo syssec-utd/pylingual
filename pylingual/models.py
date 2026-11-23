@@ -15,6 +15,7 @@ import yaml
 from pylingual.masking.model_disasm import (
     encode_opcodes,
     fix_jump_targets,
+    has_oob_masks,
     normalize_masks,
     restore_masks,
 )
@@ -34,7 +35,6 @@ else:
 logger = logging.getLogger(__name__)
 
 _MASK_INDEX_RE = re.compile(r"<mask_(\d+)>")
-_FSTRING_OPCODES = ("FORMAT_VALUE", "BUILD_STRING")
 _TRANSLATION_FALLBACK = "'''Decompiler error: line too long for translation. Please decompile this statement manually.'''"
 
 
@@ -128,14 +128,18 @@ class CacheTranslator:
 
     def _format_encoder_input(self, normalized_bytecode: str, version: PythonVersion | tuple[int, int] | str | None = None) -> str:
         encoded = encode_opcodes(normalized_bytecode)
-        if self.use_version_prefix and version is not None:
+        if self.use_version_prefix:
+            if version is None:
+                raise ValueError("version is required when use_version_prefix=True")
             return f"v{self._version_str(version)} <SEP> {encoded}"
         return encoded
 
     def _cache_key(self, normalized_bytecode: str, version: PythonVersion | tuple[int, int] | str | None = None) -> str:
-        if self.use_version_prefix and version is not None:
+        if self.use_version_prefix:
+            if version is None:
+                raise ValueError("version is required when use_version_prefix=True")
             return f"v{self._version_str(version)} <SEP> {normalized_bytecode}"
-        if self.use_constraints and self._is_pre312(version) and any(op in normalized_bytecode for op in _FSTRING_OPCODES):
+        if self.use_constraints and self._is_pre312(version):
             return f"py<312:{normalized_bytecode}"
         return normalized_bytecode
 
@@ -159,6 +163,7 @@ class CacheTranslator:
         if num_beams > 1:
             gen_kwargs["num_beams"] = num_beams
             gen_kwargs["num_return_sequences"] = num_beams
+            gen_kwargs["early_stopping"] = True
         if self.use_constraints and self.constraint_index is not None:
             mask_counts = [_mask_count(text) for text in batch]
             gen_kwargs["logits_processor"] = [
@@ -166,25 +171,33 @@ class CacheTranslator:
                     self.constraint_index,
                     mask_counts,
                     py_lt_312=self._is_pre312(version),
-                    num_beams=num_beams,
                 )
             ]
 
         with torch.no_grad():
             return self.model.generate(**encoded, **gen_kwargs)
 
-    def _translate_and_decode(
+    def _has_natural_eos(self, token_ids: list[int]) -> bool:
+        eos_id = self.tokenizer.eos_token_id
+        return eos_id is None or eos_id in token_ids[1:]
+
+    def _translate_and_decode_with_status(
         self,
         batch: list[str],
         *,
         version: PythonVersion | tuple[int, int] | str | None = None,
         max_length: int | None = None,
-    ) -> list[str]:
-        """Translate a single batch of requests, retrying cap-exhausted rows once at retry_max_length."""
+    ) -> list[tuple[str, bool]]:
+        """Translate a single batch, retrying cap-exhausted rows once at retry_max_length.
+
+        Returns ``(decoded_text, cacheable)`` pairs; outputs that still lack natural EOS after
+        retrying at ``retry_max_length`` are marked non-cacheable so truncated outputs are never persisted.
+        """
         eff_max_len = max_length if max_length is not None else self.max_length
         output = self._generate_batch(batch, version=version, max_length=eff_max_len, num_beams=1)
         token_rows = [row.tolist() for row in output]
         decoded_results = [self._decode_sequence(toks) for toks in token_rows]
+        cacheable = [self._has_natural_eos(toks) for toks in token_rows]
 
         # Retry only rows that exhausted max_length without natural EOS (never force-closing mid-expression)
         eos_id = self.tokenizer.eos_token_id
@@ -194,9 +207,21 @@ class CacheTranslator:
                 retry_batch = [batch[idx] for idx in exhausted]
                 retry_output = self._generate_batch(retry_batch, version=version, max_length=self.retry_max_length, num_beams=1)
                 for idx, retry_row in zip(exhausted, retry_output):
-                    decoded_results[idx] = self._decode_sequence(retry_row.tolist())
+                    retry_toks = retry_row.tolist()
+                    decoded_results[idx] = self._decode_sequence(retry_toks)
+                    cacheable[idx] = self._has_natural_eos(retry_toks)
 
-        return decoded_results
+        return list(zip(decoded_results, cacheable))
+
+    def _translate_and_decode(
+        self,
+        batch: list[str],
+        *,
+        version: PythonVersion | tuple[int, int] | str | None = None,
+        max_length: int | None = None,
+    ) -> list[str]:
+        """Translate a single batch and return decoded strings."""
+        return [text for text, _ in self._translate_and_decode_with_status(batch, version=version, max_length=max_length)]
 
     def _translate_with_backoff(
         self,
@@ -210,8 +235,7 @@ class CacheTranslator:
         for i in range(0, len(translation_requests), batch_size):
             batch = translation_requests[i : i + batch_size]
             try:
-                decoded = self._translate_and_decode(batch, version=version)
-                translation_results.extend((text, True) for text in decoded)
+                translation_results.extend(self._translate_and_decode_with_status(batch, version=version))
                 continue
             except Exception as e:
                 if not _is_resource_error(e):
@@ -233,18 +257,20 @@ class CacheTranslator:
         args: list[str],
         *,
         num_beams: int = 4,
+        max_length: int | None = None,
         version: PythonVersion | tuple[int, int] | str | None = None,
         check_timeout: callable = None,
     ) -> list[list[str]]:
-        """Return up to ``num_beams`` deduplicated candidate translations per request without mutating caches."""
+        """Return up to ``num_beams`` deduplicated completed candidate translations per request without mutating caches."""
         if not args:
             return []
         if check_timeout is not None:
             check_timeout()
         normalized_args = [normalize_masks(fix_jump_targets(x)) for x in args]
         norm_texts = [norm for norm, _ in normalized_args]
+        eff_max_len = max_length if max_length is not None else self.retry_max_length
         try:
-            output = self._generate_batch(norm_texts, version=version, max_length=self.retry_max_length, num_beams=num_beams)
+            output = self._generate_batch(norm_texts, version=version, max_length=eff_max_len, num_beams=num_beams)
         except Exception as e:
             if not _is_resource_error(e):
                 raise
@@ -259,8 +285,13 @@ class CacheTranslator:
             seen: set[str] = set()
             cands: list[str] = []
             for b in range(rows_per_req):
-                decoded = self._decode_sequence(output[idx * rows_per_req + b].tolist())
+                row_toks = output[idx * rows_per_req + b].tolist()
+                if not self._has_natural_eos(row_toks):
+                    continue
+                decoded = self._decode_sequence(row_toks)
                 restored = restore_masks(decoded, order)
+                if has_oob_masks(restored):
+                    continue
                 if restored not in seen:
                     seen.add(restored)
                     cands.append(restored)
