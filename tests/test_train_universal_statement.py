@@ -451,19 +451,21 @@ def test_train_and_exact_resume_equivalence(tmp_path):
             "1234",
         ]
 
-    # 1. Uninterrupted 4-step run
+    # 1. Uninterrupted 4-step run (also exercises gradient_checkpointing=True on tiny CPU T5)
     uninterrupted_dir = tmp_path / "uninterrupted"
-    s_full = train(build_arg_parser().parse_args(_base_args(uninterrupted_dir)))
+    gc_args = [a for a in _base_args(uninterrupted_dir) if a != "--no-gradient-checkpointing"]
+    s_full = train(build_arg_parser().parse_args(gc_args))
     assert s_full["complete"] is True
 
     # 2. Interrupted after step 2, then resumed to step 4 with identical --steps 4 schedule
     resumed_dir = tmp_path / "resumed"
-    s_part = train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--stop-after-step", "2"]))
+    gc_res_args = [a for a in _base_args(resumed_dir) if a != "--no-gradient-checkpointing"]
+    s_part = train(build_arg_parser().parse_args(gc_res_args + ["--stop-after-step", "2"]))
     assert s_part["complete"] is False
     assert (resumed_dir / "latest_model" / "trainer_state.pt").exists()
     assert not (resumed_dir / "latest_model.prev").exists()
 
-    s_res = train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"]))
+    s_res = train(build_arg_parser().parse_args(gc_res_args + ["--resume"]))
     assert s_res["complete"] is True
     assert s_res["bin_draws"] == s_full["bin_draws"]
     assert s_res["history"][-1]["val"] == pytest.approx(s_full["history"][-1]["val"], rel=1e-6, abs=1e-6, nan_ok=True)
@@ -481,13 +483,14 @@ def test_train_and_exact_resume_equivalence(tmp_path):
         ["--target-tokens-per-step", "16"],
         ["--grad-clip", "0.5"],
         ["--weight-decay", "0.05"],
+        ["--no-gradient-checkpointing"],
     ):
         with pytest.raises(ValueError, match="Resume config mismatch"):
-            train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"] + extra))
+            train(build_arg_parser().parse_args(gc_res_args + ["--resume"] + extra))
 
     other_shard = tmp_path / "other_shard.parquet"
     pq.write_table(pa.Table.from_pylist(rows), other_shard)
-    altered_args = _base_args(resumed_dir)
+    altered_args = list(gc_res_args)
     altered_args[altered_args.index(str(shard))] = str(other_shard)
     with pytest.raises(ValueError, match="Resume config mismatch"):
         train(build_arg_parser().parse_args(altered_args + ["--resume"]))
@@ -495,7 +498,7 @@ def test_train_and_exact_resume_equivalence(tmp_path):
     meta_path = resumed_dir / "latest_model" / "pylingual_training_meta.json"
     meta_path.write_text('{"step": 999}\n')
     with pytest.raises(ValueError, match="step mismatch"):
-        train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"]))
+        train(build_arg_parser().parse_args(gc_res_args + ["--resume"]))
 
     # Smoke check save_weights_bundle, lr_for_step, evaluate_pools, evaluate_generation
     assert m_res.config.pylingual_version_prefix is True

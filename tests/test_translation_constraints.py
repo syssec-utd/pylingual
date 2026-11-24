@@ -309,6 +309,17 @@ def test_cache_key_soundness_for_deep_pre312_fstring_stacks():
     assert not bool(ban_double[ids["{'"]])
     assert bool(ban_single[ids["{'"]])
 
+    # Deep FSTR_EXPR->FSTR_SPEC collision under py_lt_312=False: token ":'" enters FSTR_SPEC and emits outer quote
+    tok2, ids2 = _make_bpe_like_tokenizer([":'"])
+    index2 = TokenizerConstraintIndex(tok2)
+    st_expr_double = step_text(INITIAL_STATE, 'f"{a:{b:{c:{d:{e:{f:{g', py_lt_312=False)
+    st_expr_single = step_text(INITIAL_STATE, "f'{a:{b:{c:{d:{e:{f:{g", py_lt_312=False)
+    assert st_expr_double is not None and st_expr_single is not None
+    ban_expr_double = index2.disallowed_mask(st_expr_double, py_lt_312=False, mask_count=0)
+    ban_expr_single = index2.disallowed_mask(st_expr_single, py_lt_312=False, mask_count=0)
+    assert not bool(ban_expr_double[ids2[":'"]])
+    assert bool(ban_expr_single[ids2[":'"]])
+
 
 def test_empty_eos_disallowed_at_step0_and_after_bos():
     tok, ids = _make_bpe_like_tokenizer()

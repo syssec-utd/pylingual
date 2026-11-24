@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import os
 
-# Disable hf_xet before importing huggingface_hub so shard streaming never writes to ~/.cache/huggingface/xet on tight root disks.
-os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+# Force-disable hf_xet before importing huggingface_hub so shard streaming never writes to ~/.cache/huggingface/xet on tight root disks.
+os.environ["HF_HUB_DISABLE_XET"] = "1"
 
 import argparse
+import array
 import ast
 import gc
 import hashlib
@@ -74,20 +75,32 @@ _BLOCK_STARTERS = (
 
 @dataclass
 class EncodedExample:
-    input_ids: list[int]
-    label_ids: list[int]
+    input_ids: array.array | list[int]
+    label_ids: array.array | list[int]
     version: str
     bin_name: str  # "short", "enc_long", "tgt_long"
     example_id: int
     source_text: str = ""
     mask_count: int = 0
 
+    def __post_init__(self) -> None:
+        # Store token IDs in compact unsigned 32-bit C arrays (~4 B/token vs ~36-42 B/token for Python list[int])
+        if not isinstance(self.input_ids, array.array):
+            self.input_ids = array.array("I", self.input_ids)
+        if not isinstance(self.label_ids, array.array):
+            self.label_ids = array.array("I", self.label_ids)
+
+
+def _normalize_version_str(version: str) -> str:
+    parts = str(version).split(".")
+    return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else str(version)
+
 
 def format_model_input(bytecode: str, version: str, *, use_version_prefix: bool) -> str:
     """Format raw normalized statement bytecode to match ``CacheTranslator`` byte-for-byte."""
     encoded = encode_opcodes(bytecode)
     if use_version_prefix:
-        return f"v{version} <SEP> {encoded}"
+        return f"v{_normalize_version_str(version)} <SEP> {encoded}"
     return encoded
 
 
@@ -234,7 +247,7 @@ def filter_and_encode_statements(
             continue
         raw_enc = encode_opcodes(bc)
         raw_inputs.append(raw_enc)
-        model_inputs.append(f"v{version} <SEP> {raw_enc}" if use_version_prefix else raw_enc)
+        model_inputs.append(f"v{_normalize_version_str(version)} <SEP> {raw_enc}" if use_version_prefix else raw_enc)
         valid_targets.append(src)
         valid_meta.append((stmt_idx, mc))
 
@@ -602,16 +615,21 @@ def pack_2d_microbatches(
 def collate_batch(examples: list[EncodedExample], pad_token_id: int, device: torch.device) -> dict[str, torch.Tensor]:
     max_in = max(len(ex.input_ids) for ex in examples)
     max_lbl = max(len(ex.label_ids) for ex in examples)
-    input_ids = torch.full((len(examples), max_in), pad_token_id, dtype=torch.long, device=device)
-    attention_mask = torch.zeros((len(examples), max_in), dtype=torch.long, device=device)
-    labels = torch.full((len(examples), max_lbl), -100, dtype=torch.long, device=device)
+    input_ids = torch.full((len(examples), max_in), pad_token_id, dtype=torch.long)
+    attention_mask = torch.zeros((len(examples), max_in), dtype=torch.long)
+    labels = torch.full((len(examples), max_lbl), -100, dtype=torch.long)
     for row, ex in enumerate(examples):
         n_in = len(ex.input_ids)
         n_lbl = len(ex.label_ids)
-        input_ids[row, :n_in] = torch.tensor(ex.input_ids, dtype=torch.long, device=device)
+        input_ids[row, :n_in] = torch.tensor(ex.input_ids, dtype=torch.long)
         attention_mask[row, :n_in] = 1
-        labels[row, :n_lbl] = torch.tensor(ex.label_ids, dtype=torch.long, device=device)
-    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+        labels[row, :n_lbl] = torch.tensor(ex.label_ids, dtype=torch.long)
+    non_blocking = device.type == "cuda"
+    return {
+        "input_ids": input_ids.to(device, non_blocking=non_blocking),
+        "attention_mask": attention_mask.to(device, non_blocking=non_blocking),
+        "labels": labels.to(device, non_blocking=non_blocking),
+    }
 
 
 def build_optimizer(model: torch.nn.Module, lr: float, weight_decay: float) -> torch.optim.Optimizer:
@@ -757,11 +775,14 @@ def _generate_chunk_with_backoff(
 ) -> list[list[int]]:
     """Run constrained generation on ``chunk``, halving batch size on OOM."""
     max_in = max(len(ex.input_ids) for ex in chunk)
-    inp = torch.full((len(chunk), max_in), pad_id, dtype=torch.long, device=device)
-    attn = torch.zeros((len(chunk), max_in), dtype=torch.long, device=device)
+    inp_cpu = torch.full((len(chunk), max_in), pad_id, dtype=torch.long)
+    attn_cpu = torch.zeros((len(chunk), max_in), dtype=torch.long)
     for row, ex in enumerate(chunk):
-        inp[row, : len(ex.input_ids)] = torch.tensor(ex.input_ids, dtype=torch.long, device=device)
-        attn[row, : len(ex.input_ids)] = 1
+        inp_cpu[row, : len(ex.input_ids)] = torch.tensor(ex.input_ids, dtype=torch.long)
+        attn_cpu[row, : len(ex.input_ids)] = 1
+    non_blocking = device.type == "cuda"
+    inp = inp_cpu.to(device, non_blocking=non_blocking)
+    attn = attn_cpu.to(device, non_blocking=non_blocking)
     mcs = [ex.mask_count for ex in chunk]
 
     try:
@@ -1130,6 +1151,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     os.environ["HF_XET_CACHE"] = str(hf_cache_dir / "xet")
     hf_constants.HF_HOME = str(hf_cache_dir)
     hf_constants.HF_HUB_CACHE = str(hf_cache_dir / "hub")
+    if hasattr(hf_constants, "HF_XET_CACHE"):
+        hf_constants.HF_XET_CACHE = str(hf_cache_dir / "xet")
 
     device, use_bf16 = _preflight_checks(work_dir, args)
     _seed_everything(args.seed)

@@ -618,7 +618,7 @@ class TokenizerConstraintIndex:
         # tokens that pop tail frames still see exact enclosing FSTR_EXPR / FSTR_LIT restrictions.
         deeper_fexpr = _any_fstr_expr(deeper) if py_lt_312 else False
         deeper_forb = _forbidden_pre312_quotes(deeper) if py_lt_312 else frozenset()
-        deeper_fspec_q = _nearest_fstr_lit_quote(deeper) if (deeper and tail and tail[-1] == "FSTR_SPEC") else None
+        deeper_fspec_q = _nearest_fstr_lit_quote(deeper) if deeper else None
         return (
             tail,
             bool(deeper),
