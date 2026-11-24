@@ -363,9 +363,9 @@ class ControlFlowTemplate(ABC):
     def get_instructions(self) -> list[Inst]:
         return [i for m in self.members.values() if m is not None for i in m.get_instructions()]
 
-    def line(self, s: str, i: int = 0, child: Code3 | None = None, meta: bool = False):
+    def line(self, s: str, i: int = 0, child: Code3 | None = None, meta: bool = False, source_idx: int | None = None):
         assert s
-        return [SourceLine(s, i, self.blame, child, meta)]
+        return [SourceLine(s, i, self.blame, child, meta, source_idx)]
 
     def add_header(self, s: str, meta: bool = False):
         self.header_lines.extend(self.line(s, meta=meta))
@@ -392,7 +392,8 @@ class InstTemplate(ControlFlowTemplate):
     @override
     def to_indented_source(self, source: SourceContext) -> list[SourceLine]:
         line = source.line_of(self.inst)
-        lines = self.line(line) if line else []
+        src_idx = (self.inst.starts_line - 1) if self.inst.starts_line is not None else None
+        lines = self.line(line, source_idx=src_idx) if line else []
         if self.inst.opname == "LOAD_CONST" and iscode(self.inst.argval):
             if self.inst.argval in source.cfts and self.inst.argval.co_name not in comprehension_names:  # type: ignore
                 lines.append(SourceLine("", 1, self.inst.argval, self.inst.argval))
