@@ -501,12 +501,18 @@ class Decompiler:
         ]
         passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
 
-        beam_lists = self.translator.translate_beam(
-            [requests[pos] for pos in valid_suspects],
-            num_beams=num_beams,
-            version=self.version,
-            check_timeout=self.check_timeout,
-        )
+        try:
+            beam_lists = self.translator.translate_beam(
+                [requests[pos] for pos in valid_suspects],
+                num_beams=num_beams,
+                version=self.version,
+                check_timeout=self.check_timeout,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Beam translation retry failed for {bc.name}; falling back to segmentation correction: {exc!r}")
+            return False
         for pos, candidates in zip(valid_suspects, beam_lists):
             for cand in candidates:
                 if cand == original_translation[pos]:

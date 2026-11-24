@@ -92,6 +92,13 @@ def test_cap_exhaustion_retries_once_and_never_caches_unfinished():
     assert out2 == ["x = ( <mask_0>"]
     assert len(translator2.cache) == 0
 
+    # If a liveness-fallback EOS output violates lexical constraints (e.g. stray ')'), never cache it
+    model3 = _StubGenModel(tok, lambda **kwargs: torch.tensor([[0, 13, 2]]))
+    translator3 = CacheTranslator(model3, tok, cache_namespace="stmt@rev")
+    out3 = translator3(["LOAD_CONST <mask_0>"], version=PythonVersion((3, 12)))
+    assert out3 == [")"]
+    assert len(translator3.cache) == 0
+
 
 def test_programming_error_surfaces_while_oom_backs_off_without_caching():
     tok = _make_tok()
@@ -135,21 +142,22 @@ def test_translate_beam_early_stopping_eos_and_oob_filtering():
     tok = _make_tok()
 
     def gen(**kwargs):
-        assert kwargs["num_beams"] == 4
-        assert kwargs["num_return_sequences"] == 4
+        assert kwargs["num_beams"] == 5
+        assert kwargs["num_return_sequences"] == 5
         assert kwargs["early_stopping"] is True
         return torch.tensor(
             [
                 [0, 8, 2, 0],  # valid completed: <mask_0> -> <mask_7>
                 [0, 8, 2, 0],  # duplicate completed
                 [0, 10, 11, 12],  # unterminated (no EOS id 2) -> must be dropped
-                [0, 9, 2, 0],  # OOB <mask_1> when input only has 1 mask -> becomes <oob_mask_1> -> must be dropped
+                [0, 9, 2, 0],  # OOB <mask_1> when input only has 1 mask -> must be dropped
+                [0, 12, 2, 0],  # lexically unclosed '(' with EOS (e.g. liveness fallback) -> must be dropped
             ]
         )
 
     model = _StubGenModel(tok, gen)
     tr = CacheTranslator(model, tok, cache_namespace="stmt@rev")
-    cands = tr.translate_beam(["LOAD_CONST <mask_7>"], num_beams=4, version=PythonVersion((3, 12)))
+    cands = tr.translate_beam(["LOAD_CONST <mask_7>"], num_beams=5, version=PythonVersion((3, 12)))
     assert cands == [["<mask_7>"]]
     assert len(tr.cache) == 0
 
@@ -317,3 +325,31 @@ def test_decompiler_beam_retry_accepts_advancing_error_in_multi_error_codeobj():
         assert d.translation_results[0] == ["x = 1", "y = 2"]
     finally:
         dec_mod.bc_to_cft = orig_bc_to_cft
+
+
+def test_decompiler_beam_retry_falls_back_on_beam_error_but_propagates_timeout():
+    d = Decompiler.__new__(Decompiler)
+    d.name = "beam-error-fallback"
+    d.version = PythonVersion((3, 12))
+    d.check_timeout = Mock()
+    fake_co = object()
+    fake_bc = SimpleNamespace(codeobj=fake_co, name="f")
+    d.ordered_bytecodes = [fake_bc]
+    d.ordered_instructions = [[]]
+    d.codeobj_instruction_lists = [["LOAD_CONST <mask_0>"]]
+    d.segmentation_results = [[{"entity": "B", "score": 1.0}]]
+    d.translation_results = [["x = ("]]
+    d.source_lines = ["x = ("]
+    d.indented_source = "x = ("
+    d.equivalence_results = [Exception("SyntaxError: line 1")]
+    d.source_context = SimpleNamespace(
+        cfts={fake_co: SimpleNamespace(header_lines=[])},
+        snapshot=lambda: None,
+        source_lines=lambda: [SourceLine("x = (", 0, fake_co, source_idx=0)],
+    )
+    d.translator = SimpleNamespace(translate_beam=Mock(side_effect=RuntimeError("unexpected beam bug")))
+    assert d.correct_translation_beam(0, SourceLine("x = (", 0, fake_co, source_idx=0), error_lno=1) is False
+
+    d.translator = SimpleNamespace(translate_beam=Mock(side_effect=TimeoutError("timed out")))
+    with pytest.raises(TimeoutError, match="timed out"):
+        d.correct_translation_beam(0, SourceLine("x = (", 0, fake_co, source_idx=0), error_lno=1)

@@ -226,22 +226,120 @@ def test_pack_2d_microbatches_enforces_hard_attention_budget():
 
 def test_check_masked_statement_parses():
     assert check_masked_statement_parses("return <mask_0>", "3.11")
+    assert check_masked_statement_parses("try:", "3.11")
     assert check_masked_statement_parses("elif <mask_0>:", "3.11")
     assert check_masked_statement_parses("match <mask_0>:", "3.11")
     assert check_masked_statement_parses("@<mask_0>", "3.11")
     assert not check_masked_statement_parses("x = (<mask_0>", "3.11")
+    # Pre-3.12 f-string quote reuse must fail for 3.11 even when host Python is >= 3.12
+    assert not check_masked_statement_parses('f"{"x"}"', "3.11")
+    assert check_masked_statement_parses('f"{"x"}"', "3.12")
+
+
+def test_evaluate_generation_budgets_attention_backs_off_and_requires_eos():
+    tok = _tiny_tokenizer()
+    index = TokenizerConstraintIndex(tok)
+    pad_id = tok.pad_token_id
+    eos_id = tok.eos_token_id
+    ret_id = tok.convert_tokens_to_ids("return")
+    m0_id = tok.convert_tokens_to_ids("<mask_0>")
+    op_id = tok.convert_tokens_to_ids("<opcode:LOAD_CONST>")
+    # 4 long-encoder examples (1536 tokens each): must pack as singletons under 5.2M budget
+    long_examples = [
+        EncodedExample([op_id] * 1536, [ret_id, m0_id, eos_id], "3.12", "enc_long", i, source_text="return <mask_0>", mask_count=1)
+        for i in range(4)
+    ]
+    short_examples = [
+        EncodedExample([op_id] * 16, [ret_id, m0_id, eos_id], "3.12", "short", 10 + i, source_text="return <mask_0>", mask_count=1)
+        for i in range(4)
+    ]
+    recorded_shapes: list[tuple[int, int, int]] = []
+    oom_once = {"fired": False}
+
+    class _RecordingModel:
+        def __init__(self):
+            self.training = False
+            self.config = type("Cfg", (), {"use_cache": False})()
+            self.generation_config = type("GC", (), {"bad_words_ids": []})()
+
+        def eval(self):
+            self.training = False
+
+        def train(self):
+            self.training = True
+
+        def generate(self, *, input_ids, attention_mask, max_length, logits_processor):
+            b, e = input_ids.shape
+            recorded_shapes.append((b, e, max_length))
+            # Simulate OOM once on a multi-example short batch to verify backoff splitting
+            if b > 1 and not oom_once["fired"]:
+                oom_once["fired"] = True
+                raise MemoryError("simulated eval OOM")
+            if max_length == 512 and e == 1536:
+                # Exhaust initial cap without EOS (trigger retry at 1024)
+                return torch.full((b, max_length), ret_id, dtype=torch.long)
+            if max_length == 1024:
+                # Still no EOS on retry -> must NOT count toward constraint_ok/parse_ok/exact
+                return torch.tensor([[pad_id, ret_id, m0_id]] * b, dtype=torch.long)
+            # Short examples complete with EOS and exact gold match
+            return torch.tensor([[pad_id, ret_id, m0_id, eos_id]] * b, dtype=torch.long)
+
+    res = evaluate_generation(
+        _RecordingModel(),
+        tok,
+        index,
+        {"short": short_examples, "enc_long": long_examples, "tgt_long": []},
+        torch.device("cpu"),
+        max_samples=8,
+        max_length=512,
+        retry_max_length=1024,
+        batch_size=16,
+        max_attention_cost=5_200_000,
+    )
+    # Every 1536-token batch (both initial 512 and retry 1024) must be singleton (batch size 1)
+    long_calls = [(b, ml) for b, e, ml in recorded_shapes if e == 1536]
+    assert long_calls and all(b == 1 for b, _ in long_calls)
+    assert any(ml == 1024 for _, ml in long_calls)
+    assert oom_once["fired"] is True
+    # Short examples succeeded with EOS; exhausted enc_long without EOS must score 0.0 across all rates
+    assert res["short"]["eos_rate"] == 1.0
+    assert res["short"]["parse_rate"] == 1.0
+    assert res["short"]["exact_match"] == 1.0
+    assert res["enc_long"]["eos_rate"] == 0.0
+    assert res["enc_long"]["constraint_rate"] == 0.0
+    assert res["enc_long"]["parse_rate"] == 0.0
+    assert res["enc_long"]["exact_match"] == 0.0
 
 
 def test_preflight_checks_fail_loudly(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     args = build_arg_parser().parse_args(["--work-dir", str(tmp_path)])
     assert args.min_free_gib == 8.0
+    assert args.min_free_ram_gib == 4.0
+    assert args.min_free_vram_gib == 16.0
     with pytest.raises(RuntimeError, match="CUDA is not available"):
         _preflight_checks(tmp_path, args)
 
-    args_disk = build_arg_parser().parse_args(["--work-dir", str(tmp_path), "--cpu", "--min-free-gib", "999999999"])
+    args_disk = build_arg_parser().parse_args(
+        ["--work-dir", str(tmp_path), "--cpu", "--min-free-ram-gib", "0", "--min-free-gib", "999999999"]
+    )
     with pytest.raises(RuntimeError, match="Insufficient free space"):
         _preflight_checks(tmp_path, args_disk)
+
+    args_ram = build_arg_parser().parse_args(
+        ["--work-dir", str(tmp_path), "--cpu", "--min-free-gib", "0", "--min-free-ram-gib", "999999999"]
+    )
+    with pytest.raises(RuntimeError, match="Insufficient available host RAM"):
+        _preflight_checks(tmp_path, args_ram)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda dev: (4 * 1024**3, 24 * 1024**3))
+    args_vram = build_arg_parser().parse_args(
+        ["--work-dir", str(tmp_path), "--min-free-gib", "0", "--min-free-ram-gib", "0", "--min-free-vram-gib", "16"]
+    )
+    with pytest.raises(RuntimeError, match="Insufficient free CUDA VRAM"):
+        _preflight_checks(tmp_path, args_vram)
 
 
 def test_train_and_exact_resume_equivalence(tmp_path):
@@ -313,6 +411,8 @@ def test_train_and_exact_resume_equivalence(tmp_path):
             "7500",
             "--min-free-gib",
             "0",
+            "--min-free-ram-gib",
+            "0",
             "--seed",
             "1234",
         ]
@@ -341,9 +441,16 @@ def test_train_and_exact_resume_equivalence(tmp_path):
         assert n1 == n2
         assert torch.allclose(p1, p2, atol=1e-6), f"Weight drift on resume for {n1}"
 
-    # 3. Resume must reject config mismatch and corrupted weights/state step mismatch
+    # 3. Resume must reject config mismatch (including local shard change) and step mismatch
     with pytest.raises(ValueError, match="Resume config mismatch"):
         train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume", "--max-attention-cost", "1234567"]))
+
+    other_shard = tmp_path / "other_shard.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), other_shard)
+    altered_args = _base_args(resumed_dir)
+    altered_args[altered_args.index(str(shard))] = str(other_shard)
+    with pytest.raises(ValueError, match="Resume config mismatch"):
+        train(build_arg_parser().parse_args(altered_args + ["--resume"]))
 
     meta_path = resumed_dir / "latest_model" / "pylingual_training_meta.json"
     meta_path.write_text('{"step": 999}\n')

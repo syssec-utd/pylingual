@@ -13,6 +13,7 @@ model-agnostic invariants on generated masked Python statements:
 
 from __future__ import annotations
 
+import codecs
 import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING, NamedTuple
@@ -21,6 +22,26 @@ import torch
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
+
+
+def _build_bytelevel_unicode_to_byte() -> dict[str, int]:
+    """Inverse of GPT-2 / RoBERTa ByteLevel BPE bytes_to_unicode bijection."""
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    cs = bs[:]
+    extra = 0
+    for b in range(256):
+        if b not in bs:
+            bs.append(b)
+            cs.append(256 + extra)
+            extra += 1
+    return {chr(c): b for b, c in zip(bs, cs)}
+
+
+_BYTELEVEL_U2B = _build_bytelevel_unicode_to_byte()
 
 _ATOMIC_MASK_RE = re.compile(r"^<mask_(0|[1-9][0-9]*)>$", re.ASCII)
 _CANONICAL_MASK_RE = re.compile(r"<mask_(0|[1-9][0-9]*)>", re.ASCII)
@@ -55,7 +76,8 @@ class LexState(NamedTuple):
     just_closed_quote: str = ""  # "'" or '"'
     pending_fbrace_close: bool = False  # saw single '}' inside FSTR_LIT; next char must be '}'
     mask_partial: str = ""  # prefix of "<mask_<digits>" currently being spelled across tokens
-    abstained: bool = False  # unsupported exotic construct (e.g. 3.14 t-string); skip lexical gating
+    utf8_pending: bytes = b""  # incomplete valid UTF-8 prefix bytes across ByteLevel BPE tokens
+    abstained: bool = False  # defensive fallback state if an invalid prefix ever entered replay
     has_content: bool = False  # at least one non-special content char or mask token has been emitted
 
 
@@ -258,13 +280,10 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             has_content=True,
         )
 
-    # Opening a new string or f-string
+    # Opening a new string, f-string, or Python 3.14 PEP 750 t-string
     if ch in ("'", '"'):
         prefix_lower = state.prefix_buf.lower()
-        if "t" in prefix_lower:
-            # Python 3.14+ template strings: abstain rather than risk false rejection
-            return LexState(stack=stack, abstained=True, mask_partial=mask_partial, has_content=True)
-        kind = "FSTR_LIT" if "f" in prefix_lower else "STR"
+        kind = "FSTR_LIT" if ("f" in prefix_lower or "t" in prefix_lower) else "STR"
         if py_lt_312 and _any_fstr_expr(stack):
             if ch in _forbidden_pre312_quotes(stack):
                 return None
@@ -321,8 +340,51 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
     )
 
 
+def _advance_utf8_bytes(pending: bytes, raw: bytes) -> tuple[str, bytes] | None:
+    """Incrementally decode UTF-8 bytes, rejecting invalid sequences and dead-end prefixes."""
+    buf = pending + raw
+    try:
+        decoded, consumed = codecs.utf_8_decode(buf, "strict", False)
+    except UnicodeDecodeError:
+        return None
+    rem = buf[consumed:]
+    if len(rem) >= 2:
+        b0, b1 = rem[0], rem[1]
+        # Reject 2-byte prefixes that have no valid UTF-8 completion (overlong, surrogate, >U+10FFFF)
+        if (
+            (b0 == 0xE0 and b1 < 0xA0)
+            or (b0 == 0xED and b1 >= 0xA0)
+            or (b0 == 0xF0 and b1 < 0x90)
+            or (b0 == 0xF4 and b1 >= 0x90)
+        ):
+            return None
+    return decoded, rem
+
+
+def step_utf8_bytes(
+    state: LexState, raw: bytes, *, py_lt_312: bool = False, mask_count: int | None = None
+) -> LexState | None:
+    """Advance ``state`` by raw UTF-8 bytes from a ByteLevel BPE token."""
+    advanced = _advance_utf8_bytes(state.utf8_pending, raw)
+    if advanced is None:
+        return None
+    decoded, rem = advanced
+    cur: LexState | None = state._replace(utf8_pending=b"") if state.utf8_pending else state
+    if decoded:
+        cur = step_text(cur, decoded, py_lt_312=py_lt_312, mask_count=mask_count)
+        if cur is None:
+            return None
+    if rem:
+        if cur.pending_fbrace_close:
+            return None
+        return cur._replace(utf8_pending=rem, has_content=True)
+    return cur
+
+
 def step_atomic_mask(state: LexState, mask_idx: int, *, mask_count: int | None = None) -> LexState | None:
     """Advance ``state`` by an atomic ``<mask_N>`` token (treated as a placeholder, not '<'/'>')."""
+    if state.utf8_pending:
+        return None
     if mask_count is not None and mask_idx >= mask_count:
         return None
     if state.abstained:
@@ -349,6 +411,8 @@ def step_atomic_mask(state: LexState, mask_idx: int, *, mask_count: int | None =
 
 def step_text(state: LexState, text: str, *, py_lt_312: bool = False, mask_count: int | None = None) -> LexState | None:
     """Advance ``state`` through every character of ``text``."""
+    if text and state.utf8_pending:
+        return None
     cur: LexState | None = state
     for ch in text:
         cur = step_char(cur, ch, py_lt_312=py_lt_312, mask_count=mask_count)
@@ -358,8 +422,8 @@ def step_text(state: LexState, text: str, *, py_lt_312: bool = False, mask_count
 
 
 def is_eos_allowed(state: LexState) -> bool:
-    """Whether EOS is allowed at ``state`` (non-empty content, and no open brackets/strings/escapes)."""
-    if not state.has_content:
+    """Whether EOS is allowed at ``state`` (non-empty, complete UTF-8, no open brackets/strings/escapes)."""
+    if not state.has_content or state.utf8_pending:
         return False
     if state.abstained:
         return True
@@ -434,6 +498,7 @@ class TokenizerConstraintIndex:
         self.mask_id_to_num: dict[int, int] = {}
         self.atomic_mask_ids: list[int] = []
         self.atomic_mask_nums: list[int] = []
+        self.partial_utf8_bytes: dict[int, bytes] = {}
         self.active_ids: list[int] = []
         self.inert_ids: list[int] = []
 
@@ -461,6 +526,23 @@ class TokenizerConstraintIndex:
                 self.atomic_mask_ids.append(tid)
                 self.atomic_mask_nums.append(num)
                 continue
+
+            # Detect ByteLevel BPE partial UTF-8 byte tokens (e.g. split multi-byte UTF-8 pieces
+            # that decode to U+FFFD in isolation) and recover their exact raw bytes so valid
+            # continuation sequences pass while lone/dangling bytes are rejected.
+            if "\ufffd" in s:
+                raw_tok = tokenizer.convert_ids_to_tokens(tid)
+                if isinstance(raw_tok, str) and raw_tok and all(ch in _BYTELEVEL_U2B for ch in raw_tok):
+                    raw_bytes = bytes(_BYTELEVEL_U2B[ch] for ch in raw_tok)
+                    if raw_bytes.decode("utf-8", errors="replace") == s:
+                        self.partial_utf8_bytes[tid] = raw_bytes
+                        self.active_ids.append(tid)
+                        closers = sum(1 for c in s if c in ")]}'\"")
+                        if closers > max_closers_in_token:
+                            max_closers_in_token = closers
+                        if _INLINE_MASK_RE.search(s):
+                            has_inline_mask_tokens = True
+                        continue
 
             # Because _advance_mask_partial only rejects when '>' closes a full mask, only
             # tokens containing characters in _SYNTAX_CHARS (which includes '>') can ever fail
@@ -490,6 +572,9 @@ class TokenizerConstraintIndex:
         num = self.mask_id_to_num.get(tid)
         if num is not None:
             return step_atomic_mask(state, num, mask_count=mask_count)
+        raw_bytes = self.partial_utf8_bytes.get(tid)
+        if raw_bytes is not None:
+            return step_utf8_bytes(state, raw_bytes, py_lt_312=py_lt_312, mask_count=mask_count)
         return step_text(state, self.token_strings[tid], py_lt_312=py_lt_312, mask_count=mask_count)
 
     def check_token_sequence(self, token_ids: list[int], *, py_lt_312: bool = False, mask_count: int | None = None) -> bool:
@@ -518,7 +603,7 @@ class TokenizerConstraintIndex:
         key_mask_count = mask_count if (norm_partial or self._has_inline_mask_tokens) else None
 
         if state.abstained:
-            return ("ABSTAINED", state.has_content, norm_partial, key_mask_count)
+            return ("ABSTAINED", state.has_content, state.utf8_pending, norm_partial, key_mask_count)
         tail = state.stack[-self.stack_cache_window :]
         deeper = state.stack[: -self.stack_cache_window] if len(state.stack) > self.stack_cache_window else ()
         # Key on deeper-prefix pre-3.12 f-string context separately from tail so multi-char
@@ -535,6 +620,7 @@ class TokenizerConstraintIndex:
             state.just_closed_kind,
             state.just_closed_quote,
             state.pending_fbrace_close,
+            state.utf8_pending,
             state.has_content,
             norm_partial,
             key_mask_count,
@@ -560,13 +646,13 @@ class TokenizerConstraintIndex:
         if not inert_ok and self.inert_ids:
             ban[self.inert_id_tensor] = True
 
-        # Atomic masks are valid unless pending_fbrace_close is waiting specifically for '}'
-        if self.atomic_mask_ids and state.pending_fbrace_close:
+        # Atomic masks are valid unless waiting for '}' in f-string or completing a UTF-8 codepoint
+        if self.atomic_mask_ids and (state.pending_fbrace_close or state.utf8_pending):
             ban[self.atomic_mask_id_tensor] = True
 
-        # Check the compact active subset (only tokens containing characters in _SYNTAX_CHARS)
+        # Check the compact active subset (syntax tokens + ByteLevel partial UTF-8 byte tokens)
         for tid in self.active_ids:
-            if step_text(state, self.token_strings[tid], py_lt_312=py_lt_312, mask_count=mask_count) is None:
+            if self.step_token(state, tid, py_lt_312=py_lt_312, mask_count=mask_count) is None:
                 ban[tid] = True
 
         self._mask_cache[key] = ban
@@ -705,14 +791,19 @@ class StatementLogitsProcessor:
         active_scores = scores.index_select(0, row_idx_tensor)
         masked = active_scores.masked_fill(ban_batch, float("-inf"))
 
-        # Vectorized liveness guard (zero CUDA syncs): if lexical+mask constraints leave a row
-        # all -inf, fall back first to static+OOB bans only (preserving OOB mask protection),
-        # and only to raw scores if even that is all -inf.
-        all_inf = torch.isneginf(masked).all(dim=-1, keepdim=True)
+        # Vectorized liveness guard (zero CUDA syncs): checks isfinite (catching both -inf and
+        # NaN/+inf). If lexical+mask constraints leave no finite logit, fall back first to
+        # static+OOB bans only; if even that has no finite logit (e.g. all--inf or all-NaN input),
+        # fall back to finite zeros respecting static+OOB bans so output always has finite logits
+        # without releasing OOB mask protection.
+        no_finite_masked = (~torch.isfinite(masked)).all(dim=-1, keepdim=True)
         fallback = active_scores.masked_fill(fallback_ban_batch, float("-inf"))
-        fallback_all_inf = torch.isneginf(fallback).all(dim=-1, keepdim=True)
-        safe_fallback = torch.where(fallback_all_inf, active_scores, fallback)
-        final_active = torch.where(all_inf, safe_fallback, masked)
+        no_finite_fallback = (~torch.isfinite(fallback)).all(dim=-1, keepdim=True)
+        uniform_fallback = torch.zeros_like(active_scores).masked_fill(fallback_ban_batch, float("-inf"))
+        no_finite_uniform = (~torch.isfinite(uniform_fallback)).all(dim=-1, keepdim=True)
+        last_resort = torch.where(no_finite_uniform, torch.zeros_like(active_scores), uniform_fallback)
+        safe_fallback = torch.where(no_finite_fallback, last_resort, fallback)
+        final_active = torch.where(no_finite_masked, safe_fallback, masked)
 
         scores.index_copy_(0, row_idx_tensor, final_active)
         return scores

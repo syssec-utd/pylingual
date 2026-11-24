@@ -144,12 +144,18 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
+    ver_tuple = tuple(map(int, version.split(".")[:2]))
+    # Enforce Python < 3.12 PEP 701 f-string quote/backslash rules even when running on a newer host Python
+    if not check_statement_constraints(stripped, py_lt_312=(ver_tuple < (3, 12))):
+        return False
     # Substitute <mask_N> with valid identifier placeholders (handles names, expressions, and targets)
     unmasked = _CANONICAL_MASK_RE.sub(lambda m: f"_m{m.group(1)}", stripped)
     # Build minimal valid syntactic wrapper for single-line statement headers/clauses
     candidates = [unmasked]
     if stripped.endswith(":"):
-        if stripped.startswith(("elif ", "else:")):
+        if stripped == "try:":
+            candidates.append(f"{unmasked}\n    pass\nexcept Exception:\n    pass")
+        elif stripped.startswith(("elif ", "else:")):
             candidates.append(f"if _c:\n    pass\n{unmasked}\n    pass")
         elif stripped.startswith(("except", "finally:")):
             candidates.append(f"try:\n    pass\n{unmasked}\n    pass")
@@ -166,7 +172,6 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
     elif stripped.startswith("return") or stripped.startswith("yield"):
         candidates.append(f"def _f():\n    {unmasked}")
 
-    ver_tuple = tuple(map(int, version.split(".")[:2]))
     # Python's ast.parse rejects feature_version > host version; clamp to host minor if needed
     feat_ver = min(ver_tuple, (sys.version_info.major, sys.version_info.minor))
     for cand in candidates:
@@ -665,6 +670,103 @@ def evaluate_pools(
     return results
 
 
+def _pack_eval_gen_batches(
+    examples: list[EncodedExample],
+    *,
+    dec_len: int,
+    max_attention_cost: int,
+    max_batch_size: int,
+) -> list[list[EncodedExample]]:
+    """Pack generation-eval batches by ascending encoder length under the hard attention budget."""
+    ordered = sorted(examples, key=lambda ex: (len(ex.input_ids), ex.example_id))
+    batches: list[list[EncodedExample]] = []
+    cur: list[EncodedExample] = []
+    cur_e = 0
+    for ex in ordered:
+        e = len(ex.input_ids)
+        cand_n = len(cur) + 1
+        cand_e = max(cur_e, e)
+        if cur and (cand_n > max_batch_size or cand_n * _attention_cost(cand_e, dec_len) > max_attention_cost):
+            batches.append(cur)
+            cur = [ex]
+            cur_e = e
+        else:
+            cur.append(ex)
+            cur_e = cand_e
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _is_oom_error(exc: BaseException) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    if hasattr(torch.cuda, "OutOfMemoryError") and isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    if isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        return any(m in msg for m in ("out of memory", "cudnn_status_alloc_failed", "cuda error: out of memory"))
+    return False
+
+
+def _generate_chunk_with_backoff(
+    model: T5ForConditionalGeneration,
+    constraint_index: TokenizerConstraintIndex,
+    chunk: list[EncodedExample],
+    *,
+    pad_id: int,
+    device: torch.device,
+    max_length: int,
+    py_lt_312: bool,
+    amp_enabled: bool,
+) -> list[list[int]]:
+    """Run constrained generation on ``chunk``, halving batch size on OOM."""
+    max_in = max(len(ex.input_ids) for ex in chunk)
+    inp = torch.full((len(chunk), max_in), pad_id, dtype=torch.long, device=device)
+    attn = torch.zeros((len(chunk), max_in), dtype=torch.long, device=device)
+    for row, ex in enumerate(chunk):
+        inp[row, : len(ex.input_ids)] = torch.tensor(ex.input_ids, dtype=torch.long, device=device)
+        attn[row, : len(ex.input_ids)] = 1
+    mcs = [ex.mask_count for ex in chunk]
+
+    try:
+        with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
+            out = model.generate(
+                input_ids=inp,
+                attention_mask=attn,
+                max_length=max_length,
+                logits_processor=[StatementLogitsProcessor(constraint_index, mcs, py_lt_312=py_lt_312)],
+            )
+        return [r.tolist() for r in out]
+    except Exception as exc:
+        if not _is_oom_error(exc) or len(chunk) <= 1:
+            raise
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    mid = len(chunk) // 2
+    left = _generate_chunk_with_backoff(
+        model,
+        constraint_index,
+        chunk[:mid],
+        pad_id=pad_id,
+        device=device,
+        max_length=max_length,
+        py_lt_312=py_lt_312,
+        amp_enabled=amp_enabled,
+    )
+    right = _generate_chunk_with_backoff(
+        model,
+        constraint_index,
+        chunk[mid:],
+        pad_id=pad_id,
+        device=device,
+        max_length=max_length,
+        py_lt_312=py_lt_312,
+        amp_enabled=amp_enabled,
+    )
+    return left + right
+
+
 @torch.no_grad()
 def evaluate_generation(
     model: T5ForConditionalGeneration,
@@ -677,12 +779,15 @@ def evaluate_generation(
     max_length: int = 512,
     retry_max_length: int = 1024,
     batch_size: int = 16,
+    max_attention_cost: int = 5_200_000,
     use_bf16: bool = False,
 ) -> dict[str, Any]:
     """Evaluate actual constrained greedy generation on a fixed paired validation subset.
 
-    Measures natural EOS completion, constraint compliance, Python AST syntax parseability,
-    and exact gold match separately for short, enc_long, and tgt_long validation bins.
+    Packs both initial and cap-exhaustion retry passes within ``max_attention_cost`` with
+    OOM batch-halving backoff. Measures natural EOS completion, completed constraint compliance,
+    completed Python AST syntax parseability, and completed exact gold match separately for
+    short, enc_long, and tgt_long validation bins.
     """
     if max_samples <= 0:
         return {}
@@ -733,59 +838,74 @@ def evaluate_generation(
     try:
         for py_lt_312 in (True, False):
             subset = [ex for ex in sample if (tuple(map(int, ex.version.split(".")[:2])) < (3, 12)) == py_lt_312]
-            for start in range(0, len(subset), batch_size):
-                chunk = subset[start : start + batch_size]
-                max_in = max(len(ex.input_ids) for ex in chunk)
-                inp = torch.full((len(chunk), max_in), pad_id, dtype=torch.long, device=device)
-                attn = torch.zeros((len(chunk), max_in), dtype=torch.long, device=device)
-                for row, ex in enumerate(chunk):
-                    inp[row, : len(ex.input_ids)] = torch.tensor(ex.input_ids, dtype=torch.long, device=device)
-                    attn[row, : len(ex.input_ids)] = 1
-                mcs = [ex.mask_count for ex in chunk]
+            if not subset:
+                continue
+            rows_by_id: dict[int, list[int]] = {}
+            exhausted_examples: list[EncodedExample] = []
 
-                with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
-                    out = model.generate(
-                        input_ids=inp,
-                        attention_mask=attn,
-                        max_length=max_length,
-                        logits_processor=[StatementLogitsProcessor(constraint_index, mcs, py_lt_312=py_lt_312)],
-                    )
-                rows = [r.tolist() for r in out]
-
-                # Match CacheTranslator's cap-exhaustion retry at retry_max_length
-                if eos_id is not None and max_length < retry_max_length:
-                    exhausted = [idx for idx, r in enumerate(rows) if len(r) >= max_length and eos_id not in r[1:]]
-                    if exhausted:
-                        r_inp = inp[exhausted]
-                        r_attn = attn[exhausted]
-                        r_mcs = [mcs[idx] for idx in exhausted]
-                        with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp_enabled):
-                            r_out = model.generate(
-                                input_ids=r_inp,
-                                attention_mask=r_attn,
-                                max_length=retry_max_length,
-                                logits_processor=[StatementLogitsProcessor(constraint_index, r_mcs, py_lt_312=py_lt_312)],
-                            )
-                        for idx, rr in zip(exhausted, r_out):
-                            rows[idx] = rr.tolist()
-
+            for chunk in _pack_eval_gen_batches(
+                subset,
+                dec_len=max_length,
+                max_attention_cost=max_attention_cost,
+                max_batch_size=batch_size,
+            ):
+                rows = _generate_chunk_with_backoff(
+                    model,
+                    constraint_index,
+                    chunk,
+                    pad_id=pad_id,
+                    device=device,
+                    max_length=max_length,
+                    py_lt_312=py_lt_312,
+                    amp_enabled=amp_enabled,
+                )
                 for ex, toks in zip(chunk, rows):
-                    c = totals[ex.bin_name]
-                    c["n"] += 1
-                    has_eos = eos_id is None or eos_id in toks[1:]
-                    if has_eos:
-                        c["eos"] += 1
-                    decoded = tokenizer.decode(
-                        [t for t in toks if t not in excluded],
-                        skip_special_tokens=False,
-                        clean_up_tokenization_spaces=False,
+                    rows_by_id[ex.example_id] = toks
+                    if eos_id is not None and max_length < retry_max_length and len(toks) >= max_length and eos_id not in toks[1:]:
+                        exhausted_examples.append(ex)
+
+            # Match CacheTranslator's cap-exhaustion retry, repacked under the retry_max_length budget
+            if exhausted_examples:
+                for retry_chunk in _pack_eval_gen_batches(
+                    exhausted_examples,
+                    dec_len=retry_max_length,
+                    max_attention_cost=max_attention_cost,
+                    max_batch_size=batch_size,
+                ):
+                    retry_rows = _generate_chunk_with_backoff(
+                        model,
+                        constraint_index,
+                        retry_chunk,
+                        pad_id=pad_id,
+                        device=device,
+                        max_length=retry_max_length,
+                        py_lt_312=py_lt_312,
+                        amp_enabled=amp_enabled,
                     )
-                    if check_statement_constraints(decoded, py_lt_312=py_lt_312, mask_count=ex.mask_count):
-                        c["constraint_ok"] += 1
-                    if check_masked_statement_parses(decoded, ex.version):
-                        c["parse_ok"] += 1
-                    if ex.source_text and decoded.strip() == ex.source_text.strip():
-                        c["exact"] += 1
+                    for ex, r_toks in zip(retry_chunk, retry_rows):
+                        rows_by_id[ex.example_id] = r_toks
+
+            for ex in subset:
+                toks = rows_by_id[ex.example_id]
+                c = totals[ex.bin_name]
+                c["n"] += 1
+                has_eos = eos_id is None or eos_id in toks[1:]
+                if not has_eos:
+                    continue
+                c["eos"] += 1
+                decoded = tokenizer.decode(
+                    [t for t in toks if t not in excluded],
+                    skip_special_tokens=False,
+                    clean_up_tokenization_spaces=False,
+                )
+                if constraint_index.check_token_sequence(
+                    toks[1:], py_lt_312=py_lt_312, mask_count=ex.mask_count
+                ) and check_statement_constraints(decoded, py_lt_312=py_lt_312, mask_count=ex.mask_count):
+                    c["constraint_ok"] += 1
+                if check_masked_statement_parses(decoded, ex.version):
+                    c["parse_ok"] += 1
+                if ex.source_text and decoded.strip() == ex.source_text.strip():
+                    c["exact"] += 1
     finally:
         model.config.use_cache = prev_use_cache
         if was_training:
@@ -889,8 +1009,22 @@ def _seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _available_ram_gib() -> float | None:
+    """Return available Linux host RAM in GiB from /proc/meminfo, or None if unavailable."""
+    meminfo = Path("/proc/meminfo")
+    if not meminfo.exists():
+        return None
+    for line in meminfo.read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            parts = line.split()
+            if len(parts) >= 2:
+                return int(parts[1]) / (1024**2)
+    return None
+
+
 def _preflight_checks(work_dir: Path, args: argparse.Namespace) -> tuple[torch.device, bool]:
-    """Fail loudly before spending compute if CUDA, BF16, or disk headroom is missing."""
+    """Fail loudly before spending compute if CUDA, BF16, VRAM, RAM, disk, or Hub access is insufficient."""
+    free_vram_gib: float | None = None
     if args.cpu:
         device = torch.device("cpu")
         use_bf16 = False
@@ -901,6 +1035,19 @@ def _preflight_checks(work_dir: Path, args: argparse.Namespace) -> tuple[torch.d
         use_bf16 = not args.no_bf16
         if use_bf16 and not torch.cuda.is_bf16_supported():
             raise RuntimeError("BF16 requested on CUDA device that does not support bfloat16 (pass --no-bf16)")
+        free_vram, total_vram = torch.cuda.mem_get_info(device)
+        free_vram_gib = free_vram / (1024**3)
+        if args.min_free_vram_gib > 0 and free_vram_gib < args.min_free_vram_gib:
+            raise RuntimeError(
+                f"Insufficient free CUDA VRAM on {device}: {free_vram_gib:.2f} GiB free "
+                f"(total {total_vram / (1024**3):.2f} GiB) < required {args.min_free_vram_gib:.2f} GiB"
+            )
+
+    free_ram_gib = _available_ram_gib()
+    if args.min_free_ram_gib > 0 and free_ram_gib is not None and free_ram_gib < args.min_free_ram_gib:
+        raise RuntimeError(
+            f"Insufficient available host RAM: {free_ram_gib:.2f} GiB available < required {args.min_free_ram_gib:.2f} GiB"
+        )
 
     free_gib = shutil.disk_usage(work_dir).free / (1024**3)
     if args.min_free_gib > 0 and free_gib < args.min_free_gib:
@@ -910,6 +1057,19 @@ def _preflight_checks(work_dir: Path, args: argparse.Namespace) -> tuple[torch.d
     if args.hub_repo:
         # Validate Hub credentials and write permissions before spending GPU compute
         HfApi().create_repo(args.hub_repo, exist_ok=True, private=not args.public)
+    print(
+        json.dumps(
+            {
+                "event": "preflight_ok",
+                "device": str(device),
+                "bf16": use_bf16,
+                "free_disk_gib": round(free_gib, 2),
+                "free_ram_gib": round(free_ram_gib, 2) if free_ram_gib is not None else None,
+                "free_vram_gib": round(free_vram_gib, 2) if free_vram_gib is not None else None,
+            }
+        ),
+        flush=True,
+    )
     return device, use_bf16
 
 
@@ -943,6 +1103,14 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     latest_dir = work_dir / "latest_model"
     best_dir = work_dir / "best_model"
 
+    local_shard_meta = None
+    if args.local_shards:
+        local_shard_meta = []
+        for p_str in args.local_shards:
+            p = Path(p_str).resolve()
+            st = p.stat()
+            local_shard_meta.append({"path": str(p), "size": st.st_size, "mtime_ns": st.st_mtime_ns})
+
     config_fingerprint = {
         "base_model": args.base_model,
         "base_rev": args.base_rev,
@@ -950,6 +1118,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "tokenizer_rev": args.tokenizer_rev,
         "corpus_repo": args.corpus_repo,
         "corpus_rev": args.corpus_rev,
+        "local_shards": local_shard_meta,
         "max_shards": int(args.max_shards),
         "version_prefix": bool(args.version_prefix),
         "max_input_len": int(args.max_input_len),
@@ -1097,6 +1266,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             val_pools,
             device,
             max_samples=args.eval_gen_samples,
+            max_attention_cost=args.max_attention_cost,
             use_bf16=use_bf16,
         )
         print(json.dumps({"event": "eval", "step": 0, "val": val0, "gen": gen0}), flush=True)
@@ -1188,6 +1358,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 val_pools,
                 device,
                 max_samples=args.eval_gen_samples,
+                max_attention_cost=args.max_attention_cost,
                 use_bf16=use_bf16,
             )
             score = _selection_score(val)
@@ -1332,6 +1503,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--log-every", type=int, default=25)
     p.add_argument("--seed", type=int, default=20261123)
     p.add_argument("--min-free-gib", type=float, default=8.0, help="Minimum free disk GiB on work_dir before launch")
+    p.add_argument("--min-free-ram-gib", type=float, default=4.0, help="Minimum available host RAM GiB before launch (0 disables)")
+    p.add_argument("--min-free-vram-gib", type=float, default=16.0, help="Minimum free CUDA VRAM GiB before launch (0 disables)")
     p.add_argument("--resume", action="store_true", help="Resume from latest_model and trainer_state.pt in work_dir")
     p.add_argument("--gradient-checkpointing", action="store_true", default=True)
     p.add_argument("--no-gradient-checkpointing", dest="gradient_checkpointing", action="store_false")

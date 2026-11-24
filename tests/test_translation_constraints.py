@@ -183,18 +183,82 @@ def test_prefix_not_triggered_after_identifier():
     assert st2.stack == (("FSTR_LIT", "'"), ("FSTR_EXPR", True))
 
 
-def test_template_string_abstains_cleanly():
+def test_template_string_enforces_fstring_brace_rules():
     assert check_statement_constraints("x = t'hello {name}'", py_lt_312=False)
+    assert check_statement_constraints('x = t"{"a"}"', py_lt_312=False)
+    assert not check_statement_constraints('x = t"{name"', py_lt_312=False)
+    assert not check_statement_constraints('x = t"a}b"', py_lt_312=False)
 
 
-def test_utf8_byte_bpe_pieces_not_banned():
-    # Simulate a byte-BPE tokenizer where individual byte pieces decode to U+FFFD in isolation
-    tok, ids = _make_bpe_like_tokenizer(["\ufffd", "é", "😀"])
+def test_real_bytelevel_split_utf8_enforced():
+    # Real ByteLevel BPE tokenizer where 'é' splits into two byte tokens: 'Ã' (0xC3) + '©' (0xA9)
+    from tokenizers import decoders as token_decoders
+
+    from pylingual.translation_constraints import _BYTELEVEL_U2B
+
+    b2u = {b: ch for ch, b in _BYTELEVEL_U2B.items()}
+    vocab_tokens = [
+        "<pad>",
+        "<s>",
+        "</s>",
+        "<unk>",
+        "<mask>",
+        "x",
+        "=",
+        "'",
+        "<mask_0>",
+        "Ã",  # 0xC3 lead byte for 'é'
+        "©",  # 0xA9 continuation byte for 'é'
+        "í",  # 0xED lead byte
+        b2u[0xA0],  # 0xA0 (0xED 0xA0 is a dead-end surrogate UTF-8 prefix)
+    ]
+    vocab = {t: i for i, t in enumerate(vocab_tokens)}
+    backend = Tokenizer(token_models.WordLevel(vocab, unk_token="<unk>"))
+    backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    backend.decoder = token_decoders.ByteLevel()
+    tok = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        pad_token="<pad>",
+        bos_token="<s>",
+        eos_token="</s>",
+        unk_token="<unk>",
+        mask_token="<mask>",
+    )
     index = TokenizerConstraintIndex(tok)
-    assert not bool(index.static_ban[ids["\ufffd"]])
-    assert not bool(index.static_ban[ids["é"]])
-    assert not bool(index.static_ban[ids["😀"]])
-    assert index.check_token_sequence([ids["x"], ids["="], ids["'"], ids["\ufffd"], ids["'"], ids["</s>"]])
+    lead_id = vocab["Ã"]
+    cont_id = vocab["©"]
+    ed_id = vocab["í"]
+    a0_id = vocab[b2u[0xA0]]
+    eos_id = vocab["</s>"]
+
+    assert lead_id in index.partial_utf8_bytes and index.partial_utf8_bytes[lead_id] == b"\xc3"
+    assert cont_id in index.partial_utf8_bytes and index.partial_utf8_bytes[cont_id] == b"\xa9"
+
+    # Complete split UTF-8 pair 'é' inside quotes passes
+    assert index.check_token_sequence([vocab["x"], vocab["="], vocab["'"], lead_id, cont_id, vocab["'"], eos_id])
+    # Dangling lead byte or lone continuation byte fails
+    assert not index.check_token_sequence([lead_id, eos_id])
+    assert not index.check_token_sequence([cont_id, eos_id])
+    assert not index.check_token_sequence([vocab["'"], lead_id, vocab["'"], eos_id])
+    # Dead-end surrogate 2-byte prefix 0xED 0xA0 rejected immediately
+    assert not index.check_token_sequence([ed_id, a0_id, cont_id, eos_id])
+
+    # LogitsProcessor forbids lone continuation at root, and forbids EOS/ASCII/masks mid-UTF-8
+    proc = StatementLogitsProcessor(index, mask_counts=[1], py_lt_312=False)
+    scores = torch.zeros((1, len(tok)), dtype=torch.float32)
+    out0 = proc(torch.tensor([[0]], dtype=torch.long), scores.clone())
+    assert torch.isfinite(out0[0, lead_id])
+    assert torch.isneginf(out0[0, cont_id])
+
+    out1 = proc(torch.tensor([[0, lead_id]], dtype=torch.long), scores.clone())
+    assert torch.isfinite(out1[0, cont_id])
+    assert torch.isneginf(out1[0, eos_id])
+    assert torch.isneginf(out1[0, vocab["x"]])
+    assert torch.isneginf(out1[0, vocab["<mask_0>"]])
+    assert torch.isneginf(out1[0, lead_id])
+
+    out2 = proc(torch.tensor([[0, lead_id, cont_id]], dtype=torch.long), scores.clone())
+    assert torch.isfinite(out2[0, eos_id])
 
 
 def test_cache_key_soundness_for_deep_stacks_and_inline_masks():
@@ -306,6 +370,24 @@ def test_logits_processor_liveness_fallback_preserves_oob_mask_ban():
     # Fallback releases lexical ban on ')' for liveness, while keeping OOB '<mask_2>' banned
     assert torch.isfinite(out[0, ids[")"]])
     assert torch.isneginf(out[0, ids["<mask_2>"]])
+
+    # All--inf and all-NaN inputs must also produce finite logits while keeping OOB '<mask_2>' banned
+    all_neginf = torch.full((1, len(tok)), float("-inf"), dtype=torch.float32)
+    out_inf = proc(torch.tensor([[0]], dtype=torch.long), all_neginf)
+    assert torch.isfinite(out_inf[0]).any()
+    assert torch.isneginf(out_inf[0, ids["<mask_2>"]])
+
+    all_nan = torch.full((1, len(tok)), float("nan"), dtype=torch.float32)
+    out_nan = proc(torch.tensor([[0]], dtype=torch.long), all_nan)
+    assert torch.isfinite(out_nan[0]).any()
+    assert torch.isneginf(out_nan[0, ids["<mask_2>"]])
+
+    # Only OOB '<mask_2>' finite: fallback still keeps OOB banned and falls back to finite valid tokens
+    oob_only = torch.full((1, len(tok)), float("-inf"), dtype=torch.float32)
+    oob_only[0, ids["<mask_2>"]] = 3.0
+    out_oob = proc(torch.tensor([[0]], dtype=torch.long), oob_only)
+    assert torch.isfinite(out_oob[0]).any()
+    assert torch.isneginf(out_oob[0, ids["<mask_2>"]])
 
 
 def test_logits_processor_forbids_eos_when_unclosed_and_tracks_beams():

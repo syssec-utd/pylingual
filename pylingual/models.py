@@ -181,6 +181,23 @@ class CacheTranslator:
         eos_id = self.tokenizer.eos_token_id
         return eos_id is None or eos_id in token_ids[1:]
 
+    def _is_valid_completed(
+        self,
+        token_ids: list[int],
+        *,
+        mask_count: int,
+        version: PythonVersion | tuple[int, int] | str | None,
+    ) -> bool:
+        if not self._has_natural_eos(token_ids):
+            return False
+        if self.use_constraints and self.constraint_index is not None:
+            return self.constraint_index.check_token_sequence(
+                token_ids[1:],
+                py_lt_312=self._is_pre312(version),
+                mask_count=mask_count,
+            )
+        return True
+
     def _translate_and_decode_with_status(
         self,
         batch: list[str],
@@ -190,14 +207,18 @@ class CacheTranslator:
     ) -> list[tuple[str, bool]]:
         """Translate a single batch, retrying cap-exhausted rows once at retry_max_length.
 
-        Returns ``(decoded_text, cacheable)`` pairs; outputs that still lack natural EOS after
-        retrying at ``retry_max_length`` are marked non-cacheable so truncated outputs are never persisted.
+        Returns ``(decoded_text, cacheable)`` pairs; outputs that lack natural EOS or fail
+        token-level constraint validation (e.g. via liveness fallback) are marked non-cacheable.
         """
         eff_max_len = max_length if max_length is not None else self.max_length
+        mask_counts = [_mask_count(text) for text in batch]
         output = self._generate_batch(batch, version=version, max_length=eff_max_len, num_beams=1)
         token_rows = [row.tolist() for row in output]
         decoded_results = [self._decode_sequence(toks) for toks in token_rows]
-        cacheable = [self._has_natural_eos(toks) for toks in token_rows]
+        cacheable = [
+            self._is_valid_completed(toks, mask_count=mc, version=version)
+            for toks, mc in zip(token_rows, mask_counts)
+        ]
 
         # Retry only rows that exhausted max_length without natural EOS (never force-closing mid-expression)
         eos_id = self.tokenizer.eos_token_id
@@ -209,7 +230,7 @@ class CacheTranslator:
                 for idx, retry_row in zip(exhausted, retry_output):
                     retry_toks = retry_row.tolist()
                     decoded_results[idx] = self._decode_sequence(retry_toks)
-                    cacheable[idx] = self._has_natural_eos(retry_toks)
+                    cacheable[idx] = self._is_valid_completed(retry_toks, mask_count=mask_counts[idx], version=version)
 
         return list(zip(decoded_results, cacheable))
 
@@ -281,12 +302,13 @@ class CacheTranslator:
 
         candidates_per_req: list[list[str]] = []
         rows_per_req = max(1, output.shape[0] // len(args))
+        mask_counts = [_mask_count(norm) for norm in norm_texts]
         for idx, (_, order) in enumerate(normalized_args):
             seen: set[str] = set()
             cands: list[str] = []
             for b in range(rows_per_req):
                 row_toks = output[idx * rows_per_req + b].tolist()
-                if not self._has_natural_eos(row_toks):
+                if not self._is_valid_completed(row_toks, mask_count=mask_counts[idx], version=version):
                     continue
                 decoded = self._decode_sequence(row_toks)
                 restored = restore_masks(decoded, order)
