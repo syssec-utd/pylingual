@@ -163,12 +163,16 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
     if not check_statement_constraints(stripped, py_lt_312=(ver_tuple < (3, 12))):
         return False
     # Substitute <mask_N> with valid identifier placeholders first; also allow literal '1'
-    # fallback for syntactic positions that require literals (e.g. match/case mapping keys
-    # like `case {<mask_0>: <mask_1>}:` or negative/complex numeric patterns).
+    # fallback and mixed literal-key/identifier substitution for match/case patterns
+    # (e.g. `case {<mask_0>: <mask_1>} as <mask_2>:` or `case <mask_0>({<mask_1>: <mask_2>}):`).
     unmasked_variants = [
         _CANONICAL_MASK_RE.sub(lambda m: f"_m{m.group(1)}", stripped),
         _CANONICAL_MASK_RE.sub("1", stripped),
     ]
+    if stripped.startswith("case "):
+        mixed = re.sub(r"<mask_(?:0|[1-9][0-9]*)>(?=\s*:(?!\s*$))", "1", stripped, flags=re.ASCII)
+        mixed = re.sub(r"(?<=-)<mask_(?:0|[1-9][0-9]*)>", "1", mixed, flags=re.ASCII)
+        unmasked_variants.append(_CANONICAL_MASK_RE.sub(lambda m: f"_m{m.group(1)}", mixed))
     # Build minimal valid syntactic wrappers for single-line statement headers/clauses
     candidates: list[str] = []
     for unmasked in unmasked_variants:
@@ -793,7 +797,7 @@ def _generate_chunk_with_backoff(
                 max_length=max_length,
                 logits_processor=[StatementLogitsProcessor(constraint_index, mcs, py_lt_312=py_lt_312)],
             )
-        return [r.tolist() for r in out]
+        return out.tolist()
     except Exception as exc:
         if not _is_oom_error(exc) or len(chunk) <= 1:
             raise
@@ -1527,11 +1531,15 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     # Final upload retry if the best checkpoint failed an earlier Hub upload
     if args.hub_repo and best_saved and best_uploaded_step != best_step and best_dir.exists():
-        if upload_bundle_resilient(
+        best_meta_path = best_dir / "pylingual_training_meta.json"
+        upload_step = best_step
+        if best_meta_path.exists():
+            upload_step = json.loads(best_meta_path.read_text()).get("step", best_step)
+        if upload_step == best_step and upload_bundle_resilient(
             best_dir,
             args.hub_repo,
             public=args.public,
-            commit_message=f"Final upload of best checkpoint from step {best_step}",
+            commit_message=f"Final upload of best checkpoint from step {upload_step}",
         ):
             best_uploaded_step = best_step
 

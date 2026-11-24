@@ -230,6 +230,8 @@ def test_check_masked_statement_parses():
     assert check_masked_statement_parses("elif <mask_0>:", "3.11")
     assert check_masked_statement_parses("match <mask_0>:", "3.11")
     assert check_masked_statement_parses("case {<mask_0>: <mask_1>}:", "3.11")
+    assert check_masked_statement_parses("case {<mask_0>: <mask_1>} as <mask_2>:", "3.11")
+    assert check_masked_statement_parses("case <mask_0>({<mask_1>: <mask_2>}):", "3.11")
     assert check_masked_statement_parses("case -<mask_0>:", "3.11")
     assert check_masked_statement_parses("@<mask_0>", "3.11")
     assert not check_masked_statement_parses("x = (<mask_0>", "3.11")

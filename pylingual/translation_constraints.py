@@ -169,6 +169,10 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             if py_lt_312 and _any_fstr_expr(stack):
                 return None
             return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial, has_content=True)
+        # On Python < 3.12, an outer 1-char f-string delimiter lexically terminates the f-string
+        # even when it appears inside an opposite-quoted inner string (e.g. f'{"'"}').
+        if py_lt_312 and _any_fstr_expr(stack) and ch in _forbidden_pre312_quotes(stack):
+            return None
         if len(quote) == 1:
             if ch == quote:
                 # Could be empty '' followed by a 3rd quote -> triple-quoted string
@@ -207,6 +211,8 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             if py_lt_312 and _any_fstr_expr(stack):
                 return None
             return state._replace(in_escape=True, triple_close=0, mask_partial=mask_partial, has_content=True)
+        if py_lt_312 and _any_fstr_expr(stack) and ch in _forbidden_pre312_quotes(stack[:-1]):
+            return None
         if ch == "{":
             return LexState(
                 stack=stack + (("FSTR_EXPR", True),),

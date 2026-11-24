@@ -151,12 +151,16 @@ def test_fstring_escape_format_spec_and_pre312_rules():
         "f\"{f'\\n'}\"",
         "f\"{f'{1:\\n}'}\"",
         "f\"{1:{'\\\\'}}\"",
+        "f'{\"'\"}'",
+        'f"{\'"\'}"',
     ]
     for s in invalid_311:
         assert not check_statement_constraints(s, py_lt_312=True), f"should reject on <3.12: {s}"
 
     # Allowed on >= 3.12 (PEP 701)
     assert check_statement_constraints("x = f'{d['k']}'", py_lt_312=False)
+    assert check_statement_constraints("f'{\"'\"}'", py_lt_312=False)
+    assert check_statement_constraints("f'''{\"'\" }'''", py_lt_312=True)
     assert check_statement_constraints("x = f'{d[\"\\n\"]}'", py_lt_312=False)
     assert check_statement_constraints("f\"{f'\\n'}\"", py_lt_312=False)
 
