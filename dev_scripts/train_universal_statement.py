@@ -1146,6 +1146,11 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     hf_cache_dir = work_dir / "hf_cache"
     hf_cache_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve the default HuggingFace token path before redirecting HF_HOME into work_dir
+    if "HF_TOKEN" not in os.environ and "HF_TOKEN_PATH" not in os.environ:
+        orig_token_path = getattr(hf_constants, "HF_TOKEN_PATH", None)
+        if orig_token_path:
+            os.environ["HF_TOKEN_PATH"] = str(orig_token_path)
     os.environ["HF_HOME"] = str(hf_cache_dir)
     os.environ["HF_HUB_CACHE"] = str(hf_cache_dir / "hub")
     os.environ["HF_XET_CACHE"] = str(hf_cache_dir / "xet")
