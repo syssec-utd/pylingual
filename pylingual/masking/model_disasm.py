@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 from pylingual.masking.ast_masker import RewriteMasks, custom_unparse
 from pylingual.masking.global_masker import Masker
 
-mask_regex = re.compile(r"(?<=<mask_)\d+(?=>)")
+mask_regex = re.compile(r"(?<=<mask_)(?:0|[1-9][0-9]*)(?=>)", re.ASCII)
 # Full-token form used when rewriting model output back into the global mask namespace
-mask_token_regex = re.compile(r"<mask_(\d+)>")
+mask_token_regex = re.compile(r"<mask_(0|[1-9][0-9]*)>", re.ASCII)
 # Sentinels for masks the model invented that were never in the bytecode; they can never
 # collide with a global_tab key because a mask token always carries a leading "<mask_".
 OOB_MASK_PREFIX = "<oob_mask_"

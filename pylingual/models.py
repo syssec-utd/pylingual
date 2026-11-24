@@ -214,11 +214,12 @@ class CacheTranslator:
         eff_max_len = max_length if max_length is not None else self.max_length
         mask_counts = [_mask_count(text) for text in batch]
         output = self._generate_batch(batch, version=version, max_length=eff_max_len, num_beams=1)
-        token_rows = [row.tolist() for row in output]
+        token_rows = output.tolist()
         decoded_results = [self._decode_sequence(toks) for toks in token_rows]
         cacheable = [
             self._is_valid_completed(toks, mask_count=mc, version=version)
-            for toks, mc in zip(token_rows, mask_counts)
+            and not has_oob_masks(restore_masks(decoded, [str(i) for i in range(mc)]))
+            for toks, decoded, mc in zip(token_rows, decoded_results, mask_counts)
         ]
 
         # Retry only rows that exhausted max_length without natural EOS (never force-closing mid-expression)
@@ -228,10 +229,13 @@ class CacheTranslator:
             if exhausted:
                 retry_batch = [batch[idx] for idx in exhausted]
                 retry_output = self._generate_batch(retry_batch, version=version, max_length=self.retry_max_length, num_beams=1)
-                for idx, retry_row in zip(exhausted, retry_output):
-                    retry_toks = retry_row.tolist()
-                    decoded_results[idx] = self._decode_sequence(retry_toks)
-                    cacheable[idx] = self._is_valid_completed(retry_toks, mask_count=mask_counts[idx], version=version)
+                for idx, retry_toks in zip(exhausted, retry_output.tolist()):
+                    decoded = self._decode_sequence(retry_toks)
+                    decoded_results[idx] = decoded
+                    mc = mask_counts[idx]
+                    cacheable[idx] = self._is_valid_completed(
+                        retry_toks, mask_count=mc, version=version
+                    ) and not has_oob_masks(restore_masks(decoded, [str(i) for i in range(mc)]))
 
         return list(zip(decoded_results, cacheable))
 
@@ -302,13 +306,14 @@ class CacheTranslator:
             return [[] for _ in args]
 
         candidates_per_req: list[list[str]] = []
-        rows_per_req = max(1, output.shape[0] // len(args))
+        output_rows = output.tolist()
+        rows_per_req = max(1, len(output_rows) // len(args))
         mask_counts = [_mask_count(norm) for norm in norm_texts]
         for idx, (_, order) in enumerate(normalized_args):
             seen: set[str] = set()
             cands: list[str] = []
             for b in range(rows_per_req):
-                row_toks = output[idx * rows_per_req + b].tolist()
+                row_toks = output_rows[idx * rows_per_req + b]
                 if not self._is_valid_completed(row_toks, mask_count=mask_counts[idx], version=version):
                     continue
                 decoded = self._decode_sequence(row_toks)

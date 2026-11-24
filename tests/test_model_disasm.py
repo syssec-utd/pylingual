@@ -147,6 +147,9 @@ def test_out_of_bounds_mask_never_matches_an_unrelated_global_mask():
     # the sentinel must survive unconditionally, while a real <mask_5> still restores its value
     assert restore_masked_source_text([restored], masker) == ["value = <oob_mask_5>"]
     assert restore_masked_source_text(["value = <mask_5>"], masker) == ["value = 999"]
+    # non-ASCII Unicode digits (e.g. Arabic-Indic '٢') are not canonical masks and must stay literal
+    assert restore_masks("x = <mask_\u0662>", ["0"]) == "x = <mask_\u0662>"
+    assert not has_oob_masks(restore_masks("x = <mask_\u0662>", ["0"]))
 
 
 def test_restore_masked_source_text_skips_code_objects():
