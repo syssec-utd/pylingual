@@ -131,6 +131,8 @@ def test_version_prefix_and_pre312_cache_key_isolation():
 
     tr_vp = CacheTranslator(model, tok, cache_namespace="stmt@rev", use_version_prefix=True)
     assert tr_vp._format_encoder_input("LOAD_CONST <mask_0>", PythonVersion((3, 11))).startswith("v3.11 <SEP> <opcode:LOAD_CONST>")
+    assert tr_vp._format_encoder_input("LOAD_CONST <mask_0>", "3.11.5") == tr_vp._format_encoder_input("LOAD_CONST <mask_0>", "3.11")
+    assert tr_vp._cache_key("LOAD_CONST <mask_0>", "3.11.5") == tr_vp._cache_key("LOAD_CONST <mask_0>", "3.11")
     assert tr_vp._cache_key("LOAD_CONST <mask_0>", PythonVersion((3, 11))) != tr_vp._cache_key("LOAD_CONST <mask_0>", PythonVersion((3, 12)))
     with pytest.raises(ValueError, match="version is required"):
         tr_vp._format_encoder_input("LOAD_CONST <mask_0>", None)
@@ -173,6 +175,15 @@ def test_decompiler_suspect_mapping_uses_source_idx_for_duplicates_and_sanitized
     assert d._suspect_statement_indices(0, SourceLine("pass", 0, fake_co, source_idx=2)) == [2, 1]
     # Sanitized 'elif x:' rendered as 'if x:' still maps cleanly via source_idx=1
     assert d._suspect_statement_indices(0, SourceLine("if x:", 0, fake_co, source_idx=1)) == [1, 0]
+    # Duplicate synthetic lines (source_idx=None) resolve via error_lno rather than first match
+    rendered = [
+        SourceLine("pass", 0, fake_co, source_idx=0),
+        SourceLine("pass", 0, fake_co, source_idx=None),
+        SourceLine("elif x:", 0, fake_co, source_idx=1),
+        SourceLine("pass", 0, fake_co, source_idx=None),
+    ]
+    d.source_context = SimpleNamespace(source_lines=lambda: rendered)
+    assert d._suspect_statement_indices(0, rendered[3], error_lno=4) == [1, 0]
 
 
 def test_decompiler_beam_retry_rolls_back_inst_source_line_and_handles_exception():

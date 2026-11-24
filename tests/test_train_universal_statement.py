@@ -229,6 +229,8 @@ def test_check_masked_statement_parses():
     assert check_masked_statement_parses("try:", "3.11")
     assert check_masked_statement_parses("elif <mask_0>:", "3.11")
     assert check_masked_statement_parses("match <mask_0>:", "3.11")
+    assert check_masked_statement_parses("case {<mask_0>: <mask_1>}:", "3.11")
+    assert check_masked_statement_parses("case -<mask_0>:", "3.11")
     assert check_masked_statement_parses("@<mask_0>", "3.11")
     assert not check_masked_statement_parses("x = (<mask_0>", "3.11")
     # Pre-3.12 f-string quote reuse must fail for 3.11 even when host Python is >= 3.12
@@ -309,6 +311,38 @@ def test_evaluate_generation_budgets_attention_backs_off_and_requires_eos():
     assert res["enc_long"]["constraint_rate"] == 0.0
     assert res["enc_long"]["parse_rate"] == 0.0
     assert res["enc_long"]["exact_match"] == 0.0
+
+    # Lowered attention budget (4_000_000): singleton retry cap must shrink to <= 725 so cost never exceeds budget
+    recorded_shapes.clear()
+    evaluate_generation(
+        _RecordingModel(),
+        tok,
+        index,
+        {"short": [], "enc_long": long_examples[:1], "tgt_long": []},
+        torch.device("cpu"),
+        max_samples=1,
+        max_length=512,
+        retry_max_length=1024,
+        batch_size=16,
+        max_attention_cost=4_000_000,
+    )
+    for b, e, ml in recorded_shapes:
+        assert b * (e * e + ml * ml + e * ml) <= 4_000_000
+    assert any(ml == 725 for _, _, ml in recorded_shapes)
+
+    # Budget too small even for encoder alone must fail loudly
+    with pytest.raises(ValueError, match="exceeds max_attention_cost"):
+        evaluate_generation(
+            _RecordingModel(),
+            tok,
+            index,
+            {"short": [], "enc_long": long_examples[:1], "tgt_long": []},
+            torch.device("cpu"),
+            max_samples=1,
+            max_length=512,
+            retry_max_length=1024,
+            max_attention_cost=2_000_000,
+        )
 
 
 def test_preflight_checks_fail_loudly(tmp_path, monkeypatch):
@@ -441,9 +475,15 @@ def test_train_and_exact_resume_equivalence(tmp_path):
         assert n1 == n2
         assert torch.allclose(p1, p2, atol=1e-6), f"Weight drift on resume for {n1}"
 
-    # 3. Resume must reject config mismatch (including local shard change) and step mismatch
-    with pytest.raises(ValueError, match="Resume config mismatch"):
-        train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume", "--max-attention-cost", "1234567"]))
+    # 3. Resume must reject trajectory-changing config mismatches (including local shard, token budget, grad clip)
+    for extra in (
+        ["--max-attention-cost", "1234567"],
+        ["--target-tokens-per-step", "16"],
+        ["--grad-clip", "0.5"],
+        ["--weight-decay", "0.05"],
+    ):
+        with pytest.raises(ValueError, match="Resume config mismatch"):
+            train(build_arg_parser().parse_args(_base_args(resumed_dir) + ["--resume"] + extra))
 
     other_shard = tmp_path / "other_shard.parquet"
     pq.write_table(pa.Table.from_pylist(rows), other_shard)

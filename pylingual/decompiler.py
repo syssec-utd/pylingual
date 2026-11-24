@@ -432,7 +432,7 @@ class Decompiler:
         codeobj = self.ordered_bytecodes[i].codeobj
         return next((r for r in results if isinstance(r, TestResult) and r.bc_a is not None and r.bc_a.codeobj == codeobj), None)
 
-    def _suspect_statement_indices(self, i: int, src_line: SourceLine) -> list[int]:
+    def _suspect_statement_indices(self, i: int, src_line: SourceLine, *, error_lno: int | None = None) -> list[int]:
         """Map a compile-error SourceLine back to up to two suspect statement positions in code object i."""
         if i >= len(self.translation_results) or not self.translation_results[i]:
             return []
@@ -448,10 +448,15 @@ class Decompiler:
         # Synthetic line (e.g. inserted 'pass'): check nearest preceding line with provenance for this code object
         if hasattr(self.source_context, "source_lines"):
             all_rendered = self.source_context.source_lines()
-            try:
-                rendered_idx = all_rendered.index(src_line)
-            except ValueError:
-                rendered_idx = -1
+            rendered_idx = -1
+            if error_lno is not None and all_rendered:
+                ends = itertools.accumulate(x.line.count("\n") + 1 for x in all_rendered)
+                rendered_idx = next((idx for idx, end in enumerate(ends) if end >= error_lno), len(all_rendered) - 1)
+            else:
+                try:
+                    rendered_idx = all_rendered.index(src_line)
+                except ValueError:
+                    rendered_idx = -1
             for prev in reversed(all_rendered[: max(0, rendered_idx)]):
                 if prev.blame == src_line.blame and prev.source_idx is not None:
                     pos = prev.source_idx - offset
@@ -478,7 +483,7 @@ class Decompiler:
             return False
         if isinstance(self.source_context.cfts[self.ordered_bytecodes[i].codeobj], MetaTemplate):
             return False
-        suspects = self._suspect_statement_indices(i, src_line)
+        suspects = self._suspect_statement_indices(i, src_line, error_lno=error_lno)
         if not suspects:
             return False
 

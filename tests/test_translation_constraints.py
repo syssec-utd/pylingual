@@ -188,6 +188,10 @@ def test_template_string_enforces_fstring_brace_rules():
     assert check_statement_constraints('x = t"{"a"}"', py_lt_312=False)
     assert not check_statement_constraints('x = t"{name"', py_lt_312=False)
     assert not check_statement_constraints('x = t"a}b"', py_lt_312=False)
+    # Doubly nested format spec rejects unescaped quote of nearest enclosing FSTR_LIT on 3.12+
+    assert not check_statement_constraints('f"{1:{2:"}}"', py_lt_312=False)
+    assert check_statement_constraints('f"{1:{2:\\"}}"', py_lt_312=False)
+    assert check_statement_constraints("f\"{1:{f'{2:\"}'}}\"", py_lt_312=False)
 
 
 def test_real_bytelevel_split_utf8_enforced():

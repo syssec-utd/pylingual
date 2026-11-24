@@ -124,7 +124,8 @@ class CacheTranslator:
             return None
         if isinstance(version, tuple):
             return f"{version[0]}.{version[1]}"
-        return str(version)
+        parts = str(version).split(".")
+        return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else str(version)
 
     def _format_encoder_input(self, normalized_bytecode: str, version: PythonVersion | tuple[int, int] | str | None = None) -> str:
         encoded = encode_opcodes(normalized_bytecode)

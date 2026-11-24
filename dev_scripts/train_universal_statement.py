@@ -16,6 +16,7 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 import argparse
 import ast
+import gc
 import hashlib
 import heapq
 import json
@@ -32,7 +33,7 @@ from typing import Any, Iterator
 
 import pyarrow.parquet as pq
 import torch
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi, constants as hf_constants, hf_hub_download
 from transformers import PreTrainedTokenizerFast, T5ForConditionalGeneration
 
 from pylingual.masking.model_disasm import encode_opcodes
@@ -148,29 +149,36 @@ def check_masked_statement_parses(text: str, version: str) -> bool:
     # Enforce Python < 3.12 PEP 701 f-string quote/backslash rules even when running on a newer host Python
     if not check_statement_constraints(stripped, py_lt_312=(ver_tuple < (3, 12))):
         return False
-    # Substitute <mask_N> with valid identifier placeholders (handles names, expressions, and targets)
-    unmasked = _CANONICAL_MASK_RE.sub(lambda m: f"_m{m.group(1)}", stripped)
-    # Build minimal valid syntactic wrapper for single-line statement headers/clauses
-    candidates = [unmasked]
-    if stripped.endswith(":"):
-        if stripped == "try:":
-            candidates.append(f"{unmasked}\n    pass\nexcept Exception:\n    pass")
-        elif stripped.startswith(("elif ", "else:")):
-            candidates.append(f"if _c:\n    pass\n{unmasked}\n    pass")
-        elif stripped.startswith(("except", "finally:")):
-            candidates.append(f"try:\n    pass\n{unmasked}\n    pass")
-        elif stripped.startswith("case "):
-            candidates.append(f"match _c:\n    {unmasked}\n        pass")
-        elif stripped.startswith("match "):
-            candidates.append(f"{unmasked}\n    case _:\n        pass")
-        elif any(stripped.startswith(p) for p in _BLOCK_STARTERS):
-            candidates.append(f"{unmasked}\n    pass")
-    elif stripped.startswith("@"):
-        candidates.append(f"{unmasked}\ndef _f():\n    pass")
-    elif stripped in ("break", "continue"):
-        candidates.append(f"while True:\n    {unmasked}")
-    elif stripped.startswith("return") or stripped.startswith("yield"):
-        candidates.append(f"def _f():\n    {unmasked}")
+    # Substitute <mask_N> with valid identifier placeholders first; also allow literal '1'
+    # fallback for syntactic positions that require literals (e.g. match/case mapping keys
+    # like `case {<mask_0>: <mask_1>}:` or negative/complex numeric patterns).
+    unmasked_variants = [
+        _CANONICAL_MASK_RE.sub(lambda m: f"_m{m.group(1)}", stripped),
+        _CANONICAL_MASK_RE.sub("1", stripped),
+    ]
+    # Build minimal valid syntactic wrappers for single-line statement headers/clauses
+    candidates: list[str] = []
+    for unmasked in unmasked_variants:
+        candidates.append(unmasked)
+        if stripped.endswith(":"):
+            if stripped == "try:":
+                candidates.append(f"{unmasked}\n    pass\nexcept Exception:\n    pass")
+            elif stripped.startswith(("elif ", "else:")):
+                candidates.append(f"if _c:\n    pass\n{unmasked}\n    pass")
+            elif stripped.startswith(("except", "finally:")):
+                candidates.append(f"try:\n    pass\n{unmasked}\n    pass")
+            elif stripped.startswith("case "):
+                candidates.append(f"match _c:\n    {unmasked}\n        pass")
+            elif stripped.startswith("match "):
+                candidates.append(f"{unmasked}\n    case _:\n        pass")
+            elif any(stripped.startswith(p) for p in _BLOCK_STARTERS):
+                candidates.append(f"{unmasked}\n    pass")
+        elif stripped.startswith("@"):
+            candidates.append(f"{unmasked}\ndef _f():\n    pass")
+        elif stripped in ("break", "continue"):
+            candidates.append(f"while True:\n    {unmasked}")
+        elif stripped.startswith("return") or stripped.startswith("yield"):
+            candidates.append(f"def _f():\n    {unmasked}")
 
     # Python's ast.parse rejects feature_version > host version; clamp to host minor if needed
     feat_ver = min(ver_tuple, (sys.version_info.major, sys.version_info.minor))
@@ -670,31 +678,58 @@ def evaluate_pools(
     return results
 
 
+def _max_safe_dec_len(enc_len: int, requested_dec_len: int, max_attention_cost: int) -> int:
+    """Return the largest decoder length <= requested_dec_len fitting max_attention_cost for enc_len."""
+    if _attention_cost(enc_len, requested_dec_len) <= max_attention_cost:
+        return requested_dec_len
+    if _attention_cost(enc_len, 1) > max_attention_cost:
+        raise ValueError(
+            f"Generation eval example (enc={enc_len}) exceeds max_attention_cost={max_attention_cost}"
+        )
+    disc = 4 * max_attention_cost - 3 * enc_len * enc_len
+    d = min(requested_dec_len, max(1, (math.isqrt(disc) - enc_len) // 2))
+    while d > 1 and _attention_cost(enc_len, d) > max_attention_cost:
+        d -= 1
+    return d
+
+
 def _pack_eval_gen_batches(
     examples: list[EncodedExample],
     *,
     dec_len: int,
     max_attention_cost: int,
     max_batch_size: int,
-) -> list[list[EncodedExample]]:
-    """Pack generation-eval batches by ascending encoder length under the hard attention budget."""
+) -> list[tuple[list[EncodedExample], int]]:
+    """Pack generation-eval batches strictly under the hard attention budget (including singletons).
+
+    Returns ``(chunk, eff_dec_len)`` pairs guaranteeing
+    ``len(chunk) * _attention_cost(max_enc, eff_dec_len) <= max_attention_cost``.
+    """
     ordered = sorted(examples, key=lambda ex: (len(ex.input_ids), ex.example_id))
-    batches: list[list[EncodedExample]] = []
+    batches: list[tuple[list[EncodedExample], int]] = []
     cur: list[EncodedExample] = []
     cur_e = 0
     for ex in ordered:
         e = len(ex.input_ids)
+        safe_d = _max_safe_dec_len(e, dec_len, max_attention_cost)
+        if safe_d < dec_len:
+            if cur:
+                batches.append((cur, dec_len))
+                cur = []
+                cur_e = 0
+            batches.append(([ex], safe_d))
+            continue
         cand_n = len(cur) + 1
         cand_e = max(cur_e, e)
         if cur and (cand_n > max_batch_size or cand_n * _attention_cost(cand_e, dec_len) > max_attention_cost):
-            batches.append(cur)
+            batches.append((cur, dec_len))
             cur = [ex]
             cur_e = e
         else:
             cur.append(ex)
             cur_e = cand_e
     if cur:
-        batches.append(cur)
+        batches.append((cur, dec_len))
     return batches
 
 
@@ -843,7 +878,7 @@ def evaluate_generation(
             rows_by_id: dict[int, list[int]] = {}
             exhausted_examples: list[EncodedExample] = []
 
-            for chunk in _pack_eval_gen_batches(
+            for chunk, eff_max_len in _pack_eval_gen_batches(
                 subset,
                 dec_len=max_length,
                 max_attention_cost=max_attention_cost,
@@ -855,18 +890,24 @@ def evaluate_generation(
                     chunk,
                     pad_id=pad_id,
                     device=device,
-                    max_length=max_length,
+                    max_length=eff_max_len,
                     py_lt_312=py_lt_312,
                     amp_enabled=amp_enabled,
                 )
                 for ex, toks in zip(chunk, rows):
                     rows_by_id[ex.example_id] = toks
-                    if eos_id is not None and max_length < retry_max_length and len(toks) >= max_length and eos_id not in toks[1:]:
+                    if (
+                        eos_id is not None
+                        and eff_max_len < retry_max_length
+                        and len(toks) >= eff_max_len
+                        and eos_id not in toks[1:]
+                        and _max_safe_dec_len(len(ex.input_ids), retry_max_length, max_attention_cost) > eff_max_len
+                    ):
                         exhausted_examples.append(ex)
 
             # Match CacheTranslator's cap-exhaustion retry, repacked under the retry_max_length budget
             if exhausted_examples:
-                for retry_chunk in _pack_eval_gen_batches(
+                for retry_chunk, eff_retry_len in _pack_eval_gen_batches(
                     exhausted_examples,
                     dec_len=retry_max_length,
                     max_attention_cost=max_attention_cost,
@@ -878,7 +919,7 @@ def evaluate_generation(
                         retry_chunk,
                         pad_id=pad_id,
                         device=device,
-                        max_length=retry_max_length,
+                        max_length=eff_retry_len,
                         py_lt_312=py_lt_312,
                         amp_enabled=amp_enabled,
                     )
@@ -1085,7 +1126,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     hf_cache_dir = work_dir / "hf_cache"
     hf_cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(hf_cache_dir)
+    os.environ["HF_HUB_CACHE"] = str(hf_cache_dir / "hub")
     os.environ["HF_XET_CACHE"] = str(hf_cache_dir / "xet")
+    hf_constants.HF_HOME = str(hf_cache_dir)
+    hf_constants.HF_HUB_CACHE = str(hf_cache_dir / "hub")
 
     device, use_bf16 = _preflight_checks(work_dir, args)
     _seed_everything(args.seed)
@@ -1130,6 +1174,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "val_long_per_version": int(args.val_long_per_version),
         "holdout_files_per_version": int(args.holdout_files_per_version),
         "max_attention_cost": int(args.max_attention_cost),
+        "target_tokens_per_step": int(args.target_tokens_per_step),
+        "max_microbatch_size": int(args.max_microbatch_size),
         "weight_short": float(args.weight_short),
         "weight_enc_long": float(args.weight_enc_long),
         "weight_tgt_long": float(args.weight_tgt_long),
@@ -1138,6 +1184,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "lr": float(args.lr),
         "min_lr": float(args.min_lr),
         "warmup_frac": float(args.warmup_frac),
+        "weight_decay": float(args.weight_decay),
+        "grad_clip": float(args.grad_clip),
+        "use_bf16": bool(use_bf16),
+        "gradient_checkpointing": bool(args.gradient_checkpointing),
         "seed": int(args.seed),
     }
 
@@ -1235,6 +1285,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         vals = [v for v in val_dict.values() if not math.isnan(v)]
         return sum(vals) / max(1, len(vals))
 
+    eval_gen_max_len = min(512, args.max_target_len + 1)
+    eval_gen_retry_max_len = min(1024, args.max_target_len + 1)
+
     if resuming and resume_state is not None:
         optimizer.load_state_dict(resume_state["optimizer"])
         sampler.load_state_dict(resume_state["sampler"])
@@ -1249,6 +1302,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         best_uploaded_step: int | None = resume_state.get("best_uploaded_step")
         baseline_short = float(resume_state["baseline_short"])
         history: list[dict[str, Any]] = list(resume_state["history"])
+        # Release CPU copy of resumed AdamW state immediately to avoid holding ~1.8 GiB extra RAM
+        resume_state = None
+        gc.collect()
     else:
         val0 = evaluate_pools(
             model,
@@ -1266,6 +1322,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             val_pools,
             device,
             max_samples=args.eval_gen_samples,
+            max_length=eval_gen_max_len,
+            retry_max_length=eval_gen_retry_max_len,
             max_attention_cost=args.max_attention_cost,
             use_bf16=use_bf16,
         )
@@ -1358,6 +1416,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 val_pools,
                 device,
                 max_samples=args.eval_gen_samples,
+                max_length=eval_gen_max_len,
+                retry_max_length=eval_gen_retry_max_len,
                 max_attention_cost=args.max_attention_cost,
                 use_bf16=use_bf16,
             )

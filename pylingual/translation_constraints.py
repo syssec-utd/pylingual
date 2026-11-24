@@ -89,6 +89,14 @@ def _any_fstr_expr(stack: tuple) -> bool:
     return any(isinstance(frame, tuple) and frame[0] == "FSTR_EXPR" for frame in stack)
 
 
+def _nearest_fstr_lit_quote(stack: tuple) -> str | None:
+    """Return the quote delimiter of the nearest enclosing FSTR_LIT frame, if any."""
+    for frame in reversed(stack):
+        if isinstance(frame, tuple) and frame[0] == "FSTR_LIT":
+            return frame[1]
+    return None
+
+
 def _forbidden_pre312_quotes(stack: tuple) -> frozenset[str]:
     """Quote styles forbidden for a new string opened inside an f-string expression on Python < 3.12."""
     forbidden: set[str] = set()
@@ -244,10 +252,10 @@ def step_char(state: LexState, ch: str, *, py_lt_312: bool = False, mask_count: 
             return LexState(stack=stack + (("FSTR_EXPR", False),), mask_partial=mask_partial, has_content=True)
         if ch == "}":
             return LexState(stack=stack[:-1], mask_partial=mask_partial, has_content=True)
-        # Across all Python versions (including 3.12+), an unescaped enclosing delimiter terminates the
-        # f-string prematurely inside a format spec (raising SyntaxError).
-        if len(stack) >= 2 and isinstance(stack[-2], tuple) and stack[-2][0] == "FSTR_LIT":
-            outer_q = stack[-2][1]
+        # Across all Python versions (including 3.12+), an unescaped enclosing delimiter terminates
+        # the nearest enclosing f-string prematurely inside a format spec (raising SyntaxError).
+        outer_q = _nearest_fstr_lit_quote(stack[:-1])
+        if outer_q is not None:
             if len(outer_q) == 1:
                 if ch == outer_q:
                     return None
@@ -610,6 +618,7 @@ class TokenizerConstraintIndex:
         # tokens that pop tail frames still see exact enclosing FSTR_EXPR / FSTR_LIT restrictions.
         deeper_fexpr = _any_fstr_expr(deeper) if py_lt_312 else False
         deeper_forb = _forbidden_pre312_quotes(deeper) if py_lt_312 else frozenset()
+        deeper_fspec_q = _nearest_fstr_lit_quote(deeper) if (deeper and tail and tail[-1] == "FSTR_SPEC") else None
         return (
             tail,
             bool(deeper),
@@ -627,6 +636,7 @@ class TokenizerConstraintIndex:
             py_lt_312,
             deeper_fexpr,
             deeper_forb,
+            deeper_fspec_q,
         )
 
     def disallowed_mask(self, state: LexState, *, py_lt_312: bool, mask_count: int | None) -> torch.Tensor:
