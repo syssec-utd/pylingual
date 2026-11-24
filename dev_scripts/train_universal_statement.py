@@ -1164,6 +1164,12 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        # PyTorch 2.14 registers eager Triton overrides (e.g. bmm_outer_product during generate)
+        # that require a host C compiler; deregister them cleanly on compiler-free GPU hosts.
+        if not (os.environ.get("CC") or shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")):
+            native_reg = getattr(getattr(torch, "_native", None), "registry", None)
+            if native_reg is not None and hasattr(native_reg, "deregister_op_overrides"):
+                native_reg.deregister_op_overrides(disable_dsl_names="triton")
 
     tokenizer = PreTrainedTokenizerFast.from_pretrained(
         args.tokenizer_repo,
