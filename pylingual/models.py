@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import functools
 import gc
+import logging
+import re
+import threading
 import redis
 import yaml
-import logging
-import threading
 
 from collections import OrderedDict
 from pathlib import Path
@@ -32,6 +33,18 @@ else:
 
 logger = logging.getLogger(__name__)
 
+_MASK_INDEX_RE = re.compile(r"<mask_([0-9]+)>", re.ASCII)
+
+
+def _is_resource_error(exc: BaseException) -> bool:
+    if isinstance(exc, (MemoryError, torch.OutOfMemoryError)):
+        return True
+    if isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        return "out of memory" in msg or "cuda error" in msg or "cublas" in msg or "cudnn" in msg
+    return False
+
+
 # translator with caching
 class CacheTranslator:
     """
@@ -47,6 +60,12 @@ class CacheTranslator:
         self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        roles = ("bos", "eos", "pad", "unk", "mask", "cls", "sep")
+        self.decode_excluded_ids = {identifier for role in roles if (identifier := getattr(tokenizer, f"{role}_token_id", None)) is not None}
+        bad_words_ids = getattr(getattr(model, "generation_config", None), "bad_words_ids", None) or []
+        self.decode_excluded_ids.update(identifier for group in bad_words_ids for identifier in group)
+        if not self.decode_excluded_ids:
+            self.decode_excluded_ids = {0, 1, 2, 3, 4}
         self.model.to(self.device)
 
         # Redis Caching
@@ -59,6 +78,67 @@ class CacheTranslator:
     def __getitem__(self, item):
         self.cache.move_to_end(item)
         return self.cache[item]
+
+    def _has_natural_eos(self, token_ids: list[int]) -> bool:
+        eos_id = getattr(self.tokenizer, "eos_token_id", None)
+        return eos_id is None or eos_id in token_ids[1:]
+
+    def _decode_sequence(self, token_ids: list[int]) -> str:
+        filtered_tokens = [tok for tok in token_ids if tok not in self.decode_excluded_ids]
+        return self.tokenizer.decode(filtered_tokens, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+
+    def translate_beam(
+        self,
+        args: list[str],
+        *,
+        num_beams: int = 4,
+        max_length: int = 512,
+        check_timeout: callable = None,
+    ) -> list[list[str]]:
+        """Return up to ``num_beams`` deduplicated completed candidate translations per request without mutating caches."""
+        if not args:
+            return []
+        if check_timeout is not None:
+            check_timeout()
+        normalized_args = [normalize_masks(fix_jump_targets(x)) for x in args]
+        norm_texts = [norm for norm, _ in normalized_args]
+        try:
+            encoded = self.tokenizer(norm_texts, return_tensors="pt", padding=True).to(self.device)
+            with torch.no_grad():
+                output = self.model.generate(
+                    **encoded,
+                    max_length=max_length,
+                    num_beams=num_beams,
+                    num_return_sequences=num_beams,
+                    early_stopping=True,
+                )
+        except Exception as e:
+            if not _is_resource_error(e):
+                raise
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info(f"Beam translation OOM ({e!r}); skipping beam retry")
+            return [[] for _ in args]
+
+        candidates_per_req: list[list[str]] = []
+        output_rows = output.tolist()
+        rows_per_req = max(1, len(output_rows) // len(args))
+        for idx, (_, order) in enumerate(normalized_args):
+            seen: set[str] = set()
+            cands: list[str] = []
+            for b in range(rows_per_req):
+                row_toks = output_rows[idx * rows_per_req + b]
+                if not self._has_natural_eos(row_toks):
+                    continue
+                decoded = self._decode_sequence(row_toks)
+                if any(int(m) >= len(order) for m in _MASK_INDEX_RE.findall(decoded)):
+                    continue
+                restored = restore_masks(decoded, order)
+                if restored not in seen:
+                    seen.add(restored)
+                    cands.append(restored)
+            candidates_per_req.append(cands)
+        return candidates_per_req
 
     def _translate_and_decode(self, batch: list[str]) -> list[str]:
         """Translate a single batch of requests"""
