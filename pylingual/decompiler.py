@@ -168,32 +168,38 @@ class Decompiler:
 
             return DecompilerResult(str(self.source_context), self.equivalence_results, self.pyc, self.version)
 
-    def find_comp_error_cause(self, results: list[TestResult]):
-        # parse lno from exception
+    def find_comp_error_line(self, results: list[TestResult]) -> tuple[int, SourceLine, int] | None:
         lno = lno_regex.search(str(results[0]))
         if lno is None:
             return None
         lno = int(lno.group(0))
         lno = unclosed_bracket_line(str(self.source_context), lno) or lno
-        # get offending codeobj, counting physical lines since unmasked strings can span several
         source_lines = self.source_context.source_lines()
         ends = itertools.accumulate(x.line.count("\n") + 1 for x in source_lines)
-        bad_codeobj = source_lines[next((i for i, end in enumerate(ends) if end >= lno), len(source_lines) - 1)].blame
+        src_line = source_lines[next((i for i, end in enumerate(ends) if end >= lno), len(source_lines) - 1)]
+        bad_idx = next(i for i, e in enumerate(self.ordered_bytecodes) if e.codeobj == src_line.blame)
+        return bad_idx, src_line, lno
 
-        bad_idx = next(i for i, e in enumerate(self.ordered_bytecodes) if e.codeobj == bad_codeobj)
-        return bad_idx
+    def find_comp_error_cause(self, results: list[TestResult]):
+        found = self.find_comp_error_line(results)
+        return found[0] if found is not None else None
 
     def correct_failures(self):
         try:
             # fix compile errors
-            corrected_comp_errors = set()
+            corrected_comp_errors: set[tuple[int, int]] = set()
+            codeobj_attempts: dict[int, int] = {}
             while has_comp_error(self.equivalence_results):
-                bad_idx = self.find_comp_error_cause(self.equivalence_results)
-                if bad_idx is None or bad_idx in corrected_comp_errors:
+                found = self.find_comp_error_line(self.equivalence_results)
+                if found is None:
                     return
-                if not self.correct_segmentation(bad_idx, from_comp_error=True):
+                bad_idx, src_line, err_lno = found
+                if (bad_idx, err_lno) in corrected_comp_errors or codeobj_attempts.get(bad_idx, 0) >= 5:
                     return
-                corrected_comp_errors.add(bad_idx)
+                if not (self.correct_translation_beam(bad_idx, src_line, error_lno=err_lno) or self.correct_segmentation(bad_idx, from_comp_error=True)):
+                    return
+                corrected_comp_errors.add((bad_idx, err_lno))
+                codeobj_attempts[bad_idx] = codeobj_attempts.get(bad_idx, 0) + 1
             failed = TrackedList(CORRECTION_STEP, [i for i in range(len(self.ordered_bytecodes)) if (result := self.result_for_bytecode(i, self.equivalence_results)) is not None and not result.success])
             for i in failed:
                 if self.correct_segmentation(i):
@@ -423,6 +429,148 @@ class Decompiler:
     def result_for_bytecode(self, i: int, results: list[TestResult]) -> TestResult | None:
         codeobj = self.ordered_bytecodes[i].codeobj
         return next((r for r in results if isinstance(r, TestResult) and r.bc_a is not None and r.bc_a.codeobj == codeobj), None)
+
+    def _suspect_statement_indices(self, i: int, src_line: SourceLine, *, error_lno: int | None = None) -> list[int]:
+        """Map a compile-error SourceLine back to up to two suspect statement positions in code object i."""
+        if i >= len(self.translation_results) or not self.translation_results[i]:
+            return []
+        offset = sum(len(self.translation_results[j]) for j in range(i))
+        n_stmts = len(self.translation_results[i])
+
+        # Exact provenance via SourceLine.source_idx (works even for duplicate or sanitized lines)
+        if src_line.source_idx is not None:
+            pos = src_line.source_idx - offset
+            if 0 <= pos < n_stmts:
+                return [pos, pos - 1] if pos > 0 else [pos]
+
+        # Synthetic line (e.g. inserted 'pass'): check nearest preceding line with provenance for this code object
+        if hasattr(self.source_context, "source_lines"):
+            all_rendered = self.source_context.source_lines()
+            rendered_idx = -1
+            if error_lno is not None and all_rendered:
+                ends = itertools.accumulate(x.line.count("\n") + 1 for x in all_rendered)
+                rendered_idx = next((idx for idx, end in enumerate(ends) if end >= error_lno), len(all_rendered) - 1)
+            else:
+                try:
+                    rendered_idx = all_rendered.index(src_line)
+                except ValueError:
+                    rendered_idx = -1
+            for prev in reversed(all_rendered[: max(0, rendered_idx)]):
+                if prev.blame == src_line.blame and prev.source_idx is not None:
+                    pos = prev.source_idx - offset
+                    if 0 <= pos < n_stmts:
+                        return [pos, pos - 1] if pos > 0 else [pos]
+
+        # Fallback for callers/tests constructing SourceLine without source_idx
+        target = src_line.line.strip()
+        matches: list[int] = []
+        for pos in range(n_stmts):
+            line_idx = offset + pos
+            if line_idx < len(self.source_lines) and self.source_lines[line_idx].strip() == target:
+                matches.append(pos)
+                if pos > 0:
+                    matches.append(pos - 1)
+                break
+        return list(dict.fromkeys(matches))
+
+    def correct_translation_beam(self, i: int, src_line: SourceLine, *, error_lno: int | None = None, num_beams: int = 4) -> bool:
+        """Retry only the suspect statement(s) causing a compile error with beam search."""
+        if not hasattr(self.translator, "translate_beam"):
+            return False
+        if len(self.segmentation_results) <= i or not self.segmentation_results[i]:
+            return False
+        if isinstance(self.source_context.cfts[self.ordered_bytecodes[i].codeobj], MetaTemplate):
+            return False
+        suspects = self._suspect_statement_indices(i, src_line, error_lno=error_lno)
+        if not suspects:
+            return False
+
+        requests = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
+        valid_suspects = [pos for pos in suspects if pos < len(requests)]
+        if not valid_suspects:
+            return False
+
+        logger.info(f"Trying beam translation retry for {self.ordered_bytecodes[i].name}")
+        bc = self.ordered_bytecodes[i]
+        original_translation = list(self.translation_results[i])
+        original_cft = self.source_context.cfts[bc.codeobj]
+        previous_lines, previous_indented_source = self.source_lines, self.indented_source
+        previous_context = self.source_context.snapshot()
+        _missing = object()
+        previous_inst_state = [
+            (inst, inst.starts_line, getattr(inst, "source_line", _missing))
+            for insts in self.ordered_instructions
+            for inst in insts
+        ]
+        passing = [j for j in range(len(self.ordered_bytecodes)) if (r := self.result_for_bytecode(j, self.equivalence_results)) is not None and r.success]
+
+        try:
+            beam_lists = self.translator.translate_beam(
+                [requests[pos] for pos in valid_suspects],
+                num_beams=num_beams,
+                check_timeout=self.check_timeout,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            logger.warning(f"Beam translation retry failed for {bc.name}; falling back to segmentation correction: {exc!r}")
+            return False
+        for pos, candidates in zip(valid_suspects, beam_lists):
+            for cand in candidates:
+                if cand == original_translation[pos]:
+                    continue
+                accepted = False
+                try:
+                    self.translation_results[i] = list(original_translation)
+                    self.translation_results[i][pos] = cand
+                    self.update_source_lines()
+                    self.unmask_lines()
+                    self.source_context.update_lines(self.source_lines)
+                    # Rebuild control flow for code object i in case the new line changed header structure
+                    new_cft = bc_to_cft(bc, self.source_lines)
+                    if hasattr(original_cft, "header_lines") and hasattr(new_cft, "header_lines"):
+                        new_cft.header_lines = list(original_cft.header_lines)
+                    self.source_context.cfts[bc.codeobj] = new_cft
+                    self.source_context.cache.clear()
+                    if hasattr(self.source_context, "reads"):
+                        self.source_context.reads.pop(bc.codeobj, None)
+                    self.reconstruct_source()
+                    equivalence_results = self.check_reconstruction(self.indented_source)
+                    if not equivalence_results:
+                        improved = False
+                    elif not has_comp_error(equivalence_results):
+                        improved = True
+                    else:
+                        new_err = self.find_comp_error_line(equivalence_results)
+                        if new_err is None:
+                            improved = False
+                        else:
+                            new_bad_idx, _, new_lno = new_err
+                            improved = (new_bad_idx != i) or (error_lno is not None and new_lno > error_lno)
+                    accepted = improved and all((r := self.result_for_bytecode(j, equivalence_results)) is not None and r.success for j in passing)
+                    if accepted:
+                        self.equivalence_results = equivalence_results
+                        logger.info(f"Fixed compile error via beam translation retry for {bc.name}")
+                        return True
+                except TimeoutError:
+                    raise
+                except Exception as exc:
+                    logger.debug(f"Beam candidate failed reconstruction for {bc.name}: {exc!r}")
+                finally:
+                    if not accepted:
+                        for inst, starts_line, src_line_val in previous_inst_state:
+                            inst.starts_line = starts_line
+                            if src_line_val is _missing:
+                                if hasattr(inst, "source_line"):
+                                    delattr(inst, "source_line")
+                            else:
+                                inst.source_line = src_line_val
+                        self.translation_results[i] = original_translation
+                        self.source_lines = previous_lines
+                        self.indented_source = previous_indented_source
+                        self.source_context.cfts[bc.codeobj] = original_cft
+                        self.source_context.restore(previous_context)
+        return False
 
     # try to correct the segmentation of the ith code object
     def correct_segmentation(self, i: int, from_comp_error=False) -> bool:

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 def indent_lines(lines: list[SourceLine], i: int = 1) -> list[SourceLine]:
-    return [SourceLine(x.line, x.indent + i, x.blame, x.child, x.meta) for x in lines]
+    return [SourceLine(x.line, x.indent + i, x.blame, x.child, x.meta, x.source_idx) for x in lines]
 
 
 class SourceLine(NamedTuple):
@@ -30,9 +30,10 @@ class SourceLine(NamedTuple):
     blame: Code3
     child: Code3 | None = None
     meta: bool = False
+    source_idx: int | None = None
 
     def with_line(self, line: str):
-        return SourceLine(line, self.indent, self.blame, self.child, self.meta)
+        return SourceLine(line, self.indent, self.blame, self.child, self.meta, self.source_idx)
 
 
 # class bookkeeping the compiler generates; the model sometimes translates it into an assignment
