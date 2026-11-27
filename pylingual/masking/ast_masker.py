@@ -46,7 +46,12 @@ class customUnparser(Unparser):
 
         with self.delimit("{", "}"):
             expr = unparse_inner(node.value)
-            if "\\" in expr:
+            # the host unparser controls whether _avoid_backslashes exists, but whether a
+            # backslash is legal in an f-string expression is decided by the target version
+            target_version = getattr(self.masker, "version", None)
+            if target_version is None:
+                target_version = _RUNTIME_PYTHON_VERSION
+            if "\\" in expr and target_version < (3, 12):
                 raise ValueError("Unable to avoid backslash in f-string expression part")
             if expr.startswith("{"):
                 # Separate pair of opening brackets as "{ {"
