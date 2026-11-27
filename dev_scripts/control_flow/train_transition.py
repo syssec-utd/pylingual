@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import transformers
 from ControlFlowConfiguration import ControlFlowConfiguration, parse_control_flow_config_json
-from datasets import load_dataset
+from datasets import Features, Sequence, Value, load_dataset
 from transformers import Trainer, TrainingArguments
 
 from pylingual.control_flow_reconstruction.block_grammar import BlockGrammar, Shape
@@ -19,11 +19,21 @@ from pylingual.control_flow_reconstruction.skeleton import parse_ref
 from pylingual.control_flow_reconstruction.transition import ALIGN, SPECIAL, STMT, TOKENS, Parse, TransitionConfig, TransitionModel, advance, allowed_row, encode_input, features, gold_actions
 from pylingual.models import TransitionPredictor
 
+CFLOW_FEATURES = Features({
+    "input": Value("string"),
+    "n_stmts": Value("int64"),
+    "shapes": Value("string"),
+    "version": Value("string"),
+    "target": Value("string"),
+    "file": Value("string"),
+    "loops": Sequence(Value("int64")),
+})
+
 
 def load_cflow_dataset(config: ControlFlowConfiguration):
     """The train/valid/test JSONL splits of every dataset dir, without the code objects too large for the model."""
     splits = {"train": "train", "validation": "valid", "test": "test"}
-    dataset = load_dataset("json", data_files={split: [str(d / f"{name}.jsonl") for d in config.dataset_dirs] for split, name in splits.items()})
+    dataset = load_dataset("json", data_files={split: [str(d / f"{name}.jsonl") for d in config.dataset_dirs] for split, name in splits.items()}, features=CFLOW_FEATURES)
     return dataset.filter(lambda row: row["n_stmts"] <= config.max_stmts and len(row["input"].split()) < config.max_input_tokens)
 
 

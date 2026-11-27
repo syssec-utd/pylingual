@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, override
 from xdis import iscode
 
 from pylingual.editable_bytecode.utils import comprehension_names
-from .block_grammar import shape_of
+from .block_grammar import is_except_star, shape_of
 from .cft import ControlFlowTemplate
 from .model_view import KEYWORD_LINES
 from .skeleton import CLOSE, KEYWORD_TEXT, LOOP, OPEN, parse_ref
@@ -140,8 +140,8 @@ class SkeletonTemplate(ControlFlowTemplate):
             text = self.inline_header(node, source)
         else:
             text = KEYWORD_TEXT[node.keyword] if node.sid is None else self.header_text(node, source)
-        text_stripped = (text or "").removeprefix("async ")
-        if text_stripped.startswith("except") and text_stripped[6:].lstrip().startswith("*"):
+        text_stripped = (text or "").strip().removeprefix("async ")
+        if is_except_star(text_stripped):
             return "except"
         words = text_stripped.split()
         return words[0].rstrip(":*") if words else None

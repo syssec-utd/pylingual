@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 from pylingual.editable_bytecode.control_flow_graph import bytecode_to_control_flow_graph
 from pylingual.utils.version import PythonVersion
 
-from .block_grammar import BlockGrammar, Shape, consistent, shape_of, soft_keyword
+from .block_grammar import BlockGrammar, Shape, consistent, is_except_star, shape_of, soft_keyword
 from .skeleton import ref
 
 if TYPE_CHECKING:
@@ -130,7 +130,7 @@ def line_kind(text: str) -> str:
         return "K_deco"
     if text in ("while True:", "while 1:"):
         return "K_while_true"
-    if text.startswith("except") and text[6:].lstrip().startswith("*"):
+    if is_except_star(text):
         return "K_except"
     if head in ("if", "elif", "while"):
         return "K_cond"

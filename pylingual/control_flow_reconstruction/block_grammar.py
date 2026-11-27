@@ -110,10 +110,15 @@ INLINE_OPENERS = {"if", "elif", "while", "for", "with", "try", "except", "except
 CLAUSE_CONTEXT = {"else": "if 0: pass\n", "except": "try: pass\n", "except*": "try: pass\n", "finally": "try: pass\n"}
 
 
+def is_except_star(text: str) -> bool:
+    """Whether `text` (stripped) starts with an `except*` header (`except* E:`, `except*(E):`, `except * E:`)."""
+    return text.startswith("except") and text[6:].lstrip().startswith("*")
+
+
 def first_word(text: str) -> str:
     """The keyword a line starts with (`except*` for an except* clause), without `async`."""
     text = text.removeprefix("async ")
-    if text.startswith("except") and text[6:].lstrip().startswith("*"):
+    if is_except_star(text):
         return "except*"
     words = text.replace(":", " :", 1).split()
     return words[0] if words else ""
@@ -326,8 +331,8 @@ class BlockGrammar:
             open_matches.append(state.stack[-1])
         if new_match is not None:
             open_matches.append(new_match)
-        m_both = unplaced + sum(f.loop and not f.no_jump and not f.no_return for f in open_matches)
-        m_jump = unplaced + sum(f.loop and not f.no_jump for f in open_matches)
+        m_both = unplaced + sum(f.loop and not f.no_jump and not f.no_continue and not f.no_return for f in open_matches)
+        m_jump = unplaced + sum(f.loop and not f.no_jump and not f.no_continue for f in open_matches)
         m_ret = unplaced + sum(not f.no_return for f in open_matches)
         m_any = unplaced + len(open_matches)
         return (
@@ -395,8 +400,10 @@ class BlockGrammar:
                 return False
             if kind == "finally" and top.finallies >= MAX_FINALLY:
                 return False
-            # a try needs room for the handler or finally after it
+            # a try needs room for the handler or finally after it; a match needs room for a case inside it
             if kind == "try" and top.blocks + BLOCK_WEIGHT["except"] > MAX_BLOCKS and top.finallies >= MAX_FINALLY:
+                return False
+            if kind == "match" and len(state.stack) >= MAX_DEPTH:
                 return False
         return True
 

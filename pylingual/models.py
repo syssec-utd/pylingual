@@ -141,8 +141,9 @@ class ControlFlowPredictor:
     Every skeleton it returns fits its request's block grammar (control_flow_reconstruction/block_grammar.py), so it
     renders to source that compiles. A model implements `_generate`.
 
-    Every request gets a skeleton: one the model cannot predict (too large, failed, no candidate in the grammar) gets
-    its statements in order (CflowRequest.in_order).
+    By default (`fallback=True`), every request gets a skeleton: one the model cannot predict (too large, failed, no
+    candidate in the grammar) gets its statements in order (CflowRequest.in_order). With `fallback=False`, unpredicted
+    requests remain None.
 
     :param max_stmts: Requests with more statements are not predicted by the model
     :param max_input_tokens: Requests with longer inputs are not predicted by the model
@@ -192,7 +193,8 @@ class ControlFlowPredictor:
             # handled outside the except block so tensors can be freed; these code objects get their statements in order
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info(f"Control flow model failed on {len(batch)} code objects, using statement order ({error})")
+            action = "using statement order" if fallback else "skipping batch"
+            logger.info(f"Control flow model failed on {len(batch)} code objects, {action} ({error})")
         if fallback:
             for i, request in enumerate(requests):
                 if results[i] is None and request is not None:

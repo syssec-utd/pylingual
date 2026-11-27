@@ -142,6 +142,38 @@ def test_in_order_past_the_limits():
     assert not batch["allowed"][0, 0, loop_col]
 
 
+def test_load_cflow_dataset_handles_missing_and_empty_loops(tmp_path):
+    """Mixed old rows (no loops), empty loops ([]), and populated loops load cleanly with distinct None vs [] semantics."""
+    import json
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "dev_scripts" / "control_flow"))
+    from ControlFlowConfiguration import ControlFlowConfiguration, ModelParameters, TrainingParameters
+    from train_transition import load_cflow_dataset
+
+    base = {"input": "| <s0> K_stmt", "n_stmts": 1, "shapes": "stmt", "version": "3.12", "target": "<s0>", "file": "a.py"}
+    d1, d2 = tmp_path / "d1", tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    # d1 has legacy rows without "loops"; d2 has new rows with empty and populated "loops"
+    for split in ("train", "valid", "test"):
+        (d1 / f"{split}.jsonl").write_text(json.dumps(base) + "\n")
+    (d2 / "train.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n" + json.dumps(base | {"loops": [0]}) + "\n")
+    (d2 / "valid.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n")
+    (d2 / "test.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n")
+
+    cfg = ControlFlowConfiguration(
+        base_repo_name="test/repo",
+        dataset_dirs=[d1, d2],
+        cache_dir=tmp_path,
+        model_parameters=ModelParameters(),
+        training_parameters=TrainingParameters(batch_size=4, epochs=1, learning_rate=1e-3),
+    )
+    ds = load_cflow_dataset(cfg)
+    assert list(ds["train"]["loops"]) == [None, [], [0]]
+    assert list(ds["validation"]["loops"]) == [None, []]
+    assert list(ds["test"]["loops"]) == [None, []]
+
+
 def test_budget_batches():
     """Every row is in one batch of each epoch, batches keep to the budget, and epochs differ."""
     sys.path.insert(0, str(Path(__file__).parents[1] / "dev_scripts" / "control_flow"))

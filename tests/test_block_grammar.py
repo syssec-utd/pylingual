@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from pylingual.control_flow_reconstruction.block_grammar import END, MAX_BLOCKS, BlockGrammar, Shape, consistent, shape_of
+from pylingual.control_flow_reconstruction.block_grammar import END, MAX_BLOCKS, MAX_DEPTH, BlockGrammar, Shape, consistent, shape_of
 from pylingual.control_flow_reconstruction.model_view import line_kind
 from pylingual.control_flow_reconstruction.skeleton import CLOSE, KEYWORD_TEXT, LOOP, OPEN, parse_ref, ref
 from pylingual.utils.generate_bytecode import UV_VERSIONS, CompileError, PyenvError, _uv_python, compile_version
@@ -241,6 +241,22 @@ def test_complete_jump_and_return_clauses():
     for line in ("else: break", "except E: break", "finally: break"):
         g = BlockGrammar([shape_of(line_kind(line), line)], "3.12")
         assert g.accepts(g.complete(g.start())), line
+
+    # match cannot open at MAX_DEPTH where its mandatory case would exceed MAX_DEPTH
+    deep_shapes = [shape_of("K_cond", "if a:") for _ in range(MAX_DEPTH - 2)] + [shape_of(line_kind(t), t) for t in ("match x:", "case 1: break")]
+    gd = BlockGrammar(deep_shapes, "3.12")
+    prefix = ["while_true", "{"] + [tok for i in range(MAX_DEPTH - 2) for tok in (ref(i), "{")]
+    st = _walk(gd, prefix)
+    assert len(st.stack) == MAX_DEPTH and not (gd.allowed(st)[0] >> (MAX_DEPTH - 2) & 1)
+    assert gd.accepts(prefix + gd.complete(st))
+
+    # Python < 3.8 finally forbids continue: match cannot open inside finally when a case has continue
+    shapes_37 = [shape_of(line_kind(t), t) for t in ("try:", "finally:", "match x:", "case 1: continue")]
+    g37 = BlockGrammar(shapes_37, "3.7")
+    prefix_37 = "while_true { <s0> { } <s1> {".split()
+    st37 = _walk(g37, prefix_37)
+    assert not (g37.allowed(st37)[0] >> 2 & 1)
+    assert g37.accepts(prefix_37 + g37.complete(st37))
 
 
 def _walk(grammar: BlockGrammar, tokens: list[str]):

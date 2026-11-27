@@ -161,7 +161,11 @@ class SkeletonBuilder:
         if isinstance(n, ast.Try) or type(n).__name__ == "TryStar":
             out = self.block(self.header(n.lineno, "try"), n.body)
             for h in n.handlers:
-                out += self.block(self.header(h.lineno, "except" if h.type is None else None), h.body)
+                head = self.header(h.lineno, "except" if h.type is None else None)
+                if not self.text(h.lineno).endswith(":") and h.body and all(s.lineno == h.lineno and (s.end_lineno or s.lineno) == h.lineno for s in h.body):
+                    out += head
+                else:
+                    out += self.block(head, h.body)
             out += self.orelse(n)
             if n.finalbody:
                 prev = (n.orelse or n.handlers or n.body)[-1].end_lineno

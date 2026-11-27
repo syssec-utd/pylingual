@@ -115,16 +115,16 @@ def test_while_needs_a_jump_back(tmp_path):
     assert CflowRequest.from_row(row).loops is None
 
 
-def test_loop_ok_for_inline_break_and_setup_loop(tmp_path):
-    """Inline `if y: break` marks earlier headers loop-eligible; 3.6/3.7 `while x: return` is marked via SETUP_LOOP."""
+def test_loop_ok_for_inline_break(tmp_path):
+    """Inline `if b: break` in a non-back-edge loop still marks the while header loop-eligible."""
     if _uv_python(PythonVersion("3.12")) is None and sys.version_info[:2] != (3, 12):
         pytest.skip("Python 3.12 not available")
     src = tmp_path / "b.py"
-    src.write_text("def f(a, b):\n    while a:\n        if b: break\n")
+    src.write_text("def f(a, b):\n    while a:\n        if b: break\n        return 1\n    return 0\n")
     pyc, lines = compile_marked(src, tmp_path, PythonVersion("3.12"))
     f = next(bc for bc in pyc.iter_bytecodes() if bc.codeobj.co_name == "f")
     req = cflow_request(f, lines)
-    assert 0 in req.loops and req.grammar().accepts("loop <s0> { <s1> }".split())
+    assert 0 in req.loops and req.grammar().accepts("loop <s0> { <s1> <s2> } <s3>".split())
 
 
 def test_except_star_renders_without_orphan():

@@ -93,13 +93,18 @@ def test_except_star_gold_round_trip(version, tmp_path):
         "        ok()\n"
         "    finally:\n"
         "        done()\n"
+        "\n"
+        "def f_inline(a):\n"
+        "    try:\n"
+        "        g(a)\n"
+        "    except *(ValueError, TypeError): h()\n"
     )
     py, pyc_path = tmp_path / "exstar.py", tmp_path / "exstar.pyc"
     py.write_text(src)
     compile_version(py, pyc_path, version)
     pyc = PYCFile(str(pyc_path))
     examples = make_examples(pyc, src)
-    assert "<module>.f" in {e["name"] for e in examples}
+    assert {"<module>.f", "<module>.f_inline"} <= {e["name"] for e in examples}
     assert all(CflowRequest.from_row(e).grammar().accepts(e["target"].split()) for e in examples)
     restored = tmp_path / "restored.py"
     restored.write_text(render_with_skeletons(pyc, src.split("\n"), examples))
