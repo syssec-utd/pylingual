@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import ast
+import math
 import pathlib
 import re
 from copy import deepcopy
 from typing import TYPE_CHECKING, Pattern
 
+from xdis import iscode
+
+from pylingual.editable_bytecode.utils import comprehension_names
 from pylingual.utils.use_escape_sequences import use_escape_sequences
 from pylingual.utils.version import PythonVersion
 
@@ -16,7 +20,17 @@ if TYPE_CHECKING:
 from pylingual.masking.ast_masker import RewriteMasks, custom_unparse
 from pylingual.masking.global_masker import Masker
 
-mask_regex = re.compile(r"(?<=<mask_)\d+(?=>)")
+mask_regex = re.compile(r"(?<=<mask_)(?:0|[1-9][0-9]*)(?=>)", re.ASCII)
+# Full-token form used when rewriting model output back into the global mask namespace
+mask_token_regex = re.compile(r"<mask_(0|[1-9][0-9]*)>", re.ASCII)
+# Sentinels for masks the model invented that were never in the bytecode; they can never
+# collide with a global_tab key because a mask token always carries a leading "<mask_".
+OOB_MASK_PREFIX = "<oob_mask_"
+
+
+def has_oob_masks(text: str) -> bool:
+    """Whether text contains an out-of-bounds mask substituted by restore_masks."""
+    return OOB_MASK_PREFIX in text
 
 
 def create_global_masker(bytecode: EditableBytecode) -> Masker:
@@ -34,12 +48,22 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
     global_masker.future_annotations = bool(bytecode.codeobj.co_flags & future_flag)
     global_masker.version = bytecode.version
 
+    def intern(value):
+        """Add a value to the global table without ever overwriting an existing mask entry."""
+        nonlocal global_idx
+        # Don't needlessly increment the global_idx
+        if value in global_tab:
+            return
+        global_tab[value] = f"<mask_{global_idx}>"
+        global_idx += 1
+
     for bc in bytecode.iter_bytecodes():
         bc_co = bc.to_code(no_lnotab=True)
         preprocessed = [inst.argval for inst in bc.instructions if getattr(inst, "preprocessed_container", False)]
 
         # create consts
-        consts = list(deepcopy(tuple(getattr(const, "codeobj", const) for const in bc.co_consts)))
+        # Code objects are immutable and must never enter the global table, so don't copy them either
+        consts = [value if iscode(value) else deepcopy(value) for value in (getattr(const, "codeobj", const) for const in bc.co_consts)]
 
         # add LOAD_SMALL_INT values to consts (3.14+)
         if bc.version >= (3, 14):
@@ -52,61 +76,48 @@ def create_global_masker(bytecode: EditableBytecode) -> Masker:
             # Don't mask None
             if const is None:
                 continue
-            # Don't needlessly increment the global_idx
-            if const in global_tab:
+            # Code objects are never mask keys; mask the resolved name they define instead.
+            # Comprehension code objects keep their literal name in <codeobj:...> form.
+            if iscode(const):
+                if const.co_name not in comprehension_names:
+                    intern(bc.resolve_namespace(const.co_name))
                 continue
             if type(const) in (list, tuple, frozenset, set) and not any(type(const) is type(value) and const == value for value in preprocessed):
+                if const in global_tab:
+                    continue
                 consts.extend(const)
             elif type(const) is slice:
+                if const in global_tab:
+                    continue
                 # decompose slice constants for 3.14+
                 consts.extend([const.start, const.stop, const.step])
             else:
-                global_tab[bc.resolve_namespace(const)] = f"<mask_{global_idx}>"
-                global_idx += 1
+                intern(bc.resolve_namespace(const))
 
         # create names
         for name in bc.co_names:
             if isinstance(name, tuple):
                 for n in name:
-                    if n in global_tab:
-                        continue
-                    global_tab[bc.resolve_namespace(n)] = f"<mask_{global_idx}>"
-                    global_idx += 1
+                    intern(bc.resolve_namespace(n))
             else:
-                if name in global_tab:
-                    continue
-                global_tab[bc.resolve_namespace(name)] = f"<mask_{global_idx}>"
-                global_idx += 1
+                intern(bc.resolve_namespace(name))
 
         for free in bc.codeobj.co_freevars:
-            if free in global_tab:
-                continue
-            global_tab[free] = f"<mask_{global_idx}>"
-            global_idx += 1
+            intern(free)
 
         if bc.version >= (3, 11):
             for cell in bc.codeobj.co_cellvars:
-                if cell in global_tab:
-                    continue
-                global_tab[cell] = f"<mask_{global_idx}>"
-                global_idx += 1
+                intern(cell)
 
         for local in bc.co_varnames:
             if isinstance(local, tuple):
                 for local_item in local:
-                    if local_item in global_tab:
-                        continue
-                    global_tab[bc.resolve_namespace(local_item)] = f"<mask_{global_idx}>"
-                    global_idx += 1
+                    intern(bc.resolve_namespace(local_item))
             else:
-                if local in global_tab:
-                    continue
-                global_tab[bc.resolve_namespace(local)] = f"<mask_{global_idx}>"
-                global_idx += 1
+                intern(bc.resolve_namespace(local))
 
-        global_tab[bc_co.co_name] = f"<mask_{global_idx}>"
-
-        global_idx += 1
+        # keep the first mask assigned to a code object's name, never overwrite it
+        intern(bc_co.co_name)
 
     return global_masker
 
@@ -154,8 +165,8 @@ def format_source_replacement(mask_value: str) -> str:
         return ", ".join(format_source_replacement(value) for value in mask_value)
     if mask_value is ...:
         return "..."
-    if mask_value == 9e999:  # infinity
-        return "9e999"
+    if isinstance(mask_value, float) and math.isinf(mask_value):  # infinity literals
+        return "(-9e999)" if mask_value < 0 else "9e999"
     if type(mask_value) in (int, float) and mask_value < 0:
         return f"({mask_value})"
     if type(mask_value) != str:
@@ -291,6 +302,9 @@ def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
     container_masks = set()
     string_masks = set()
     for value, mask in masker.global_tab.items():
+        # code objects are not source values and must never be spliced into the source
+        if iscode(getattr(value, "codeobj", value)):
+            continue
         replacement = format_source_replacement(value)
         if isinstance(value, (list, tuple, frozenset, set, dict)):
             # The model sometimes quotes an atomic container mask as though it were a string.
@@ -301,6 +315,9 @@ def restore_masked_source_text(lines: list[str], masker: Masker) -> list[str]:
         elif isinstance(value, str):
             string_masks.add(mask)
         replacements[re.escape(mask)] = replacement
+    # an empty pattern matches between every character, so only compile one when we have replacements
+    if not replacements:
+        return list(lines)
     re_pattern = re.compile("|".join(replacements.keys()))
     return [unmask(x, replacements, container_masks, re_pattern, string_masks) for x in lines]
 
@@ -315,9 +332,13 @@ def normalize_masks(statement: str) -> tuple[str, list[str]]:
 # reverts masks to their original value
 def restore_masks(translation: str, mask_order: list[str]):
     def restore_mask(match):
-        i = int(match.group(0))
+        i = int(match.group(1))
         # sometimes model adds random masks that did not appear in bytecode,
         # so we have to check if mask is in bounds
-        return mask_order[i] if i < len(mask_order) else match.group(0)
+        if 0 <= i < len(mask_order):
+            return f"<mask_{mask_order[i]}>"
+        # an out-of-bounds mask must never fall back onto an unrelated global mask,
+        # so rewrite it as a sentinel that cannot match any global_tab key
+        return f"{OOB_MASK_PREFIX}{i}>"
 
-    return mask_regex.sub(restore_mask, translation)
+    return mask_token_regex.sub(restore_mask, translation)
