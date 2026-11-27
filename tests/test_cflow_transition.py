@@ -114,12 +114,64 @@ def test_shared_control_flow_config():
 
 
 def test_in_order_past_the_limits():
-    """Requests the model cannot take get their statements in order, so every request has a skeleton."""
+    """Requests the model cannot take get their statements in order by default, or None with fallback=False."""
     model = tiny_model()
     model.config.max_stmts = 0
-    request = CflowRequest.from_row({"input": "| <s0> K_cond POP_JUMP_IF_FALSE f+ <s2> | <s1> K_stmt | <s2> K_stmt RETURN_CONST nf", "shapes": "cond stmt stmt", "version": "3.12"})
+    row = {"input": "| <s0> K_cond POP_JUMP_IF_FALSE f+ <s2> | <s1> K_stmt | <s2> K_stmt RETURN_CONST nf", "shapes": "cond stmt stmt", "version": "3.12", "n_stmts": 3, "target": "<s0> { <s1> } <s2>", "loops": []}
+    request = CflowRequest.from_row(row)
+    straight = CflowRequest.from_row({"input": "| <s0> K_stmt | <s1> K_stmt RETURN_CONST nf", "shapes": "stmt stmt", "version": "3.12"})
     grammar = request.grammar()
-    assert TransitionPredictor(model)([request, None], num_beams=2) == [[grammar.complete(grammar.start())], None]
+    predictor = TransitionPredictor(model)
+    assert predictor([request, None], num_beams=2) == [[grammar.complete(grammar.start())], None]
+    assert predictor([request, straight, None], num_beams=2, fallback=False) == [None, [["<s0>", "<s1>"]], None]
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "dev_scripts" / "control_flow"))
+    from train_transition import collate, exact_match
+
+    report = exact_match(predictor, [row])
+    assert report["predicted"] == 0.0 and report["exact_match"] == 0.0
+
+    # collate honors row["loops"] so LOOP is masked out when loops is empty
+    ids, refs, stmt_pos = (
+        [model.vocab.get(t, 1) if not t.startswith("<s") else 2 for t in row["input"].split()],
+        [int(t[2:-1]) if t.startswith("<s") else -1 for t in row["input"].split()],
+        [1, 6, 9],
+    )
+    batch = collate([row | {"input_ids": ids, "refs": refs, "stmt_pos": stmt_pos, "length": len(ids)}])
+    loop_col = batch["allowed"].shape[-1] - len(TOKENS) + TOKENS.index("loop")
+    assert not batch["allowed"][0, 0, loop_col]
+
+
+def test_load_cflow_dataset_handles_missing_and_empty_loops(tmp_path):
+    """Mixed old rows (no loops), empty loops ([]), and populated loops load cleanly with distinct None vs [] semantics."""
+    import json
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "dev_scripts" / "control_flow"))
+    from ControlFlowConfiguration import ControlFlowConfiguration, ModelParameters, TrainingParameters
+    from train_transition import load_cflow_dataset
+
+    base = {"input": "| <s0> K_stmt", "n_stmts": 1, "shapes": "stmt", "version": "3.12", "target": "<s0>", "file": "a.py"}
+    d1, d2 = tmp_path / "d1", tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    # d1 has legacy rows without "loops"; d2 has new rows with empty and populated "loops"
+    for split in ("train", "valid", "test"):
+        (d1 / f"{split}.jsonl").write_text(json.dumps(base) + "\n")
+    (d2 / "train.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n" + json.dumps(base | {"loops": [0]}) + "\n")
+    (d2 / "valid.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n")
+    (d2 / "test.jsonl").write_text(json.dumps(base | {"loops": []}) + "\n")
+
+    cfg = ControlFlowConfiguration(
+        base_repo_name="test/repo",
+        dataset_dirs=[d1, d2],
+        cache_dir=tmp_path,
+        model_parameters=ModelParameters(),
+        training_parameters=TrainingParameters(batch_size=4, epochs=1, learning_rate=1e-3),
+    )
+    ds = load_cflow_dataset(cfg)
+    assert list(ds["train"]["loops"]) == [None, [], [0]]
+    assert list(ds["validation"]["loops"]) == [None, []]
+    assert list(ds["test"]["loops"]) == [None, []]
 
 
 def test_budget_batches():

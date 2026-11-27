@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import transformers
 from ControlFlowConfiguration import ControlFlowConfiguration, parse_control_flow_config_json
-from datasets import load_dataset
+from datasets import Features, Sequence, Value, load_dataset
 from transformers import Trainer, TrainingArguments
 
 from pylingual.control_flow_reconstruction.block_grammar import BlockGrammar, Shape
@@ -19,11 +19,21 @@ from pylingual.control_flow_reconstruction.skeleton import parse_ref
 from pylingual.control_flow_reconstruction.transition import ALIGN, SPECIAL, STMT, TOKENS, Parse, TransitionConfig, TransitionModel, advance, allowed_row, encode_input, features, gold_actions
 from pylingual.models import TransitionPredictor
 
+CFLOW_FEATURES = Features({
+    "input": Value("string"),
+    "n_stmts": Value("int64"),
+    "shapes": Value("string"),
+    "version": Value("string"),
+    "target": Value("string"),
+    "file": Value("string"),
+    "loops": Sequence(Value("int64")),
+})
+
 
 def load_cflow_dataset(config: ControlFlowConfiguration):
     """The train/valid/test JSONL splits of every dataset dir, without the code objects too large for the model."""
     splits = {"train": "train", "validation": "valid", "test": "test"}
-    dataset = load_dataset("json", data_files={split: [str(d / f"{name}.jsonl") for d in config.dataset_dirs] for split, name in splits.items()})
+    dataset = load_dataset("json", data_files={split: [str(d / f"{name}.jsonl") for d in config.dataset_dirs] for split, name in splits.items()}, features=CFLOW_FEATURES)
     return dataset.filter(lambda row: row["n_stmts"] <= config.max_stmts and len(row["input"].split()) < config.max_input_tokens)
 
 
@@ -40,7 +50,7 @@ def collate(rows: list[dict]) -> dict[str, torch.Tensor]:
     n, length = max(2, *(row["n_stmts"] for row in rows)), -(-max(row["length"] for row in rows) // ALIGN) * ALIGN
     steps = []
     for row in rows:
-        grammar = BlockGrammar([Shape.parse(s) for s in row["shapes"].split()], row["version"])
+        grammar = BlockGrammar([Shape.parse(s) for s in row["shapes"].split()], row["version"], row.get("loops"))
         parse, walk = Parse(grammar.start()), []
         for action in gold_actions(row["target"].split()):
             walk.append((features(grammar, parse), allowed_row(grammar, parse.state, n), action.stmt if action.token == STMT else n + action.token))
@@ -136,7 +146,7 @@ class BudgetTrainer(Trainer):
 
 def exact_match(predictor: TransitionPredictor, test) -> dict:
     """Share of greedy skeletons equal to the gold skeleton, by statement count."""
-    predictions = predictor([CflowRequest.from_row(row) for row in test])
+    predictions = predictor([CflowRequest.from_row(row) for row in test], fallback=False)
     buckets = {}
     for prediction, row in zip(predictions, test):
         bucket = buckets.setdefault(max(8, 2 ** math.ceil(math.log2(row["n_stmts"]))), [0, 0])

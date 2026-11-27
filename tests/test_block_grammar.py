@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from pylingual.control_flow_reconstruction.block_grammar import END, MAX_BLOCKS, BlockGrammar, Shape, consistent, shape_of
+from pylingual.control_flow_reconstruction.block_grammar import END, MAX_BLOCKS, MAX_DEPTH, BlockGrammar, Shape, consistent, shape_of
 from pylingual.control_flow_reconstruction.model_view import line_kind
 from pylingual.control_flow_reconstruction.skeleton import CLOSE, KEYWORD_TEXT, LOOP, OPEN, parse_ref, ref
 from pylingual.utils.generate_bytecode import UV_VERSIONS, CompileError, PyenvError, _uv_python, compile_version
@@ -38,8 +38,11 @@ PALETTE = [
     ("K_stmt", "while x: x = 1", "3.6"),
     ("K_stmt", "try: x = 1", "3.6"),
     ("K_stmt", "except E: pass", "3.6"),
+    ("K_stmt", "except E: break", "3.6"),
     ("K_stmt", "else: x = 1", "3.6"),
+    ("K_stmt", "else: break", "3.6"),
     ("K_stmt", "finally: pass", "3.6"),
+    ("K_stmt", "finally: break", "3.6"),
     ("K_deco", "@d", "3.6"),
     ("K_def", "def f(): pass", "3.6"),
     ("K_def", "class C: pass", "3.6"),
@@ -49,6 +52,9 @@ PALETTE = [
     ("K_case", "case _:", "3.10"),
     ("K_case", "case y:", "3.10"),
     ("K_stmt", "case 2: x = 1", "3.10"),
+    ("K_stmt", "case 2: break", "3.10"),
+    ("K_stmt", "case 2: continue", "3.10"),
+    ("K_stmt", "case 2: return x", "3.10"),
 ]
 OPENING = {OPEN, LOOP, "else", "try", "finally", "except", "while_true", "case_"}
 
@@ -149,6 +155,9 @@ def test_shapes():
     assert str(shape_of("K_except", "except:")) == "except+bare"
     assert str(shape_of("K_none", "except:")) == "except+bare" and str(shape_of("K_none", "while True:")) == "while"
     assert str(shape_of("K_except", "except* E:")) == "except*"
+    for text in ("except* E:", "except*(E, F):", "except * E:"):
+        assert line_kind(text) == "K_except" and str(shape_of(line_kind(text), text)) == "except*"
+    assert line_kind("except_x = 1") == "K_stmt" and str(shape_of("K_stmt", "except_x = 1")) == "stmt"
     assert str(shape_of("K_case", "case [x, *_]:")) == "case"
     assert str(shape_of("K_case", "case 1 | x:")) == "case+bare"
     assert str(shape_of("K_stmt", "if x: break")) == "inline:if+break"
@@ -203,6 +212,51 @@ def test_rules():
     deep = ["try", OPEN] * (MAX_BLOCKS // 2) + ["try", OPEN]
     assert "try" not in BlockGrammar([stmt], "3.12").allowed(_walk(BlockGrammar([stmt], "3.12"), deep[:-2]))[1]
     assert not BlockGrammar([stmt], "3.12").accepts(deep)
+
+
+def test_complete_jump_and_return_clauses():
+    """Restricted contexts (outside loops, inside except*) cannot strand jump/return-bearing cases or inline clauses."""
+    # match + inline case break: match cannot open at root outside a loop
+    shapes = [shape_of(line_kind(t), t) for t in ("match x:", "case 1: break")]
+    g = BlockGrammar(shapes, "3.12")
+    assert g.allowed(g.start())[0] == 0
+    done = g.complete(g.start())
+    assert g.accepts(done)
+
+    # except* + match + inline case return: match cannot open inside except*
+    shapes = [shape_of(line_kind(t), t) for t in ("try:", "except* ValueError:", "match x:", "case 1: return 1")]
+    g = BlockGrammar(shapes, "3.12")
+    st = _walk(g, "<s0> { } <s1> {".split())
+    assert not (g.allowed(st)[0] >> 2 & 1)
+    assert g.accepts("<s0> { } <s1> {".split() + g.complete(st))
+
+    # two matches with one bare jump case and one bare return case: placing a match at root uses the return-capable slot
+    shapes = [shape_of(line_kind(t), t) for t in ("match x:", "match y:", "case _: break", "case _: return 1")]
+    g = BlockGrammar(shapes, "3.12")
+    assert g.allowed(g.start())[0] == 0b11
+    st = _walk(g, "<s0> {".split())
+    assert g.accepts("<s0> {".split() + g.complete(st))
+
+    # inline clauses that also require a loop
+    for line in ("else: break", "except E: break", "finally: break"):
+        g = BlockGrammar([shape_of(line_kind(line), line)], "3.12")
+        assert g.accepts(g.complete(g.start())), line
+
+    # match cannot open at MAX_DEPTH where its mandatory case would exceed MAX_DEPTH
+    deep_shapes = [shape_of("K_cond", "if a:") for _ in range(MAX_DEPTH - 2)] + [shape_of(line_kind(t), t) for t in ("match x:", "case 1: break")]
+    gd = BlockGrammar(deep_shapes, "3.12")
+    prefix = ["while_true", "{"] + [tok for i in range(MAX_DEPTH - 2) for tok in (ref(i), "{")]
+    st = _walk(gd, prefix)
+    assert len(st.stack) == MAX_DEPTH and not (gd.allowed(st)[0] >> (MAX_DEPTH - 2) & 1)
+    assert gd.accepts(prefix + gd.complete(st))
+
+    # Python < 3.8 finally forbids continue: match cannot open inside finally when a case has continue
+    shapes_37 = [shape_of(line_kind(t), t) for t in ("try:", "finally:", "match x:", "case 1: continue")]
+    g37 = BlockGrammar(shapes_37, "3.7")
+    prefix_37 = "while_true { <s0> { } <s1> {".split()
+    st37 = _walk(g37, prefix_37)
+    assert not (g37.allowed(st37)[0] >> 2 & 1)
+    assert g37.accepts(prefix_37 + g37.complete(st37))
 
 
 def _walk(grammar: BlockGrammar, tokens: list[str]):

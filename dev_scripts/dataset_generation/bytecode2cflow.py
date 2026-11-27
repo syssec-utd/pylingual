@@ -79,9 +79,10 @@ def assign_lines(pyc: PYCFile, src_lines: list[str]):
 class SkeletonBuilder:
     """Gold skeleton of an AST body; `line2idx` maps each source line to the statement that starts it."""
 
-    def __init__(self, lines: list[str], line2idx: dict[int, int]):
+    def __init__(self, lines: list[str], line2idx: dict[int, int], loops: frozenset[int] | None = None):
         self.lines = lines
         self.line2idx = line2idx
+        self.loops = loops
         self.used: set[int] = set()
 
     def text(self, lno: int) -> str:
@@ -137,12 +138,20 @@ class SkeletonBuilder:
         if isinstance(n, ast.If):
             return self.if_(n)
         if isinstance(n, ast.While):
-            # `while cond:` has bytecode for its line; `while True:` usually has none
+            # `while cond:` has bytecode for its line; `while True:` usually has none (or a NOP on 3.12+ when terminating)
             test_true = isinstance(n.test, ast.Constant) and bool(n.test.value)
-            head = ["loop", r] if (r := self.ref(n.lineno)) else (["while_true"] if test_true else None)
-            if head is None:
-                raise Invalid("while header without bytecode")
-            return self.block(head, n.body) + self.orelse(n)
+            if (r := self.ref(n.lineno)) is not None:
+                idx = self.line2idx[n.lineno]
+                if self.loops is None or idx in self.loops:
+                    return self.block(["loop", r], n.body) + self.orelse(n)
+                if self.text(n.lineno) in ("while True:", "while 1:"):
+                    # non-looping `while True:` NOP is cleared to an empty statement; place its ref before the keyword loop
+                    return [r, *self.block(["while_true"], n.body), *self.orelse(n)]
+                # on 3.8+, a while whose body never jumps back or breaks compiles identically to an if
+                return self.block([r], n.body) + self.orelse(n)
+            if test_true:
+                return self.block(["while_true"], n.body) + self.orelse(n)
+            raise Invalid("while header without bytecode")
         if isinstance(n, (ast.For, ast.AsyncFor)):
             return self.block(self.header(n.lineno), n.body) + self.orelse(n)
         if isinstance(n, (ast.With, ast.AsyncWith)):
@@ -150,7 +159,11 @@ class SkeletonBuilder:
         if isinstance(n, ast.Try) or type(n).__name__ == "TryStar":
             out = self.block(self.header(n.lineno, "try"), n.body)
             for h in n.handlers:
-                out += self.block(self.header(h.lineno, "except" if h.type is None else None), h.body)
+                head = self.header(h.lineno, "except" if h.type is None else None)
+                if not self.text(h.lineno).endswith(":") and h.body and all(s.lineno == h.lineno and (s.end_lineno or s.lineno) == h.lineno for s in h.body):
+                    out += head
+                else:
+                    out += self.block(head, h.body)
             out += self.orelse(n)
             if n.finalbody:
                 prev = (n.orelse or n.handlers or n.body)[-1].end_lineno
@@ -223,7 +236,7 @@ def make_examples(pyc: PYCFile, src: str) -> list[dict]:
         stmts = request.stmts
         line2idx = {s.insts[0].starts_line: s.index for s in stmts if s.insts[0].starts_line is not None}
         try:
-            builder = SkeletonBuilder(lines, line2idx)
+            builder = SkeletonBuilder(lines, line2idx, request.loops)
             target = builder.body(body)
             missing = set(line2idx.values()) - builder.used
             if missing:
