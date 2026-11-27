@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import functools
 import gc
-import redis
-import yaml
 import logging
+import re
 import threading
-
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import redis
+import yaml
 
 from pylingual.masking.model_disasm import (
     encode_opcodes,
@@ -17,118 +18,310 @@ from pylingual.masking.model_disasm import (
     normalize_masks,
     restore_masks,
 )
-from pylingual.utils.tracked_list import TrackedDataset, TRANSLATION_STEP
+from pylingual.translation_constraints import StatementLogitsProcessor, TokenizerConstraintIndex
 from pylingual.utils.lazy import lazy_import
+from pylingual.utils.tracked_list import TRANSLATION_STEP, TrackedDataset
 
 if TYPE_CHECKING:
     import torch
     import transformers
+
+    from pylingual.utils.version import PythonVersion
 else:
     lazy_import("torch")
     lazy_import("transformers")
 
 logger = logging.getLogger(__name__)
 
+_MASK_INDEX_RE = re.compile(r"<mask_(0|[1-9][0-9]*)>", re.ASCII)
+_TRANSLATION_FALLBACK = "'''Decompiler error: line too long for translation. Please decompile this statement manually.'''"
+
+
+def _mask_count(text: str) -> int:
+    nums = [int(m) for m in _MASK_INDEX_RE.findall(text)]
+    return (max(nums) + 1) if nums else 0
+
+
+def _has_oob_mask_index(text: str, mask_count: int) -> bool:
+    return any(int(m) >= mask_count for m in _MASK_INDEX_RE.findall(text))
+
+
+def _is_resource_error(exc: BaseException) -> bool:
+    if isinstance(exc, (MemoryError, torch.OutOfMemoryError)):
+        return True
+    if isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        return "out of memory" in msg or "cuda error" in msg or "cublas" in msg or "cudnn" in msg
+    return False
+
+
 # translator with caching
 class CacheTranslator:
     """
-    Adds cache support for statement translation
+    Adds cache support and inference-time lexical/mask constraints for statement translation.
 
-    :param translator : The loaded translation model
+    :param model : The loaded translation model
+    :param tokenizer : The loaded statement tokenizer
+    :param cache_namespace : Base namespace pinning model & tokenizer revisions
     :param maxsize : The maximum amount of cached items
     """
 
-    def __init__(self, model: transformers.T5ForConditionalGeneration, tokenizer: transformers.PreTrainedTokenizerFast, *, cache_namespace: str, redis_cache_server_ip: str = None, redis_port: int = 1679, device="cpu", maxsize=50000):
+    def __init__(
+        self,
+        model: transformers.T5ForConditionalGeneration,
+        tokenizer: transformers.PreTrainedTokenizerFast,
+        *,
+        cache_namespace: str,
+        redis_cache_server_ip: str = None,
+        redis_port: int = 1679,
+        device="cpu",
+        maxsize=50000,
+        use_constraints: bool = True,
+        use_version_prefix: bool | None = None,
+        max_length: int = 512,
+        retry_max_length: int = 1024,
+    ):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.cache = OrderedDict()
         self.maxsize = maxsize
+        self.use_constraints = use_constraints
+        if use_version_prefix is None:
+            use_version_prefix = bool(getattr(getattr(model, "config", None), "pylingual_version_prefix", False))
+        self.use_version_prefix = use_version_prefix
+        self.max_length = max_length
+        self.retry_max_length = max(max_length, retry_max_length)
+
         roles = ("bos", "eos", "pad", "unk", "mask", "cls", "sep")
         self.decode_excluded_ids = {identifier for role in roles if (identifier := getattr(tokenizer, f"{role}_token_id", None)) is not None}
-        self.decode_excluded_ids.update(identifier for group in model.generation_config.bad_words_ids or [] for identifier in group)
+        bad_words_ids = getattr(getattr(model, "generation_config", None), "bad_words_ids", None) or []
+        self.decode_excluded_ids.update(identifier for group in bad_words_ids for identifier in group)
+        self.constraint_index = TokenizerConstraintIndex(tokenizer, bad_words_ids=bad_words_ids) if use_constraints else None
         self.model.to(self.device)
         self.model.eval()
 
+        policy_tag = f":c{int(self.use_constraints)}-ml{self.max_length}-{self.retry_max_length}-vp{int(self.use_version_prefix)}"
+
         # Redis Caching
         self.redis_enabled = redis_cache_server_ip is not None
-
         if self.redis_enabled:
             self.redis_db = redis.StrictRedis(host=redis_cache_server_ip, port=redis_port, db=0, encoding="utf-8", decode_responses=True)
-            self.redis_namespace_prefix = f"{cache_namespace}:"
+            self.redis_namespace_prefix = f"{cache_namespace}{policy_tag}:"
 
     def __getitem__(self, item):
         self.cache.move_to_end(item)
         return self.cache[item]
 
-    def _translate_and_decode(self, batch: list[str]) -> list[str]:
-        """Translate a single batch of requests"""
-        batch = [encode_opcodes(text) for text in batch]
-        encoded = self.tokenizer(batch, return_tensors="pt", padding=True).to(self.device)
+    def _is_pre312(self, version: PythonVersion | tuple[int, int] | str | None) -> bool:
+        if version is None:
+            return False
+        if isinstance(version, str):
+            return tuple(map(int, version.split(".")[:2])) < (3, 12)
+        if isinstance(version, tuple):
+            return version[:2] < (3, 12)
+        return version < (3, 12)
+
+    def _version_str(self, version: PythonVersion | tuple[int, int] | str | None) -> str | None:
+        if version is None:
+            return None
+        if isinstance(version, tuple):
+            return f"{version[0]}.{version[1]}"
+        parts = str(version).split(".")
+        return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else str(version)
+
+    def _format_encoder_input(self, normalized_bytecode: str, version: PythonVersion | tuple[int, int] | str | None = None) -> str:
+        encoded = encode_opcodes(normalized_bytecode)
+        if self.use_version_prefix:
+            if version is None:
+                raise ValueError("version is required when use_version_prefix=True")
+            return f"v{self._version_str(version)} <SEP> {encoded}"
+        return encoded
+
+    def _cache_key(self, normalized_bytecode: str, version: PythonVersion | tuple[int, int] | str | None = None) -> str:
+        if self.use_version_prefix:
+            if version is None:
+                raise ValueError("version is required when use_version_prefix=True")
+            return f"v{self._version_str(version)} <SEP> {normalized_bytecode}"
+        if self.use_constraints and self._is_pre312(version):
+            return f"py<312:{normalized_bytecode}"
+        return normalized_bytecode
+
+    def _decode_sequence(self, token_ids: list[int]) -> str:
+        filtered_tokens = [tok for tok in token_ids if tok not in self.decode_excluded_ids]
+        return self.tokenizer.decode(filtered_tokens, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+
+    def _generate_batch(
+        self,
+        batch: list[str],
+        *,
+        version: PythonVersion | tuple[int, int] | str | None = None,
+        max_length: int | None = None,
+        num_beams: int = 1,
+    ) -> torch.Tensor:
+        eff_max_len = max_length if max_length is not None else self.max_length
+        encoder_texts = [self._format_encoder_input(text, version) for text in batch]
+        encoded = self.tokenizer(encoder_texts, return_tensors="pt", padding=True).to(self.device)
+
+        gen_kwargs: dict = {"max_length": eff_max_len}
+        if num_beams > 1:
+            gen_kwargs["num_beams"] = num_beams
+            gen_kwargs["num_return_sequences"] = num_beams
+            gen_kwargs["early_stopping"] = True
+        if self.use_constraints and self.constraint_index is not None:
+            mask_counts = [_mask_count(text) for text in batch]
+            gen_kwargs["logits_processor"] = [
+                StatementLogitsProcessor(
+                    self.constraint_index,
+                    mask_counts,
+                    py_lt_312=self._is_pre312(version),
+                )
+            ]
+
         with torch.no_grad():
-            output = self.model.generate(**encoded, max_length=512)
+            return self.model.generate(**encoded, **gen_kwargs)
 
-        decoded_results = []
-        for tokens in output:
-            # explicitly filter out the special tokens we want to skip: <pad>, <s>, </s>, <unk>, <mask>
-            filtered_tokens = [tok for tok in tokens.tolist() if tok not in self.decode_excluded_ids]
-            # decode the remaining tokens
-            decoded_results.append(self.tokenizer.decode(filtered_tokens, skip_special_tokens=False))
+    def _has_natural_eos(self, token_ids: list[int]) -> bool:
+        eos_id = self.tokenizer.eos_token_id
+        return eos_id is None or eos_id in token_ids[1:]
 
-        return decoded_results
+    def _is_valid_completed(
+        self,
+        token_ids: list[int],
+        *,
+        mask_count: int,
+        version: PythonVersion | tuple[int, int] | str | None,
+    ) -> bool:
+        if not self._has_natural_eos(token_ids):
+            return False
+        if self.use_constraints and self.constraint_index is not None:
+            return self.constraint_index.check_token_sequence(
+                token_ids[1:],
+                py_lt_312=self._is_pre312(version),
+                mask_count=mask_count,
+            )
+        return True
 
-    def _translate_with_backoff(self, translation_requests: TrackedDataset | list[str], batch_size: int = 32) -> list[str]:
-        translation_results = []
-        # process in batches
+    def _translate_and_decode_with_status(
+        self,
+        batch: list[str],
+        *,
+        version: PythonVersion | tuple[int, int] | str | None = None,
+        max_length: int | None = None,
+    ) -> list[tuple[str, bool]]:
+        """Translate a single batch, retrying cap-exhausted rows once at retry_max_length.
+
+        Returns ``(decoded_text, cacheable)`` pairs; outputs that lack natural EOS or fail
+        token-level constraint validation (e.g. via liveness fallback) are marked non-cacheable.
+        """
+        eff_max_len = max_length if max_length is not None else self.max_length
+        mask_counts = [_mask_count(text) for text in batch]
+        output = self._generate_batch(batch, version=version, max_length=eff_max_len, num_beams=1)
+        token_rows = output.tolist()
+        decoded_results = [self._decode_sequence(toks) for toks in token_rows]
+        cacheable = [
+            self._is_valid_completed(toks, mask_count=mc, version=version) and not _has_oob_mask_index(decoded, mc)
+            for toks, decoded, mc in zip(token_rows, decoded_results, mask_counts)
+        ]
+
+        # Retry only rows that exhausted max_length without natural EOS (never force-closing mid-expression)
+        eos_id = self.tokenizer.eos_token_id
+        if eos_id is not None and eff_max_len < self.retry_max_length:
+            exhausted = [idx for idx, toks in enumerate(token_rows) if len(toks) >= eff_max_len and eos_id not in toks[1:]]
+            if exhausted:
+                retry_batch = [batch[idx] for idx in exhausted]
+                retry_output = self._generate_batch(retry_batch, version=version, max_length=self.retry_max_length, num_beams=1)
+                for idx, retry_toks in zip(exhausted, retry_output.tolist()):
+                    decoded = self._decode_sequence(retry_toks)
+                    decoded_results[idx] = decoded
+                    mc = mask_counts[idx]
+                    cacheable[idx] = self._is_valid_completed(
+                        retry_toks, mask_count=mc, version=version
+                    ) and not _has_oob_mask_index(decoded, mc)
+
+        return list(zip(decoded_results, cacheable))
+
+    def _translate_and_decode(
+        self,
+        batch: list[str],
+        *,
+        version: PythonVersion | tuple[int, int] | str | None = None,
+        max_length: int | None = None,
+    ) -> list[str]:
+        """Translate a single batch and return decoded strings."""
+        return [text for text, _ in self._translate_and_decode_with_status(batch, version=version, max_length=max_length)]
+
+    def _translate_with_backoff(
+        self,
+        translation_requests: TrackedDataset | list[str],
+        batch_size: int = 32,
+        *,
+        version: PythonVersion | tuple[int, int] | str | None = None,
+    ) -> list[tuple[str, bool]]:
+        """Translate in batches, backing off only on resource/OOM errors. Returns ``(text, cacheable)`` pairs."""
+        translation_results: list[tuple[str, bool]] = []
         for i in range(0, len(translation_requests), batch_size):
             batch = translation_requests[i : i + batch_size]
             try:
-                translation_results.extend(self._translate_and_decode(batch))
+                translation_results.extend(self._translate_and_decode_with_status(batch, version=version))
                 continue
             except Exception as e:
+                if not _is_resource_error(e):
+                    raise
                 error = repr(e)
             # handled outside the except block so tensors can be freed
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             if batch_size == 1:
-                # fallback
                 logger.info(f"Could not translate statement ({error})")
-                translation_results.append("'''Decompiler error: line too long for translation. Please decompile this statement manually.'''")
+                translation_results.append((_TRANSLATION_FALLBACK, False))
             else:
-                # retry with a smaller batch size
                 logger.info(f"Lowering translation batch size to {batch_size // 2} ({error})")
-                translation_results.extend(self._translate_with_backoff(batch, batch_size=batch_size // 2))
+                translation_results.extend(self._translate_with_backoff(batch, batch_size=batch_size // 2, version=version))
         return translation_results
 
-    def __call__(self, args: list, check_timeout: callable = None, **_):
+    def __call__(self, args: list, check_timeout: callable = None, *, version: PythonVersion | tuple[int, int] | str | None = None, **_):
         normalized_args = [normalize_masks(fix_jump_targets(x)) for x in args]
+        keyed_args = [(self._cache_key(norm, version), norm, order) for norm, order in normalized_args]
 
         if self.redis_enabled:
-            # Update local cache from redis
-            to_fetch_from_redis = list({norm for norm, _ in normalized_args if norm not in self.cache})
+            to_fetch_from_redis = list({key for key, _, _ in keyed_args if key not in self.cache})
             redis_results = {key: self.redis_db.get(f"{self.redis_namespace_prefix}{key}") for key in to_fetch_from_redis}
             for translation_key, translation_result in redis_results.items():
                 if translation_result:
                     self.cache[translation_key] = translation_result
 
-        # New are those not in the local cache
+        # Deduplicate missing entries by cache key, preserving normalized bytecode for model input
+        missing_by_key: dict[str, str] = {}
+        for key, norm, _ in keyed_args:
+            if key not in self.cache and key not in missing_by_key:
+                missing_by_key[key] = norm
+
+        ordered_missing = sorted(missing_by_key.items(), key=lambda kv: len(kv[1]))
+        new_keys = [k for k, _ in ordered_missing]
         new = TrackedDataset(
             TRANSLATION_STEP,
-            # sorted by length so batches need less padding; order doesn't matter since results are keyed by request
-            sorted({norm for norm, _ in normalized_args if norm not in self.cache}, key=len),
+            [norm for _, norm in ordered_missing],
             check_timeout=check_timeout,
         )
 
-        # Now, "new" has been updated to those not in local
-        for arg, result in zip(new.x, self._translate_with_backoff(new)):
-            self.cache[arg] = result
-            if self.redis_enabled:
-                self.redis_db.set(f"{self.redis_namespace_prefix}{arg}", self.cache[arg])
+        uncached_fallbacks: dict[str, str] = {}
+        for key, (result, cacheable) in zip(new_keys, self._translate_with_backoff(new, version=version)):
+            if cacheable:
+                self.cache[key] = result
+                if self.redis_enabled:
+                    self.redis_db.set(f"{self.redis_namespace_prefix}{key}", result)
+            else:
+                uncached_fallbacks[key] = result
 
-        results = [restore_masks(self[norm], order) for norm, order in normalized_args]
+        results = [
+            restore_masks(self[key] if key in self.cache else uncached_fallbacks[key], order)
+            for key, _, order in keyed_args
+        ]
         while len(self.cache) > self.maxsize:
             self.cache.popitem(last=False)
         return results
+
 
 class OpcodeSegmenter:
     """Keep the trained instruction confidences used by segmentation correction."""
@@ -175,6 +368,7 @@ def _cached_first(fn, *args, **kwargs):
         logger.info(f"{getattr(fn, '__qualname__', fn)} not found in local cache for {args[:1]}, downloading...")
         return fn(*args, local_files_only=False, **kwargs)
 
+
 def _load_tokenizer(config, task, token):
     return _cached_first(transformers.PreTrainedTokenizerFast.from_pretrained, config["REPO"], revision=config["REVISION"], subfolder=task, token=token)
 
@@ -183,6 +377,7 @@ def _free_device_memory():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
 
 def _single_slot_cache(fn):
     """Keep only the latest models loaded, freeing the old ones first; falls back to CPU on GPU OOM."""
@@ -208,6 +403,7 @@ def _single_slot_cache(fn):
             return loaded_models
 
     return wrapper
+
 
 @_single_slot_cache
 def load_models(
@@ -248,17 +444,17 @@ def load_models(
         logger.info("Using CPU for models")
         device = torch.device("cpu")
     segmenter = OpcodeSegmenter(segmentation_model, segmentation_tokenizer, device)
+
     #########################################
     # Sequence translation model components #
     #########################################
-    
     translation_model = _cached_first(
         transformers.T5ForConditionalGeneration.from_pretrained,
         stmt_config["REPO"],
         revision=stmt_config["REVISION"],
         token=token,
     )
-   
+
     translation_tokenizer = _load_tokenizer(tokenizer_config, "statement", token)
     if translation_model.get_input_embeddings().num_embeddings != len(translation_tokenizer):
         raise ValueError("Translation model vocabulary differs from its frozen tokenizer")
@@ -270,5 +466,6 @@ def load_models(
         redis_cache_server_ip=redis_cache_server_ip,
         redis_port=redis_port,
         device=device,
+        use_version_prefix=stmt_config.get("VERSION_PREFIX"),
     )
     return segmenter, translator
