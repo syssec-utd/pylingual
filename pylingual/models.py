@@ -158,11 +158,12 @@ class ControlFlowPredictor:
         """Up to `num_beams` skeleton candidates (source order, best first) for each request of a batch"""
         raise NotImplementedError
 
-    def __call__(self, requests: list[CflowRequest | None], num_beams: int = 1, check_timeout: callable = None) -> list[list[list[str]] | None]:
+    def __call__(self, requests: list[CflowRequest | None], num_beams: int = 1, check_timeout: callable = None, *, fallback: bool = True) -> list[list[list[str]] | None]:
         """
         Candidate skeletons (source order, best first) for each request, all accepted by its block grammar.
-        Statements in order for inputs over the model's limits and when the model fails or gives no valid skeleton, and
-        without blocks when no skeleton fits (inconsistent shapes, from a mistranslation). None only for no request.
+        When `fallback` is True (the default), inputs over the model's limits or where the model fails or gives no valid
+        skeleton get their statements in order (and without blocks when shapes are inconsistent), so None appears only
+        for a None request. When `fallback` is False, unpredicted requests stay None.
         """
         results = [None] * len(requests)
         todo = []
@@ -192,9 +193,10 @@ class ControlFlowPredictor:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             logger.info(f"Control flow model failed on {len(batch)} code objects, using statement order ({error})")
-        for i, request in enumerate(requests):
-            if results[i] is None and request is not None:
-                results[i] = [request.in_order()]
+        if fallback:
+            for i, request in enumerate(requests):
+                if results[i] is None and request is not None:
+                    results[i] = [request.in_order()]
         return results
 
 

@@ -73,3 +73,63 @@ def test_any_accepted_skeleton_compiles(fixture, version, tmp_path):
             compile_version(guessed, guessed.with_suffix(".pyc"), version)
         except CompileError as e:
             pytest.fail(f"{e}\n" + "\n".join(f"{g['name']}: {g['target']}" for g in guesses))
+
+
+@pytest.mark.parametrize("version", ["3.11", "3.12", "3.13", "3.14"])
+def test_except_star_gold_round_trip(version, tmp_path):
+    """try/except*/else/finally functions produce valid gold skeletons and round-trip to equivalent bytecode."""
+    version = PythonVersion(version)
+    if version != HOST and version in UV_VERSIONS and _uv_python(version) is None:
+        pytest.skip(f"Python {version} not available")
+    src = (
+        "def f(a):\n"
+        "    try:\n"
+        "        g(a)\n"
+        "    except* ValueError as e:\n"
+        "        h(e)\n"
+        "    except*(TypeError, KeyError) as e:\n"
+        "        k(e)\n"
+        "    else:\n"
+        "        ok()\n"
+        "    finally:\n"
+        "        done()\n"
+    )
+    py, pyc_path = tmp_path / "exstar.py", tmp_path / "exstar.pyc"
+    py.write_text(src)
+    compile_version(py, pyc_path, version)
+    pyc = PYCFile(str(pyc_path))
+    examples = make_examples(pyc, src)
+    assert "<module>.f" in {e["name"] for e in examples}
+    assert all(CflowRequest.from_row(e).grammar().accepts(e["target"].split()) for e in examples)
+    restored = tmp_path / "restored.py"
+    restored.write_text(render_with_skeletons(pyc, src.split("\n"), examples))
+    compile_version(restored, restored.with_suffix(".pyc"), version)
+    failed = [str(r) for r in compare_pyc(pyc_path, restored.with_suffix(".pyc")) if not r.success]
+    assert not failed, restored.read_text()
+
+
+@pytest.mark.parametrize("version", ["3.6", "3.7", "3.8", "3.12"])
+def test_non_jumping_while_gold_round_trip(version, tmp_path):
+    """A while loop whose body always returns round-trips on both <=3.7 (SETUP_LOOP) and 3.8+ (equivalent to if)."""
+    version = PythonVersion(version)
+    if version != HOST and version in UV_VERSIONS and _uv_python(version) is None:
+        pytest.skip(f"Python {version} not available")
+    src = "def f(x):\n    while x:\n        return 1\n    return 0\n"
+    py, pyc_path = tmp_path / "wret.py", tmp_path / "wret.pyc"
+    py.write_text(src)
+    try:
+        compile_version(py, pyc_path, version)
+    except PyenvError as e:
+        pytest.skip(str(e))
+    pyc = PYCFile(str(pyc_path))
+    examples = make_examples(pyc, src)
+    f_row = next((e for e in examples if e["name"] == "<module>.f"), None)
+    assert f_row is not None
+    assert CflowRequest.from_row(f_row).grammar().accepts(f_row["target"].split())
+    if version <= (3, 7):
+        assert 0 in f_row["loops"] and f_row["target"].startswith("loop ")
+    restored = tmp_path / "restored.py"
+    restored.write_text(render_with_skeletons(pyc, src.split("\n"), examples))
+    compile_version(restored, restored.with_suffix(".pyc"), version)
+    failed = [str(r) for r in compare_pyc(pyc_path, restored.with_suffix(".pyc")) if not r.success]
+    assert not failed, restored.read_text()

@@ -128,9 +128,9 @@ def main(code_dir: Path, model: str | None, baseline: bool, beams: int, limit: i
         for py, file_examples in tqdm.tqdm(examples.items(), desc="predict"):
             requests = [CflowRequest.from_row(e) for e in file_examples]
             start = time.perf_counter()
-            greedy = predictor(requests)
+            greedy = predictor(requests, fallback=False)
             seconds += time.perf_counter() - start
-            beam = predictor(requests, num_beams=beams) if beams > 1 else greedy
+            beam = predictor(requests, num_beams=beams, fallback=False) if beams > 1 else greedy
             candidates[py] = {}
             for e, g, k in zip(file_examples, greedy, beam):
                 e["greedy"] = g[0] if g else None

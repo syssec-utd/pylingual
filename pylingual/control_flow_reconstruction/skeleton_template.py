@@ -140,7 +140,10 @@ class SkeletonTemplate(ControlFlowTemplate):
             text = self.inline_header(node, source)
         else:
             text = KEYWORD_TEXT[node.keyword] if node.sid is None else self.header_text(node, source)
-        words = (text or "").removeprefix("async ").split()
+        text_stripped = (text or "").removeprefix("async ")
+        if text_stripped.startswith("except") and text_stripped[6:].lstrip().startswith("*"):
+            return "except"
+        words = text_stripped.split()
         return words[0].rstrip(":*") if words else None
 
     def is_elif(self, node: Node, source: SourceContext) -> bool:

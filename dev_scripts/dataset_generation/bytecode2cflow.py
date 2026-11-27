@@ -79,9 +79,10 @@ def assign_lines(pyc: PYCFile, src_lines: list[str]):
 class SkeletonBuilder:
     """Gold skeleton of an AST body; `line2idx` maps each source line to the statement that starts it."""
 
-    def __init__(self, lines: list[str], line2idx: dict[int, int]):
+    def __init__(self, lines: list[str], line2idx: dict[int, int], loops: frozenset[int] | None = None):
         self.lines = lines
         self.line2idx = line2idx
+        self.loops = loops
         self.used: set[int] = set()
 
     def text(self, lno: int) -> str:
@@ -139,7 +140,17 @@ class SkeletonBuilder:
         if isinstance(n, ast.While):
             # `while cond:` has bytecode for its line; `while True:` usually has none
             test_true = isinstance(n.test, ast.Constant) and bool(n.test.value)
-            head = ["loop", r] if (r := self.ref(n.lineno)) else (["while_true"] if test_true else None)
+            if (r := self.ref(n.lineno)) is not None:
+                idx = self.line2idx[n.lineno]
+                if self.loops is None or idx in self.loops:
+                    head = ["loop", r]
+                elif not test_true:
+                    # on 3.8+, a while whose body never jumps back or breaks compiles identically to an if
+                    head = [r]
+                else:
+                    head = None
+            else:
+                head = ["while_true"] if test_true else None
             if head is None:
                 raise Invalid("while header without bytecode")
             return self.block(head, n.body) + self.orelse(n)
@@ -223,7 +234,7 @@ def make_examples(pyc: PYCFile, src: str) -> list[dict]:
         stmts = request.stmts
         line2idx = {s.insts[0].starts_line: s.index for s in stmts if s.insts[0].starts_line is not None}
         try:
-            builder = SkeletonBuilder(lines, line2idx)
+            builder = SkeletonBuilder(lines, line2idx, request.loops)
             target = builder.body(body)
             missing = set(line2idx.values()) - builder.used
             if missing:

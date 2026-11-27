@@ -114,12 +114,32 @@ def test_shared_control_flow_config():
 
 
 def test_in_order_past_the_limits():
-    """Requests the model cannot take get their statements in order, so every request has a skeleton."""
+    """Requests the model cannot take get their statements in order by default, or None with fallback=False."""
     model = tiny_model()
     model.config.max_stmts = 0
-    request = CflowRequest.from_row({"input": "| <s0> K_cond POP_JUMP_IF_FALSE f+ <s2> | <s1> K_stmt | <s2> K_stmt RETURN_CONST nf", "shapes": "cond stmt stmt", "version": "3.12"})
+    row = {"input": "| <s0> K_cond POP_JUMP_IF_FALSE f+ <s2> | <s1> K_stmt | <s2> K_stmt RETURN_CONST nf", "shapes": "cond stmt stmt", "version": "3.12", "n_stmts": 3, "target": "<s0> { <s1> } <s2>", "loops": []}
+    request = CflowRequest.from_row(row)
+    straight = CflowRequest.from_row({"input": "| <s0> K_stmt | <s1> K_stmt RETURN_CONST nf", "shapes": "stmt stmt", "version": "3.12"})
     grammar = request.grammar()
-    assert TransitionPredictor(model)([request, None], num_beams=2) == [[grammar.complete(grammar.start())], None]
+    predictor = TransitionPredictor(model)
+    assert predictor([request, None], num_beams=2) == [[grammar.complete(grammar.start())], None]
+    assert predictor([request, straight, None], num_beams=2, fallback=False) == [None, [["<s0>", "<s1>"]], None]
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "dev_scripts" / "control_flow"))
+    from train_transition import collate, exact_match
+
+    report = exact_match(predictor, [row])
+    assert report["predicted"] == 0.0 and report["exact_match"] == 0.0
+
+    # collate honors row["loops"] so LOOP is masked out when loops is empty
+    ids, refs, stmt_pos = (
+        [model.vocab.get(t, 1) if not t.startswith("<s") else 2 for t in row["input"].split()],
+        [int(t[2:-1]) if t.startswith("<s") else -1 for t in row["input"].split()],
+        [1, 6, 9],
+    )
+    batch = collate([row | {"input_ids": ids, "refs": refs, "stmt_pos": stmt_pos, "length": len(ids)}])
+    loop_col = batch["allowed"].shape[-1] - len(TOKENS) + TOKENS.index("loop")
+    assert not batch["allowed"][0, 0, loop_col]
 
 
 def test_budget_batches():

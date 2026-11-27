@@ -40,7 +40,7 @@ def collate(rows: list[dict]) -> dict[str, torch.Tensor]:
     n, length = max(2, *(row["n_stmts"] for row in rows)), -(-max(row["length"] for row in rows) // ALIGN) * ALIGN
     steps = []
     for row in rows:
-        grammar = BlockGrammar([Shape.parse(s) for s in row["shapes"].split()], row["version"])
+        grammar = BlockGrammar([Shape.parse(s) for s in row["shapes"].split()], row["version"], row.get("loops"))
         parse, walk = Parse(grammar.start()), []
         for action in gold_actions(row["target"].split()):
             walk.append((features(grammar, parse), allowed_row(grammar, parse.state, n), action.stmt if action.token == STMT else n + action.token))
@@ -136,7 +136,7 @@ class BudgetTrainer(Trainer):
 
 def exact_match(predictor: TransitionPredictor, test) -> dict:
     """Share of greedy skeletons equal to the gold skeleton, by statement count."""
-    predictions = predictor([CflowRequest.from_row(row) for row in test])
+    predictions = predictor([CflowRequest.from_row(row) for row in test], fallback=False)
     buckets = {}
     for prediction, row in zip(predictions, test):
         bucket = buckets.setdefault(max(8, 2 ** math.ceil(math.log2(row["n_stmts"]))), [0, 0])

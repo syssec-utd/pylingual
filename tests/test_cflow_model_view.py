@@ -7,7 +7,7 @@ import pytest
 
 from dataset_generation.bytecode2cflow import assign_lines
 from pylingual.control_flow_reconstruction.block_grammar import BlockGrammar, shape_of
-from pylingual.control_flow_reconstruction.model_view import Statement, cflow_request, encode_code_object, line_kind, split_statements
+from pylingual.control_flow_reconstruction.model_view import CflowRequest, Statement, cflow_request, encode_code_object, line_kind, split_statements
 from pylingual.control_flow_reconstruction.source import SourceContext
 from pylingual.control_flow_reconstruction.skeleton_template import SkeletonTemplate, parse_skeleton
 from pylingual.editable_bytecode import PYCFile
@@ -105,6 +105,45 @@ def test_while_needs_a_jump_back(tmp_path):
     grammar = request.grammar()
     assert grammar.accepts("<s0> { <s1> } loop <s2> { <s3> } <s4>".split())
     assert not grammar.accepts("loop <s0> { <s1> } loop <s2> { <s3> } <s4>".split())  # nothing jumps back to the if
+    # row() / from_row() preserve loops; rows without "loops" stay backward-compatible (loops=None)
+    row = request.row()
+    assert row["loops"] == sorted(request.loops) and 2 in row["loops"] and 0 not in row["loops"]
+    restored = CflowRequest.from_row(row)
+    assert restored.loops == request.loops
+    assert not restored.grammar().accepts("loop <s0> { <s1> } loop <s2> { <s3> } <s4>".split())
+    row.pop("loops")
+    assert CflowRequest.from_row(row).loops is None
+
+
+def test_loop_ok_for_inline_break_and_setup_loop(tmp_path):
+    """Inline `if y: break` marks earlier headers loop-eligible; 3.6/3.7 `while x: return` is marked via SETUP_LOOP."""
+    if _uv_python(PythonVersion("3.12")) is None and sys.version_info[:2] != (3, 12):
+        pytest.skip("Python 3.12 not available")
+    src = tmp_path / "b.py"
+    src.write_text("def f(a, b):\n    while a:\n        if b: break\n")
+    pyc, lines = compile_marked(src, tmp_path, PythonVersion("3.12"))
+    f = next(bc for bc in pyc.iter_bytecodes() if bc.codeobj.co_name == "f")
+    req = cflow_request(f, lines)
+    assert 0 in req.loops and req.grammar().accepts("loop <s0> { <s1> }".split())
+
+
+def test_except_star_renders_without_orphan():
+    class Inst:
+        opname = "NOP"
+
+        def __init__(self, line):
+            self.starts_line = line
+
+    co = compile("def f(): pass", "<test>", "exec").co_consts[0]
+    bc = SimpleNamespace(codeobj=co, globals=[], nonlocals=[], parent=None)
+    texts = ["try:", "g()", "except*(ValueError, TypeError) as e:", "h(e)"]
+    stmts = [Statement(i, [Inst(i + 1)], kind=line_kind(t), text=t) for i, t in enumerate(texts)]
+    shapes = [shape_of(s.kind, s.text) for s in stmts]
+    assert [str(s) for s in shapes] == ["try", "stmt", "except*", "stmt"]
+    skeleton = "<s0> { <s1> } <s2> { <s3> }".split()
+    assert BlockGrammar(shapes, "3.12").accepts(skeleton)
+    pyc = SimpleNamespace(codeobj=co, version=(3, 12), iter_bytecodes=lambda: iter([bc]))
+    assert str(SourceContext(pyc, texts, {co: SkeletonTemplate(bc, stmts, skeleton)})).strip() == "try:\n    g()\nexcept*(ValueError, TypeError) as e:\n    h(e)"
 
 
 def test_parse_skeleton_tolerates_bad_tokens():

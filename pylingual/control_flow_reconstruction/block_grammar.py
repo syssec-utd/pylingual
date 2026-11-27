@@ -267,6 +267,13 @@ class BlockGrammar:
         mask = lambda f: sum(1 << i for i, s in enumerate(shapes) if f(s))  # noqa: E731
         self.cases = mask(lambda s: s.opener == "case")
         self.bare_cases = mask(lambda s: s.opener == "case" and s.bare)
+        self.jump_cases = mask(lambda s: s.opener == "case" and bool(s.jumps & {"break", "continue"}))
+        self.ret_cases = mask(lambda s: s.opener == "case" and "return" in s.jumps)
+        self.both_cases = self.jump_cases & self.ret_cases
+        self.bare_jump_cases = self.jump_cases & self.bare_cases
+        self.bare_ret_cases = self.ret_cases & self.bare_cases
+        self.bare_both_cases = self.both_cases & self.bare_cases
+        self.bare_restricted_cases = (self.jump_cases | self.ret_cases) & self.bare_cases
         self.matches = mask(lambda s: s.opener == "match")
         self.decorators = mask(lambda s: s.decorator)
         self.definitions = mask(lambda s: s.definition)
@@ -283,15 +290,57 @@ class BlockGrammar:
         """How many statements in `mask` are not placed yet."""
         return (mask & ~state.placed).bit_count()
 
-    def cases_fit(self, state: State, cases: int, bare: int) -> bool:
+    def cases_fit(self, state: State, placed_case: Shape | None = None, close_top: bool = False, new_match: Frame | None = None) -> bool:
         """
-        Whether `cases` cases, `bare` of them irrefutable, can still be placed when the innermost block (a match) takes
-        no more. Each needs a match that is not placed yet, or one around it whose open case is not irrefutable, and an
-        irrefutable case needs one of its own.
+        Whether all remaining cases (including jump/return-bearing and irrefutable ones) still have compatible match
+        blocks available: unplaced matches (which can be placed in any context) plus open matches whose current case is
+        not irrefutable.
         """
-        around = sum(f.kind == "match" and inner.kind == "case" for f, inner in zip(state.stack[:-2], state.stack[1:-1]))
-        matches = self.left(state, self.matches) + around
-        return bare <= matches and (not cases or matches > 0)
+        c_all = self.left(state, self.cases)
+        c_jump = self.left(state, self.jump_cases)
+        c_ret = self.left(state, self.ret_cases)
+        c_both = self.left(state, self.both_cases)
+        b_all = self.left(state, self.bare_cases)
+        b_jump = self.left(state, self.bare_jump_cases)
+        b_ret = self.left(state, self.bare_ret_cases)
+        b_both = self.left(state, self.bare_both_cases)
+        b_any_res = self.left(state, self.bare_restricted_cases)
+        if placed_case is not None:
+            has_j = bool(placed_case.jumps & {"break", "continue"})
+            has_r = "return" in placed_case.jumps
+            c_all -= 1
+            c_jump -= has_j
+            c_ret -= has_r
+            c_both -= has_j and has_r
+            if placed_case.bare:
+                b_all -= 1
+                b_jump -= has_j
+                b_ret -= has_r
+                b_both -= has_j and has_r
+                b_any_res -= has_j or has_r
+        if c_all <= 0:
+            return True
+        unplaced = self.left(state, self.matches) - (1 if new_match is not None else 0)
+        open_matches = [f for f, inner in zip(state.stack[:-1], state.stack[1:]) if f.kind == "match" and inner.kind == "case"]
+        if not close_top and state.stack[-1].kind == "match" and state.stack[-1].chain != "case_bare":
+            open_matches.append(state.stack[-1])
+        if new_match is not None:
+            open_matches.append(new_match)
+        m_both = unplaced + sum(f.loop and not f.no_jump and not f.no_return for f in open_matches)
+        m_jump = unplaced + sum(f.loop and not f.no_jump for f in open_matches)
+        m_ret = unplaced + sum(not f.no_return for f in open_matches)
+        m_any = unplaced + len(open_matches)
+        return (
+            (not c_both or m_both > 0)
+            and (not c_jump or m_jump > 0)
+            and (not c_ret or m_ret > 0)
+            and m_any > 0
+            and b_both <= m_both
+            and b_jump <= m_jump
+            and b_ret <= m_ret
+            and b_any_res <= m_jump + m_ret - m_both
+            and b_all <= m_any
+        )
 
     def block_kind(self, shape: Shape, top: Frame, loop: bool = False) -> str:
         """The kind of block a header of `shape` opens in `top`."""
@@ -359,7 +408,6 @@ class BlockGrammar:
             return 0, [OPEN]
         top = state.stack[-1]
         prefixes_left = self.left(state, self.prefixes)
-        cases_left, bare_left = self.left(state, self.cases), self.left(state, self.bare_cases)
         stmts = 0
         for shape, group in self.groups.items():
             group &= ~state.placed & (self.loop_headers if state.loop_next else self.all)
@@ -374,17 +422,20 @@ class BlockGrammar:
             # a definition must leave one for the decorators not placed yet
             if shape.definition and self.left(state, self.decorators) and self.left(state, self.definitions) < 2:
                 continue
-            # the cases after an irrefutable one need another match
-            if shape.opener == "case" and shape.bare and not self.cases_fit(state, cases_left - 1, bare_left - 1):
+            # placing a match in a restricted context (outside a loop or inside except*) must not strand jump/return cases
+            if shape.opener == "match" and not self.cases_fit(state, new_match=self.open_frame("match", top)):
+                continue
+            # the cases after an irrefutable one need another compatible match
+            if shape.opener == "case" and shape.bare and not self.cases_fit(state, placed_case=shape, close_top=True):
                 continue
             stmts |= group
         if state.loop_next or prefixes_left:
             return stmts, []
-        tokens = [k for k, shape in KEYWORD_SHAPES.items() if self.can_place(state, shape, keyword=True) and not (k == "case_" and not self.cases_fit(state, cases_left, bare_left))]
+        tokens = [k for k, shape in KEYWORD_SHAPES.items() if self.can_place(state, shape, keyword=True) and not (k == "case_" and not self.cases_fit(state, close_top=True))]
         if self.left(state, self.loop_headers) and top.kind != "match" and top.chain not in OBLIGATIONS and top.blocks + BLOCK_WEIGHT["while"] <= MAX_BLOCKS and len(state.stack) <= MAX_DEPTH:
             tokens.append(LOOP)
         if top.chain not in OBLIGATIONS:
-            if top.kind != "root" and (top.kind != "match" or self.cases_fit(state, cases_left, bare_left)):
+            if top.kind != "root" and (top.kind != "match" or self.cases_fit(state, close_top=True)):
                 tokens.append(CLOSE)
             if top.kind == "root" and state.placed == self.all:
                 tokens.append(END)
@@ -443,11 +494,12 @@ class BlockGrammar:
         when nothing more can go in them, and a statement that needs a loop or try gets one.
         """
         out = []
-        for _ in range(8 * self.n + 8 * MAX_DEPTH):
+        for _ in range(12 * self.n + 8 * MAX_DEPTH):
             stmts, tokens = self.allowed(state)
             if END in tokens:
                 return out
-            chain = state.stack[-1].chain
+            top = state.stack[-1]
+            chain = top.chain
             if OPEN in tokens:
                 token = OPEN
             elif stmts:
@@ -458,6 +510,8 @@ class BlockGrammar:
                 token = "case_"
             elif LOOP in tokens:  # a while header is left
                 token = LOOP
+            elif len(state.stack) == 2 and top.kind == "while" and top.loop and not top.no_jump and not top.no_continue and not top.no_return and (hosted := self.host_in_loop(state, tokens)) is not None:
+                token = hosted
             elif CLOSE in tokens:
                 token = CLOSE
             else:
@@ -465,6 +519,22 @@ class BlockGrammar:
             out.append(token)
             state = self.step(state, token)
         raise RuntimeError("no completion")
+
+    def host_in_loop(self, state: State, tokens: list[str]) -> str | None:
+        """A keyword opening a try or inner loop inside a top-level while for a jump-bearing clause (`except E: break`, `else: break`)."""
+        for i in range(self.n):
+            shape = self.shapes[i]
+            if state.placed >> i & 1 or not (shape.jumps & {"break", "continue"}):
+                continue
+            if shape.opener in ("except", "except*", "finally"):
+                need = "try"
+            elif shape.opener == "else":
+                need = "while_true"
+            else:
+                continue
+            if need in tokens:
+                return need
+        return None
 
     def host(self, state: State, tokens: list[str]) -> str:
         """A keyword opening the block a statement left over needs: a loop for jumps and else, a try for handlers."""

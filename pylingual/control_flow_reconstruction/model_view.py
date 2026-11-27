@@ -106,11 +106,15 @@ class CflowRequest:
 
     def row(self) -> dict:
         """The request as dataset row fields."""
-        return {"input": " ".join(self.tokens), "n_stmts": self.n, "shapes": " ".join(map(str, self.shapes)), "version": str(self.version)}
+        out = {"input": " ".join(self.tokens), "n_stmts": self.n, "shapes": " ".join(map(str, self.shapes)), "version": str(self.version)}
+        if self.loops is not None:
+            out["loops"] = sorted(self.loops)
+        return out
 
     @staticmethod
     def from_row(row: dict) -> CflowRequest:
-        return CflowRequest(row["input"].split(), [Shape.parse(s) for s in row["shapes"].split()], PythonVersion(row["version"]))
+        loops = frozenset(row["loops"]) if row.get("loops") is not None else None
+        return CflowRequest(row["input"].split(), [Shape.parse(s) for s in row["shapes"].split()], PythonVersion(row["version"]), loops=loops)
 
 
 def line_kind(text: str) -> str:
@@ -126,6 +130,8 @@ def line_kind(text: str) -> str:
         return "K_deco"
     if text in ("while True:", "while 1:"):
         return "K_while_true"
+    if text.startswith("except") and text[6:].lstrip().startswith("*"):
+        return "K_except"
     if head in ("if", "elif", "while"):
         return "K_cond"
     if head in KEYWORD_KINDS:
@@ -223,11 +229,11 @@ def encode_code_object(bc: EditableBytecode, lines: list[str]) -> tuple[list[Sta
     for s in stmts:
         s.text = statement_text(s, lines)
         s.kind = statement_kind(s, s.text, loop_headers)
-    last_break = max((s.index for s in stmts if s.kind == "K_break"), default=-1)
+    last_break = max((s.index for s in stmts if s.kind == "K_break" or ("break" in s.text and "break" in shape_of(s.kind, s.text).jumps)), default=-1)
     for s in stmts:
-        # a while loop jumps back to its header or its first statement, or else always breaks (all but 9 of 1,550 loops
-        # in the 3.12 training set jump back; the others always break or return)
-        s.loop_ok = bool({s.index, s.index + 1} & loop_starts) or s.index < last_break
+        # a while loop jumps back to its header or first statement, emits SETUP_LOOP (<=3.7), or precedes a break;
+        # on 3.8+, a while whose body always returns or raises compiles identically to an if
+        s.loop_ok = bool({s.index, s.index + 1} & loop_starts) or any(i.opname == "SETUP_LOOP" for i in s.insts) or s.index < last_break
         if s.kind == "K_none" and s.text in ("while True:", "while 1:") and not s.loop_ok:
             # a mistranslation (a docstring's NOP is often translated so), written as nothing rather than a loop
             s.text = ""
