@@ -346,7 +346,7 @@ class Decompiler:
             for model_views, boundary_predictions in zip(self.codeobj_instruction_lists, self.segmentation_results):
                 translation_requests.append(self.make_translation_request(model_views, boundary_predictions))
             flattened_translation_requests = list(itertools.chain.from_iterable(translation_requests))
-            self.translation_results = self.translator(flattened_translation_requests, check_timeout=self.check_timeout)
+            self.translation_results = self.translator(flattened_translation_requests, check_timeout=self.check_timeout, version=self.version)
             unflatten(self.translation_results, translation_requests)
             self.update_source_lines()
         except Exception as e:
@@ -453,7 +453,7 @@ class Decompiler:
                 self.update_starts_line()
                 translation_request = self.make_translation_request(self.codeobj_instruction_lists[i], self.segmentation_results[i])
                 try:
-                    self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout)
+                    self.translation_results[i] = self.translator(translation_request, check_timeout=self.check_timeout, version=self.version)
                     self.update_source_lines()
                     self.unmask_lines()
                 except Exception as e:
