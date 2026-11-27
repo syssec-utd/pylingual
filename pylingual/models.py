@@ -190,7 +190,7 @@ class ControlFlowPredictor:
                 raise
             except Exception as e:
                 error = repr(e)
-            # handled outside the except block so tensors can be freed; these code objects get their statements in order
+            # handled outside the except block so tensors can be freed; when fallback is True, these get statement order
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             action = "using statement order" if fallback else "skipping batch"

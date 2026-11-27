@@ -517,7 +517,7 @@ class BlockGrammar:
                 token = "case_"
             elif LOOP in tokens:  # a while header is left
                 token = LOOP
-            elif len(state.stack) == 2 and top.kind == "while" and top.loop and not top.no_jump and not top.no_continue and not top.no_return and (hosted := self.host_in_loop(state, tokens)) is not None:
+            elif len(state.stack) == 2 and top.kind == "while" and (hosted := self.host_in_loop(state, tokens)) is not None:
                 token = hosted
             elif CLOSE in tokens:
                 token = CLOSE

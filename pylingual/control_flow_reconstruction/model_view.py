@@ -85,7 +85,7 @@ class CflowRequest:
     shapes: list[Shape]
     version: PythonVersion
     stmts: list[Statement] = field(default_factory=list)  # for rendering; empty when read from a dataset row
-    loops: frozenset[int] | None = None  # statements that may head a while loop; None (a dataset row): any
+    loops: frozenset[int] | None = None  # statements that may head a while loop; None (a legacy dataset row): any
 
     @property
     def n(self) -> int:

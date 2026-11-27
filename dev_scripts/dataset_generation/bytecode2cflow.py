@@ -138,22 +138,20 @@ class SkeletonBuilder:
         if isinstance(n, ast.If):
             return self.if_(n)
         if isinstance(n, ast.While):
-            # `while cond:` has bytecode for its line; `while True:` usually has none
+            # `while cond:` has bytecode for its line; `while True:` usually has none (or a NOP on 3.12+ when terminating)
             test_true = isinstance(n.test, ast.Constant) and bool(n.test.value)
             if (r := self.ref(n.lineno)) is not None:
                 idx = self.line2idx[n.lineno]
                 if self.loops is None or idx in self.loops:
-                    head = ["loop", r]
-                elif not test_true:
-                    # on 3.8+, a while whose body never jumps back or breaks compiles identically to an if
-                    head = [r]
-                else:
-                    head = None
-            else:
-                head = ["while_true"] if test_true else None
-            if head is None:
-                raise Invalid("while header without bytecode")
-            return self.block(head, n.body) + self.orelse(n)
+                    return self.block(["loop", r], n.body) + self.orelse(n)
+                if self.text(n.lineno) in ("while True:", "while 1:"):
+                    # non-looping `while True:` NOP is cleared to an empty statement; place its ref before the keyword loop
+                    return [r, *self.block(["while_true"], n.body), *self.orelse(n)]
+                # on 3.8+, a while whose body never jumps back or breaks compiles identically to an if
+                return self.block([r], n.body) + self.orelse(n)
+            if test_true:
+                return self.block(["while_true"], n.body) + self.orelse(n)
+            raise Invalid("while header without bytecode")
         if isinstance(n, (ast.For, ast.AsyncFor)):
             return self.block(self.header(n.lineno), n.body) + self.orelse(n)
         if isinstance(n, (ast.With, ast.AsyncWith)):

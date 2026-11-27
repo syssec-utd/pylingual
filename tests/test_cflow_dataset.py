@@ -113,13 +113,22 @@ def test_except_star_gold_round_trip(version, tmp_path):
     assert not failed, restored.read_text()
 
 
-@pytest.mark.parametrize("version", ["3.6", "3.7", "3.8", "3.12"])
+@pytest.mark.parametrize("version", ["3.6", "3.7", "3.8", "3.12", "3.14"])
 def test_non_jumping_while_gold_round_trip(version, tmp_path):
-    """A while loop whose body always returns round-trips on both <=3.7 (SETUP_LOOP) and 3.8+ (equivalent to if)."""
+    """Non-jumping while loops (`while x: return` and `while True: return`) round-trip on <=3.7 and 3.8+."""
     version = PythonVersion(version)
     if version != HOST and version in UV_VERSIONS and _uv_python(version) is None:
         pytest.skip(f"Python {version} not available")
-    src = "def f(x):\n    while x:\n        return 1\n    return 0\n"
+    src = (
+        "def f(x):\n"
+        "    while x:\n"
+        "        return 1\n"
+        "    return 0\n"
+        "\n"
+        "def f_true():\n"
+        "    while True:\n"
+        "        return 1\n"
+    )
     py, pyc_path = tmp_path / "wret.py", tmp_path / "wret.pyc"
     py.write_text(src)
     try:
@@ -128,11 +137,12 @@ def test_non_jumping_while_gold_round_trip(version, tmp_path):
         pytest.skip(str(e))
     pyc = PYCFile(str(pyc_path))
     examples = make_examples(pyc, src)
-    f_row = next((e for e in examples if e["name"] == "<module>.f"), None)
-    assert f_row is not None
-    assert CflowRequest.from_row(f_row).grammar().accepts(f_row["target"].split())
+    by_name = {e["name"]: e for e in examples}
+    assert {"<module>.f", "<module>.f_true"} <= set(by_name)
+    for name in ("<module>.f", "<module>.f_true"):
+        assert CflowRequest.from_row(by_name[name]).grammar().accepts(by_name[name]["target"].split())
     if version <= (3, 7):
-        assert 0 in f_row["loops"] and f_row["target"].startswith("loop ")
+        assert 0 in by_name["<module>.f"]["loops"] and by_name["<module>.f"]["target"].startswith("loop ")
     restored = tmp_path / "restored.py"
     restored.write_text(render_with_skeletons(pyc, src.split("\n"), examples))
     compile_version(restored, restored.with_suffix(".pyc"), version)
